@@ -12,6 +12,8 @@ interface HealthPayload {
   adminEmailConfigured?: boolean;
   invitationCodeConfigured?: boolean;
   sessionSecretValid?: boolean;
+  rescueTokenConfigured?: boolean;
+  rescueTokenStatus?: string;
   firebaseAdminMessage?: string;
   missingEnvironmentVariables: string[];
 }
@@ -149,6 +151,27 @@ export function DashboardSystemHealthCard() {
               </div>
             );
           })}
+
+          <div className="flex items-start gap-2.5 rounded-lg border border-stone-200 bg-[#FAF8F4] p-3 sm:col-span-2 dark:border-slate-800 dark:bg-slate-900/60">
+            <CheckCircle2
+              className={`mt-0.5 h-4 w-4 shrink-0 ${
+                health.rescueTokenConfigured
+                  ? 'text-amber-600 dark:text-amber-400'
+                  : 'text-stone-500 dark:text-slate-400'
+              }`}
+              aria-hidden="true"
+            />
+            <div className="min-w-0">
+              <p className="text-xs font-semibold text-stone-900 dark:text-white">
+                Rescate administrativo sin código ({health.rescueTokenStatus || 'opcional (rescate)'})
+              </p>
+              <p className="mt-0.5 text-[11px] leading-relaxed text-stone-600 dark:text-slate-400">
+                {health.rescueTokenConfigured
+                  ? 'Clave de rescate temporal activa en este servidor. Una vez recuperes la cuenta administradora, bórrala de Vercel y vuelve a desplegar.'
+                  : 'Opcional y desactivada por defecto. Solo se configura temporalmente en Vercel si la cuenta administradora queda bloqueada por una verificación antigua.'}
+              </p>
+            </div>
+          </div>
         </div>
       ) : null}
     </Card>

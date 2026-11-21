@@ -1,6 +1,6 @@
 import { FormEvent, useState } from 'react';
 import { ArrowLeft, KeyRound, LogIn, Mail, UserPlus } from 'lucide-react';
-import { LegacySecondFactorError } from '../../services/authActions';
+import { isLegacySecondFactorError, LegacyFactorChallenge } from '../../services/authActions';
 import { evaluatePasswordStrength } from '../../utils/passwordStrength';
 import { Button } from '../../components/ui/Button';
 import { Card } from '../../components/ui/Card';
@@ -16,9 +16,8 @@ interface AuthCredentialsFormProps {
   onChangeView: (view: AuthView) => void;
   onLogin: (email: string, password: string) => Promise<void>;
   onResolveLegacyFactor?: (input: {
-    resolver: LegacySecondFactorError['resolver'];
+    challenge: LegacyFactorChallenge;
     email: string;
-    factorId: string;
     hintUid: string;
     code: string;
     verificationId?: string;
@@ -54,7 +53,7 @@ export function AuthCredentialsForm({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [providerDisabledError, setProviderDisabledError] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
-  const [legacyChallenge, setLegacyChallenge] = useState<LegacySecondFactorError | null>(null);
+  const [legacyChallenge, setLegacyChallenge] = useState<LegacyFactorChallenge | null>(null);
 
   const strength = evaluatePasswordStrength(password, { email, displayName });
   const emailInlineError =
@@ -101,7 +100,7 @@ export function AuthCredentialsForm({
         );
       }
     } catch (err) {
-      if (err instanceof LegacySecondFactorError && onResolveLegacyFactor) {
+      if (isLegacySecondFactorError(err) && onResolveLegacyFactor) {
         setLegacyChallenge(err);
         return;
       }
@@ -145,6 +144,13 @@ export function AuthCredentialsForm({
         <LegacyFactorCleanupCard
           challenge={legacyChallenge}
           onResolve={onResolveLegacyFactor}
+          onRescueSuccess={(rescuedEmail, message) => {
+            setLegacyChallenge(null);
+            setEmail(rescuedEmail);
+            setPassword('');
+            setErrorMsg(null);
+            setSuccessMsg(message);
+          }}
           onCancel={() => {
             setLegacyChallenge(null);
             setErrorMsg(null);

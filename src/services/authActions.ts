@@ -1,7 +1,5 @@
 import {
   createUserWithEmailAndPassword,
-  getMultiFactorResolver,
-  MultiFactorError,
   sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signOut,
@@ -15,12 +13,6 @@ import { recordAuditLog } from './auditService';
 import { FriendlyAuthError, mapFirebaseAuthError } from './authErrorMapper';
 import { auth, db } from './firebase';
 import {
-  LegacySecondFactorError,
-  resolveAndUnenrollLegacyFactor,
-  sendLegacySmsCleanupCode,
-  unenrollAllLegacyFactors,
-} from './legacyFactorCleanup';
-import {
   checkLoginRateLimitOnServer,
   createServerSessionCookie,
   recordLoginFailureOnServer,
@@ -28,7 +20,20 @@ import {
   verifyInvitationCodeOnServer,
 } from './sessionApi';
 
-export { LegacySecondFactorError, sendLegacySmsCleanupCode, unenrollAllLegacyFactors };
+export interface LegacyFactorHintItem {
+  uid: string;
+  kind: 'totp' | 'phone';
+  label: string;
+}
+
+export interface LegacyFactorChallenge extends Error {
+  email: string;
+  hints: LegacyFactorHintItem[];
+}
+
+export function isLegacySecondFactorError(err: unknown): err is LegacyFactorChallenge {
+  return err instanceof Error && err.name === 'LegacySecondFactorError';
+}
 
 async function provisionAdminProfileAndSession(user: User, fallbackEmail: string): Promise<void> {
   const email = (user.email || fallbackEmail).toLowerCase();
@@ -72,8 +77,6 @@ async function provisionAdminProfileAndSession(user: User, fallbackEmail: string
 }
 
 async function finalizeAuthenticatedUser(user: User, fallbackEmail: string): Promise<void> {
-  await unenrollAllLegacyFactors(user);
-
   const profileSnap = await getDoc(doc(db, 'users', user.uid));
   const prof = profileSnap.exists() ? (profileSnap.data() as UserProfile) : null;
 
@@ -175,7 +178,7 @@ export async function performLogin(email: string, password: string): Promise<voi
     const cred = await signInWithEmailAndPassword(auth, normalizedEmail, password);
     await finalizeAuthenticatedUser(cred.user, normalizedEmail);
   } catch (err) {
-    if (err instanceof FriendlyAuthError || err instanceof LegacySecondFactorError) {
+    if (err instanceof FriendlyAuthError || isLegacySecondFactorError(err)) {
       throw err;
     }
 
@@ -184,14 +187,11 @@ export async function performLogin(email: string, password: string): Promise<voi
 
     if (errCode === 'auth/multi-factor-auth-required') {
       try {
-        if (typeof getMultiFactorResolver === 'function') {
-          const resolver = getMultiFactorResolver(auth, err as MultiFactorError);
-          if (resolver && Array.isArray(resolver.hints) && resolver.hints.length > 0) {
-            throw new LegacySecondFactorError(resolver, normalizedEmail);
-          }
-        }
+        const cleanup = await import('./legacyFactorCleanup');
+        const legacyErr = cleanup.buildLegacyFactorError(err, normalizedEmail);
+        if (legacyErr) throw legacyErr;
       } catch (resolverErr) {
-        if (resolverErr instanceof LegacySecondFactorError) {
+        if (isLegacySecondFactorError(resolverErr)) {
           throw resolverErr;
         }
       }
@@ -236,15 +236,28 @@ export async function performLogin(email: string, password: string): Promise<voi
   }
 }
 
+export async function sendLegacyCleanupSms(
+  challenge: LegacyFactorChallenge,
+  hintUid: string,
+  recaptchaContainerId: string,
+): Promise<string> {
+  const cleanup = await import('./legacyFactorCleanup');
+  return cleanup.sendLegacySmsCleanupCode(
+    challenge as unknown as Parameters<typeof cleanup.sendLegacySmsCleanupCode>[0],
+    hintUid,
+    recaptchaContainerId,
+  );
+}
+
 export async function completeLoginAndRemoveLegacySecondFactor(input: {
-  resolver: LegacySecondFactorError['resolver'];
+  challenge: LegacyFactorChallenge;
   email: string;
-  factorId: string;
   hintUid: string;
   code: string;
   verificationId?: string;
 }): Promise<number> {
-  return resolveAndUnenrollLegacyFactor(input, finalizeAuthenticatedUser);
+  const cleanup = await import('./legacyFactorCleanup');
+  return cleanup.resolveAndUnenrollLegacyFactor(input, finalizeAuthenticatedUser);
 }
 
 export async function performPasswordReset(email: string): Promise<void> {

@@ -253,3 +253,21 @@ export async function sendEmailNotificationOnServer(payload: {
     return { delivered: false };
   }
 }
+
+export async function rescueClearAdminMfaOnServer(
+  email: string,
+  token: string,
+): Promise<{ ok: boolean; message: string }> {
+  const res = await fetch('/api/auth/rescue/clear-admin-mfa', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ email, token }),
+  });
+
+  if (res.status === 404) {
+    throw new Error('El rescate sin código no está habilitado en el servidor en este momento.');
+  }
+
+  return parseJson<{ ok: boolean; message: string }>(res);
+}

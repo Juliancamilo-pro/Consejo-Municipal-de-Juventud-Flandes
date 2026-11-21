@@ -6,7 +6,6 @@ import {
   performCouncilorRegistration,
   performLogin,
   performPasswordReset,
-  unenrollAllLegacyFactors,
 } from '../services/authActions';
 import { auth, db, setWorkspaceAccessToken } from '../services/firebase';
 import { handleFirestoreError, OperationType } from '../services/firestoreErrors';
@@ -52,8 +51,6 @@ export function useAuthSession() {
       }
 
       try {
-        await unenrollAllLegacyFactors(fbUser);
-
         const sessionRes = await fetchServerSession();
         if (sessionRes.expired) {
           setSessionExpiredNotice(true);

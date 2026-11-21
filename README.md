@@ -30,6 +30,16 @@ Configura estas variables en tu panel de **Vercel → Settings → Environment V
 2. Digita el correo configurado en `ADMIN_EMAIL` y define una contraseña de mínimo 12 caracteres.
 3. Tras activarse la cuenta, la ruta de activación se deshabilita automáticamente en el servidor y en Firestore (`/settings/bootstrap`).
 
+## Rescate del administrador sin código
+
+Si la cuenta administradora (`ADMIN_EMAIL`) quedó bloqueada con una verificación en dos pasos antigua en Firebase Authentication y no tienes el código de 6 dígitos:
+
+1. En **Vercel → Settings → Environment Variables**, crea temporalmente `RESCUE_TOKEN` con una cadena aleatoria de al menos **32 caracteres** (por ejemplo, generada con `openssl rand -hex 24`).
+2. Ejecuta un **Redeploy** para que las funciones serverless carguen la nueva variable.
+3. Entra a `/portal`, intenta iniciar sesión con el correo y contraseña del administrador, selecciona **No tengo el código**, ingresa la **Clave de rescate** y presiona **Quitar verificación antigua**.
+4. Cuando veas el mensaje de confirmación, inicia sesión normalmente con tu correo y contraseña.
+5. **Importante**: inmediatamente después **elimina** `RESCUE_TOKEN` en Vercel y vuelve a hacer **Redeploy** para desactivar por completo el endpoint de rescate.
+
 ## Registro de Consejeros
 
 1. En `/portal` -> **Crear cuenta de consejero**, ingresa nombre completo, correo, contraseña (mínimo 12 caracteres) y el código `CMJ_INVITATION_CODE`.

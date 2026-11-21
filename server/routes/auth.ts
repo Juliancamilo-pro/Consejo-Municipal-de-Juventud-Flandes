@@ -22,10 +22,12 @@ import {
 import { fetchFirestoreDocViaRest } from '../utils/firestoreRest.ts';
 import { clearRateLimit } from '../utils/rateLimiter.ts';
 import { getRecentServerSecurityEvents, recordServerSecurityAudit } from '../utils/serverAudit.ts';
+import { registerAuthRescueRoutes } from './authRescueRoutes.ts';
 import { hashEmailKey, registerAuthSecurityRoutes } from './authSecurityRoutes.ts';
 
 const authRouter = Router();
 registerAuthSecurityRoutes(authRouter);
+registerAuthRescueRoutes(authRouter);
 
 authRouter.post('/session', async (req, res) => {
   const idToken = typeof req.body?.idToken === 'string' ? req.body.idToken : '';

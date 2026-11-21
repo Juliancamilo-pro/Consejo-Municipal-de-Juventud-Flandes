@@ -64,9 +64,11 @@ vi.mock('../src/services/sessionApi', () => ({
 
 import {
   completeLoginAndRemoveLegacySecondFactor,
-  LegacySecondFactorError,
+  isLegacySecondFactorError,
+  LegacyFactorChallenge,
   performLogin,
 } from '../src/services/authActions';
+import { LegacySecondFactorError } from '../src/services/legacyFactorCleanup';
 
 describe('Validación de contraseñas y bloqueo contra fuerza bruta', () => {
   beforeEach(() => {
@@ -115,7 +117,7 @@ describe('Validación de contraseñas y bloqueo contra fuerza bruta', () => {
     expect(getRateLimitStatus(scope, key, 5).blocked).toBe(false);
   });
 
-  it('convierte auth/multi-factor-auth-required en flujo automático de limpieza sin mencionar el README', async () => {
+  it('convierte auth/multi-factor-auth-required en flujo aislado de limpieza sin mencionar el README', async () => {
     signInMock.mockRejectedValueOnce({ code: 'auth/multi-factor-auth-required' });
     getMultiFactorResolverMock.mockReturnValueOnce({
       hints: [{ uid: 'f1', factorId: 'totp', displayName: 'Autenticador' }],
@@ -123,9 +125,13 @@ describe('Validación de contraseñas y bloqueo contra fuerza bruta', () => {
       resolveSignIn: vi.fn(),
     });
 
-    await expect(performLogin('admin@flandes.gov.co', 'UnaClaveSegura#2026')).rejects.toThrow(
-      LegacySecondFactorError,
-    );
+    try {
+      await performLogin('admin@flandes.gov.co', 'UnaClaveSegura#2026');
+      expect.unreachable('Debió lanzar reto de limpieza heredada');
+    } catch (err) {
+      expect(isLegacySecondFactorError(err)).toBe(true);
+      expect(err).toBeInstanceOf(LegacySecondFactorError);
+    }
 
     signInMock.mockRejectedValueOnce({ code: 'auth/multi-factor-auth-required' });
     getMultiFactorResolverMock.mockImplementationOnce(() => {
@@ -144,15 +150,18 @@ describe('Validación de contraseñas y bloqueo contra fuerza bruta', () => {
       getIdToken: vi.fn(async () => 'id-token'),
     };
     const resolveSignInMock = vi.fn(async () => ({ user: mockUser }));
-
-    const removed = await completeLoginAndRemoveLegacySecondFactor({
-      resolver: {
+    const challenge = new LegacySecondFactorError(
+      {
         hints: [{ uid: 'factor-1', factorId: 'totp' }],
         session: {},
         resolveSignIn: resolveSignInMock,
       } as unknown as LegacySecondFactorError['resolver'],
+      'admin@flandes.gov.co',
+    );
+
+    const removed = await completeLoginAndRemoveLegacySecondFactor({
+      challenge: challenge as unknown as LegacyFactorChallenge,
       email: 'admin@flandes.gov.co',
-      factorId: 'totp',
       hintUid: 'factor-1',
       code: '123456',
     });
