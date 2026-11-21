@@ -1,0 +1,205 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  :root {
+    --cmj-canvas: #FAFAF8;
+    --cmj-surface: #FFFFFF;
+    --cmj-surface-subtle: #F4F1EA;
+    --cmj-surface-elevated: #FFFFFF;
+    --cmj-border: #E5E0D5;
+    --cmj-border-strong: #D0C8B8;
+    --cmj-text: #1C1917;
+    --cmj-text-muted: #57534E;
+    --cmj-vinotinto: #7B1832;
+    --cmj-vinotinto-hover: #611227;
+    --cmj-oro: #C59B27;
+    --cmj-azul: #1E3A8A;
+    --cmj-focus: #1E3A8A;
+    --cmj-radius-sm: 0.375rem;
+    --cmj-radius-md: 0.625rem;
+    --cmj-radius-lg: 0.875rem;
+    --cmj-shadow-sm: 0 1px 2px rgba(28, 25, 23, 0.05);
+    --cmj-shadow-md: 0 8px 24px -8px rgba(28, 25, 23, 0.1);
+    --cmj-shadow-lg: 0 18px 40px -16px rgba(28, 25, 23, 0.16);
+  }
+
+  html.dark {
+    --cmj-canvas: #0F172A;
+    --cmj-surface: #172033;
+    --cmj-surface-subtle: #1E293B;
+    --cmj-surface-elevated: #1E293B;
+    --cmj-border: #2B394F;
+    --cmj-border-strong: #3B4C68;
+    --cmj-text: #F1F5F9;
+    --cmj-text-muted: #94A3B8;
+    --cmj-vinotinto: #A62B4B;
+    --cmj-vinotinto-hover: #BD385B;
+    --cmj-oro: #D9B245;
+    --cmj-azul: #3B82F6;
+    --cmj-focus: #D9B245;
+    --cmj-shadow-sm: 0 1px 2px rgba(2, 6, 23, 0.25);
+    --cmj-shadow-md: 0 10px 28px -10px rgba(2, 6, 23, 0.45);
+    --cmj-shadow-lg: 0 22px 46px -18px rgba(2, 6, 23, 0.6);
+  }
+
+  html.high-contrast {
+    --cmj-border: #1C1917;
+    --cmj-border-strong: #000000;
+    --cmj-text: #000000;
+    --cmj-text-muted: #292524;
+  }
+
+  html.dark.high-contrast {
+    --cmj-canvas: #020617;
+    --cmj-surface: #0F172A;
+    --cmj-border: #F8FAFC;
+    --cmj-border-strong: #FFFFFF;
+    --cmj-text: #FFFFFF;
+    --cmj-text-muted: #E2E8F0;
+  }
+
+  html {
+    font-family: "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;
+    scroll-behavior: smooth;
+    background-color: var(--cmj-canvas);
+    color: var(--cmj-text);
+  }
+
+  html.reduce-motion,
+  html.reduce-motion * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+  }
+
+  h1, h2, h3, .font-display {
+    font-family: "Fraunces", Georgia, serif;
+    text-wrap: balance;
+  }
+
+  .cmj-display-hero {
+    font-size: clamp(2rem, 4.4vw, 3.625rem);
+    line-height: 1.06;
+    letter-spacing: -0.02em;
+  }
+
+  .cmj-display-page {
+    font-size: clamp(1.75rem, 3.2vw, 2.75rem);
+    line-height: 1.1;
+    letter-spacing: -0.015em;
+  }
+
+  .cmj-display-section {
+    font-size: clamp(1.375rem, 2.3vw, 2rem);
+    line-height: 1.18;
+    letter-spacing: -0.01em;
+  }
+
+  .cmj-prose {
+    max-width: 65ch;
+    line-height: 1.68;
+  }
+
+  .font-mono-tabular {
+    font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--cmj-focus);
+    outline-offset: 2px;
+  }
+}
+
+.cmj-surface {
+  background-color: var(--cmj-surface);
+  border: 1px solid var(--cmj-border);
+  box-shadow: var(--cmj-shadow-sm);
+}
+
+.cmj-surface-subtle {
+  background-color: var(--cmj-surface-subtle);
+  border: 1px solid var(--cmj-border);
+}
+
+.cmj-elevated {
+  background-color: var(--cmj-surface-elevated);
+  border: 1px solid var(--cmj-border);
+  box-shadow: var(--cmj-shadow-md);
+}
+
+/* Cinta institucional tolimense y colombiana (Oro, Azul Magdalena, Vinotinto Tolima) */
+.cmj-tricolor-rule {
+  background: linear-gradient(
+    90deg,
+    #C59B27 0%,
+    #C59B27 36%,
+    #1E3A8A 36%,
+    #1E3A8A 68%,
+    #7B1832 68%,
+    #7B1832 100%
+  );
+}
+
+/* Trama arquitectónica sutil inspirada en el tejido tolimense y el Alto Magdalena */
+.cmj-territorial-weave {
+  background-image:
+    radial-gradient(circle at 85% 15%, rgba(197, 155, 39, 0.08), transparent 42%),
+    radial-gradient(circle at 12% 85%, rgba(123, 24, 50, 0.06), transparent 44%),
+    repeating-linear-gradient(
+      135deg,
+      rgba(123, 24, 50, 0.025) 0px,
+      rgba(123, 24, 50, 0.025) 1px,
+      transparent 1px,
+      transparent 22px
+    );
+}
+
+html.dark .cmj-territorial-weave {
+  background-image:
+    radial-gradient(circle at 85% 15%, rgba(217, 178, 69, 0.09), transparent 42%),
+    radial-gradient(circle at 12% 85%, rgba(166, 43, 75, 0.1), transparent 44%),
+    repeating-linear-gradient(
+      135deg,
+      rgba(217, 178, 69, 0.035) 0px,
+      rgba(217, 178, 69, 0.035) 1px,
+      transparent 1px,
+      transparent 22px
+    );
+}
+
+@keyframes cmj-shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.cmj-skeleton {
+  background: linear-gradient(
+    90deg,
+    rgba(120, 113, 108, 0.1) 25%,
+    rgba(120, 113, 108, 0.2) 50%,
+    rgba(120, 113, 108, 0.1) 75%
+  );
+  background-size: 200% 100%;
+  animation: cmj-shimmer 1.6s infinite linear;
+}
+
+html.reduce-motion .cmj-skeleton {
+  animation: none;
+}

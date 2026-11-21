@@ -1,0 +1,786 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Cuenta institucional de consejero o administrador del CMJ Flandes.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "email": { "type": "string", "format": "email", "maxLength": 160 },
+        "displayName": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "slug": { "type": "string", "maxLength": 140 },
+        "photoUrl": { "type": "string", "maxLength": 1500 },
+        "role": {
+          "type": "string",
+          "enum": ["secretario_admin", "presidente", "vicepresidente", "lider_comision", "consejero"]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pendiente", "activo", "suspendido"]
+        },
+        "period": { "type": "string", "maxLength": 32 },
+        "commissionId": { "type": "string", "maxLength": 128 },
+        "positionTitle": { "type": "string", "maxLength": 120 },
+        "sector": { "type": "string", "maxLength": 120 },
+        "shortBio": { "type": "string", "maxLength": 280 },
+        "bio": { "type": "string", "maxLength": 800 },
+        "fullBio": { "type": "string", "maxLength": 3000 },
+        "educationOccupation": { "type": "string", "maxLength": 240 },
+        "motivation": { "type": "string", "maxLength": 1500 },
+        "proposals": { "type": "string", "maxLength": 2500 },
+        "workAxes": { "type": "array" },
+        "achievements": { "type": "array" },
+        "skills": { "type": "array" },
+        "featuredQuote": { "type": "string", "maxLength": 140 },
+        "projectIds": { "type": "array" },
+        "socialLinks": { "type": "object" },
+        "publicEmail": { "type": "string", "maxLength": 160 },
+        "fieldVisibility": { "type": "object" },
+        "habeasDataAccepted": { "type": "boolean" },
+        "habeasDataAcceptedAt": { "type": "string", "maxLength": 64 },
+        "isMinor": { "type": "boolean" },
+        "guardianAuthorizationNote": { "type": "string", "maxLength": 400 },
+        "profileReviewStatus": { "type": "string", "enum": ["borrador", "revision", "publicada"] },
+        "profileReviewComment": { "type": "string", "maxLength": 500 },
+        "profileReviewedByName": { "type": "string", "maxLength": 120 },
+        "profileReviewedAt": { "type": "string", "maxLength": 64 },
+        "showManagementKpis": { "type": "boolean" },
+        "emailNotifications": { "type": "boolean" },
+        "approvedByUid": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "displayName", "role", "status", "createdAt", "updatedAt"]
+    },
+    "PublicDirectoryMember": {
+      "title": "PublicDirectoryMember",
+      "description": "Proyección pública aprobada por Mesa Directiva y consentimiento Habeas Data.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "slug": { "type": "string", "maxLength": 140 },
+        "displayName": { "type": "string", "maxLength": 120 },
+        "role": { "type": "string", "enum": ["secretario_admin", "presidente", "vicepresidente", "lider_comision", "consejero"] },
+        "status": { "type": "string", "enum": ["activo", "inactivo"] },
+        "period": { "type": "string", "maxLength": 32 },
+        "photoUrl": { "type": "string", "maxLength": 1500 },
+        "commissionId": { "type": "string", "maxLength": 128 },
+        "commissionName": { "type": "string", "maxLength": 140 },
+        "positionTitle": { "type": "string", "maxLength": 120 },
+        "sector": { "type": "string", "maxLength": 120 },
+        "shortBio": { "type": "string", "maxLength": 280 },
+        "bio": { "type": "string", "maxLength": 800 },
+        "fullBio": { "type": "string", "maxLength": 3000 },
+        "educationOccupation": { "type": "string", "maxLength": 240 },
+        "motivation": { "type": "string", "maxLength": 1500 },
+        "proposals": { "type": "string", "maxLength": 2500 },
+        "workAxes": { "type": "array" },
+        "achievements": { "type": "array" },
+        "skills": { "type": "array" },
+        "featuredQuote": { "type": "string", "maxLength": 140 },
+        "projectIds": { "type": "array" },
+        "socialLinks": { "type": "object" },
+        "publicEmail": { "type": "string", "maxLength": 160 },
+        "showManagementKpis": { "type": "boolean" },
+        "kpiSessionsAttended": { "type": "number" },
+        "kpiCommitmentsFulfilled": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "displayName", "role", "status", "updatedAt"]
+    },
+    "Commission": {
+      "title": "Commission",
+      "description": "Comisión de trabajo permanente o accidental del CMJ.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "minLength": 3, "maxLength": 120 },
+        "slug": { "type": "string", "maxLength": 100 },
+        "description": { "type": "string", "minLength": 5, "maxLength": 1000 },
+        "accentColor": { "type": "string", "maxLength": 16 },
+        "iconName": { "type": "string", "maxLength": 32 },
+        "coverImageUrl": { "type": "string", "maxLength": 800 },
+        "mission": { "type": "string", "maxLength": 2500 },
+        "objectives": { "type": "array" },
+        "workLines": { "type": "array" },
+        "meetingPlace": { "type": "string", "maxLength": 240 },
+        "meetingSchedule": { "type": "string", "maxLength": 180 },
+        "leaderUid": { "type": "string", "maxLength": 128 },
+        "leaderName": { "type": "string", "maxLength": 120 },
+        "secretaryUid": { "type": "string", "maxLength": 128 },
+        "secretaryName": { "type": "string", "maxLength": 120 },
+        "memberUids": { "type": "array" },
+        "members": { "type": "array" },
+        "goals": { "type": "array" },
+        "status": { "type": "string", "enum": ["activa", "inactiva", "archivada"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "description", "status", "createdAt", "updatedAt"]
+    },
+    "CommissionJoinRequest": {
+      "title": "CommissionJoinRequest",
+      "description": "Solicitud de ingreso de un consejero activo a una comisión de trabajo.",
+      "type": "object",
+      "properties": {
+        "commissionId": { "type": "string", "maxLength": 128 },
+        "userUid": { "type": "string", "maxLength": 128 },
+        "userName": { "type": "string", "maxLength": 120 },
+        "userPhotoUrl": { "type": "string", "maxLength": 800 },
+        "message": { "type": "string", "maxLength": 400 },
+        "status": { "type": "string", "enum": ["pendiente", "aprobada", "rechazada"] },
+        "reviewedByUid": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["commissionId", "userUid", "userName", "status", "createdAt", "updatedAt"]
+    },
+    "NewsItem": {
+      "title": "NewsItem",
+      "description": "Noticia, comunicado oficial o entrada de galería.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "minLength": 3, "maxLength": 180 },
+        "type": { "type": "string", "enum": ["noticia", "comunicado", "galeria"] },
+        "summary": { "type": "string", "minLength": 5, "maxLength": 400 },
+        "content": { "type": "string", "minLength": 5, "maxLength": 15000 },
+        "imageUrl": { "type": "string", "maxLength": 1500 },
+        "tags": { "type": "array" },
+        "seoTitle": { "type": "string", "maxLength": 140 },
+        "seoDescription": { "type": "string", "maxLength": 240 },
+        "scheduledPublishAt": { "type": "string", "maxLength": 40 },
+        "status": { "type": "string", "enum": ["borrador", "publicada", "archivada"] },
+        "authorUid": { "type": "string", "maxLength": 128 },
+        "authorName": { "type": "string", "maxLength": 120 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "type", "summary", "content", "status", "authorUid", "authorName", "createdAt", "updatedAt"]
+    },
+    "Project": {
+      "title": "Project",
+      "description": "Proyecto juvenil o iniciativa institucional del CMJ.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "minLength": 3, "maxLength": 180 },
+        "summary": { "type": "string", "minLength": 5, "maxLength": 500 },
+        "objective": { "type": "string", "minLength": 5, "maxLength": 4000 },
+        "commissionId": { "type": "string", "maxLength": 128 },
+        "status": { "type": "string", "enum": ["borrador", "publicada", "archivada"] },
+        "progressPercent": { "type": "number" },
+        "authorUid": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "summary", "objective", "status", "progressPercent", "authorUid", "createdAt", "updatedAt"]
+    },
+    "PlenarySession": {
+      "title": "PlenarySession",
+      "description": "Sesión ordinaria, extraordinaria o de comisión con código de asistencia QR.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "minLength": 3, "maxLength": 180 },
+        "sessionType": { "type": "string", "enum": ["ordinaria", "extraordinaria", "comision"] },
+        "dateIso": { "type": "string", "maxLength": 40 },
+        "location": { "type": "string", "minLength": 2, "maxLength": 180 },
+        "agenda": { "type": "string", "minLength": 3, "maxLength": 5000 },
+        "status": { "type": "string", "enum": ["borrador", "programada", "realizada", "cancelada"] },
+        "visibility": { "type": "string", "enum": ["publico", "interno"] },
+        "checkinCode": { "type": "string", "maxLength": 24 },
+        "createdByUid": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "sessionType", "dateIso", "location", "agenda", "status", "visibility", "createdByUid", "createdAt", "updatedAt"]
+    },
+    "AttendanceRecord": {
+      "title": "AttendanceRecord",
+      "description": "Registro de asistencia por sesión y consejero.",
+      "type": "object",
+      "properties": {
+        "sessionId": { "type": "string", "maxLength": 128 },
+        "userUid": { "type": "string", "maxLength": 128 },
+        "userName": { "type": "string", "maxLength": 120 },
+        "status": { "type": "string", "enum": ["presente", "ausente", "justificada"] },
+        "recordedByUid": { "type": "string", "maxLength": 128 },
+        "notes": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["sessionId", "userUid", "userName", "status", "recordedByUid", "createdAt", "updatedAt"]
+    },
+    "Justification": {
+      "title": "Justification",
+      "description": "Justificación de inasistencia con anexo protegido.",
+      "type": "object",
+      "properties": {
+        "sessionId": { "type": "string", "maxLength": 128 },
+        "userUid": { "type": "string", "maxLength": 128 },
+        "userName": { "type": "string", "maxLength": 120 },
+        "reason": { "type": "string", "minLength": 5, "maxLength": 2000 },
+        "attachmentId": { "type": "string", "maxLength": 128 },
+        "attachmentName": { "type": "string", "maxLength": 200 },
+        "attachmentPath": { "type": "string", "maxLength": 400 },
+        "reviewStatus": { "type": "string", "enum": ["pendiente", "aprobada", "rechazada"] },
+        "reviewedByUid": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["sessionId", "userUid", "userName", "reason", "reviewStatus", "createdAt", "updatedAt"]
+    },
+    "InstitutionalDocument": {
+      "title": "InstitutionalDocument",
+      "description": "Acta, informe de gestión, resolución u oficio institucional en Firebase Storage.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "minLength": 3, "maxLength": 200 },
+        "category": { "type": "string", "enum": ["acta", "informe", "resolucion", "oficio", "circular", "convocatoria", "proposicion", "plan_accion", "reglamento", "presupuesto", "otro"] },
+        "description": { "type": "string", "maxLength": 2000 },
+        "tags": { "type": "array" },
+        "consecutiveNumber": { "type": "string", "maxLength": 64 },
+        "year": { "type": "number" },
+        "status": { "type": "string", "enum": ["borrador", "revision", "aprobada", "publicada", "archivada"] },
+        "visibility": { "type": "string", "enum": ["publico", "interno"] },
+        "commissionId": { "type": "string", "maxLength": 128 },
+        "sessionId": { "type": "string", "maxLength": 128 },
+        "projectId": { "type": "string", "maxLength": 128 },
+        "downloadCount": { "type": "number" },
+        "reviewComment": { "type": "string", "maxLength": 1000 },
+        "reviewedByUid": { "type": "string", "maxLength": 128 },
+        "reviewedByName": { "type": "string", "maxLength": 120 },
+        "publishedByUid": { "type": "string", "maxLength": 128 },
+        "archivedByUid": { "type": "string", "maxLength": 128 },
+        "currentVersion": { "type": "number" },
+        "fileId": { "type": "string", "maxLength": 128 },
+        "storagePath": { "type": "string", "maxLength": 400 },
+        "downloadUrl": { "type": "string", "maxLength": 800 },
+        "fileName": { "type": "string", "maxLength": 200 },
+        "fileMime": { "type": "string", "maxLength": 120 },
+        "fileSize": { "type": "number" },
+        "contentSha256": { "type": "string", "maxLength": 80 },
+        "authorUid": { "type": "string", "maxLength": 128 },
+        "authorName": { "type": "string", "maxLength": 120 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "category", "status", "visibility", "currentVersion", "fileId", "fileName", "fileMime", "fileSize", "authorUid", "authorName", "createdAt", "updatedAt"]
+    },
+    "DocumentVersion": {
+      "title": "DocumentVersion",
+      "description": "Histórico de versiones de un documento institucional.",
+      "type": "object",
+      "properties": {
+        "versionNumber": { "type": "number" },
+        "fileId": { "type": "string", "maxLength": 128 },
+        "storagePath": { "type": "string", "maxLength": 400 },
+        "downloadUrl": { "type": "string", "maxLength": 800 },
+        "fileName": { "type": "string", "maxLength": 200 },
+        "fileMime": { "type": "string", "maxLength": 120 },
+        "fileSize": { "type": "number" },
+        "contentSha256": { "type": "string", "maxLength": 80 },
+        "changelog": { "type": "string", "maxLength": 500 },
+        "uploadedByUid": { "type": "string", "maxLength": 128 },
+        "uploadedByName": { "type": "string", "maxLength": 120 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["versionNumber", "fileId", "fileName", "fileMime", "fileSize", "uploadedByUid", "uploadedByName", "createdAt"]
+    },
+    "DocumentComment": {
+      "title": "DocumentComment",
+      "description": "Comentario o devolución editorial de consejeros y Mesa Directiva.",
+      "type": "object",
+      "properties": {
+        "documentId": { "type": "string", "maxLength": 128 },
+        "authorUid": { "type": "string", "maxLength": 128 },
+        "authorName": { "type": "string", "maxLength": 120 },
+        "authorRole": { "type": "string", "maxLength": 40 },
+        "comment": { "type": "string", "maxLength": 1200 },
+        "actionType": { "type": "string", "enum": ["comentario", "aprobacion", "devolucion"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["documentId", "authorUid", "authorName", "authorRole", "comment", "actionType", "createdAt"]
+    },
+    "DocumentCounter": {
+      "title": "DocumentCounter",
+      "description": "Secuencia anual por categoría documental para consecutivos oficiales.",
+      "type": "object",
+      "properties": {
+        "category": { "type": "string" },
+        "year": { "type": "number" },
+        "seq": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["category", "year", "seq", "updatedAt"]
+    },
+    "Election": {
+      "title": "Election",
+      "description": "Votación interna del pleno con voto secreto.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "minLength": 3, "maxLength": 200 },
+        "description": { "type": "string", "minLength": 5, "maxLength": 2000 },
+        "options": { "type": "array" },
+        "status": { "type": "string", "enum": ["borrador", "abierta", "cerrada"] },
+        "closesAt": { "type": "string", "maxLength": 40 },
+        "createdByUid": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "description", "options", "status", "createdByUid", "createdAt", "updatedAt"]
+    },
+    "BallotReceipt": {
+      "title": "BallotReceipt",
+      "description": "Constancia de participación sin revelar el sentido del voto.",
+      "type": "object",
+      "properties": { "votedAt": { "type": "string", "format": "date-time" } },
+      "required": ["votedAt"]
+    },
+    "SecretBallot": {
+      "title": "SecretBallot",
+      "description": "Papeleta anónima de escrutinio.",
+      "type": "object",
+      "properties": {
+        "optionIndex": { "type": "number" },
+        "castAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["optionIndex", "castAt"]
+    },
+    "Commitment": {
+      "title": "Commitment",
+      "description": "Compromiso asignado a consejero o comisión.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "minLength": 3, "maxLength": 180 },
+        "description": { "type": "string", "minLength": 3, "maxLength": 2000 },
+        "commissionId": { "type": "string", "maxLength": 128 },
+        "assigneeUid": { "type": "string", "maxLength": 128 },
+        "assigneeName": { "type": "string", "maxLength": 120 },
+        "dueDate": { "type": "string", "maxLength": 40 },
+        "progressPercent": { "type": "number" },
+        "status": { "type": "string", "enum": ["pendiente", "en_progreso", "cumplido", "vencido"] },
+        "comments": { "type": "array" },
+        "createdByUid": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "description", "assigneeUid", "assigneeName", "dueDate", "progressPercent", "status", "createdByUid", "createdAt", "updatedAt"]
+    },
+    "CalendarEvent": {
+      "title": "CalendarEvent",
+      "description": "Evento institucional del calendario público o interno.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "minLength": 3, "maxLength": 180 },
+        "description": { "type": "string", "maxLength": 1500 },
+        "eventType": { "type": "string", "enum": ["sesion", "reunion", "actividad"] },
+        "startIso": { "type": "string", "maxLength": 40 },
+        "endIso": { "type": "string", "maxLength": 40 },
+        "location": { "type": "string", "maxLength": 180 },
+        "visibility": { "type": "string", "enum": ["publico", "interno"] },
+        "reminderNote": { "type": "string", "maxLength": 400 },
+        "createdByUid": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "eventType", "startIso", "endIso", "location", "visibility", "createdByUid", "createdAt", "updatedAt"]
+    },
+    "MailboxEntry": {
+      "title": "MailboxEntry",
+      "description": "Radicado ciudadano del buzón juvenil o PQRSD.",
+      "type": "object",
+      "properties": {
+        "trackingCode": { "type": "string", "pattern": "^PJ-FLA-[0-9]{4}-[A-Z0-9]{4}$" },
+        "category": { "type": "string", "enum": ["propuesta", "inquietud", "denuncia", "pqrsd"] },
+        "isAnonymous": { "type": "boolean" },
+        "senderName": { "type": "string", "maxLength": 120 },
+        "senderEmail": { "type": "string", "maxLength": 160 },
+        "senderNeighborhood": { "type": "string", "maxLength": 120 },
+        "subject": { "type": "string", "minLength": 4, "maxLength": 180 },
+        "message": { "type": "string", "minLength": 10, "maxLength": 4000 },
+        "status": { "type": "string", "enum": ["radicado", "en_revision", "respondido", "archivado"] },
+        "officialResponse": { "type": "string", "maxLength": 4000 },
+        "respondedByUid": { "type": "string", "maxLength": 128 },
+        "assignedToUid": { "type": "string", "maxLength": 128 },
+        "assignedToName": { "type": "string", "maxLength": 120 },
+        "history": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["trackingCode", "category", "isAnonymous", "subject", "message", "status", "createdAt", "updatedAt"]
+    },
+    "MailboxTrackingPublic": {
+      "title": "MailboxTrackingPublic",
+      "description": "Vista pública sin PII para consulta por código de seguimiento.",
+      "type": "object",
+      "properties": {
+        "trackingCode": { "type": "string", "pattern": "^PJ-FLA-[0-9]{4}-[A-Z0-9]{4}$" },
+        "category": { "type": "string", "enum": ["propuesta", "inquietud", "denuncia", "pqrsd"] },
+        "status": { "type": "string", "enum": ["radicado", "en_revision", "respondido", "archivado"] },
+        "officialResponse": { "type": "string", "maxLength": 4000 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["trackingCode", "category", "status", "createdAt", "updatedAt"]
+    },
+    "SettingDoc": {
+      "title": "SettingDoc",
+      "description": "Configuración institucional (bootstrap, invitación cifrada, información y apariencia pública).",
+      "type": "object",
+      "properties": {
+        "kind": { "type": "string", "enum": ["bootstrap", "invitation", "council_info", "site_appearance"] },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["kind", "updatedAt"]
+    },
+    "SiteAppearanceVersion": {
+      "title": "SiteAppearanceVersion",
+      "description": "Instantánea histórica de la apariencia pública del portal guardada por la Mesa Directiva.",
+      "type": "object",
+      "properties": {
+        "label": { "type": "string", "minLength": 2, "maxLength": 140 },
+        "snapshot": { "type": "object" },
+        "savedByUid": { "type": "string", "maxLength": 128 },
+        "savedByName": { "type": "string", "maxLength": 120 },
+        "createdAtIso": { "type": "string", "maxLength": 48 }
+      },
+      "required": ["label", "snapshot", "savedByUid", "savedByName", "createdAtIso"]
+    },
+    "WorkspaceLink": {
+      "title": "WorkspaceLink",
+      "description": "Enlace institucional hacia Google Docs, Google Sheets o Google Calendar administrado por el servidor.",
+      "type": "object",
+      "properties": {
+        "resourceType": { "type": "string", "enum": ["doc", "sheet", "calendar_event"] },
+        "externalId": { "type": "string", "maxLength": 255 },
+        "title": { "type": "string", "maxLength": 240 },
+        "url": { "type": "string", "maxLength": 600 },
+        "folderTag": { "type": "string", "maxLength": 80 },
+        "notes": { "type": "string", "maxLength": 1000 },
+        "linkedByUid": { "type": "string", "maxLength": 128 },
+        "linkedByName": { "type": "string", "maxLength": 120 },
+        "createdAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["resourceType", "externalId", "title", "url", "linkedByUid", "linkedByName", "createdAt"]
+    },
+    "PublicPoll": {
+      "title": "PublicPoll",
+      "description": "Encuesta o consulta juvenil multipregunta abierta a la ciudadanía de Flandes.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "minLength": 4, "maxLength": 180 },
+        "description": { "type": "string", "maxLength": 600 },
+        "options": { "type": "array" },
+        "questions": { "type": "array" },
+        "audience": { "type": "string", "enum": ["publica", "consejeros"] },
+        "anonymity": { "type": "string", "enum": ["anonima", "identificada"] },
+        "opensAt": { "type": "string", "maxLength": 40 },
+        "closesAt": { "type": "string", "maxLength": 40 },
+        "thankYouMessage": { "type": "string", "maxLength": 300 },
+        "responseCount": { "type": "number" },
+        "status": { "type": "string", "enum": ["borrador", "abierta", "cerrada", "archivada"] },
+        "createdByUid": { "type": "string", "maxLength": 128 },
+        "createdByName": { "type": "string", "maxLength": 120 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "description", "options", "status", "createdByUid", "createdByName", "createdAt", "updatedAt"]
+    },
+    "PollVoteReceipt": {
+      "title": "PollVoteReceipt",
+      "description": "Registro antifraude por huella de dispositivo para evitar votos duplicados.",
+      "type": "object",
+      "properties": {
+        "optionId": { "type": "string", "maxLength": 80 },
+        "voterFingerprint": { "type": "string", "maxLength": 128 },
+        "answers": { "type": "object" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["optionId", "createdAt"]
+    },
+    "PublicCall": {
+      "title": "PublicCall",
+      "description": "Convocatoria pública de eventos, talleres o cabildos juveniles.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "minLength": 4, "maxLength": 180 },
+        "category": { "type": "string", "enum": ["evento", "convocatoria", "taller", "cabildo"] },
+        "summary": { "type": "string", "maxLength": 1000 },
+        "eventDateIso": { "type": "string", "maxLength": 60 },
+        "location": { "type": "string", "maxLength": 180 },
+        "capacity": { "type": "number" },
+        "extraFields": { "type": "array" },
+        "status": { "type": "string", "enum": ["borrador", "abierta", "cerrada", "archivada"] },
+        "createdByUid": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "category", "summary", "eventDateIso", "location", "status", "createdByUid", "createdAt", "updatedAt"]
+    },
+    "CallRegistration": {
+      "title": "CallRegistration",
+      "description": "Inscripción de un joven de Flandes a una convocatoria abierta.",
+      "type": "object",
+      "properties": {
+        "callId": { "type": "string", "maxLength": 80 },
+        "callTitle": { "type": "string", "maxLength": 180 },
+        "fullName": { "type": "string", "minLength": 3, "maxLength": 120 },
+        "age": { "type": "number" },
+        "neighborhood": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "email": { "type": "string", "maxLength": 160 },
+        "phone": { "type": "string", "maxLength": 30 },
+        "notes": { "type": "string", "maxLength": 600 },
+        "extraAnswers": { "type": "object" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["callId", "callTitle", "fullName", "age", "neighborhood", "email", "createdAt"]
+    },
+    "InternalNotification": {
+      "title": "InternalNotification",
+      "description": "Aviso o recordatorio de sesión dentro del Centro de Alertas del CMJ.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "minLength": 3, "maxLength": 140 },
+        "body": { "type": "string", "minLength": 3, "maxLength": 600 },
+        "category": { "type": "string", "enum": ["aviso", "convocatoria_sesion", "alerta"] },
+        "sessionId": { "type": "string", "maxLength": 128 },
+        "readByUids": { "type": "array" },
+        "createdByUid": { "type": "string", "maxLength": 128 },
+        "createdByName": { "type": "string", "maxLength": 120 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "body", "category", "readByUids", "createdByUid", "createdByName", "createdAt"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Bitácora inmutable de auditoría.",
+      "type": "object",
+      "properties": {
+        "actorUid": { "type": "string", "maxLength": 128 },
+        "actorEmail": { "type": "string", "maxLength": 160 },
+        "actorRole": { "type": "string", "maxLength": 40 },
+        "action": { "type": "string", "maxLength": 120 },
+        "targetCollection": { "type": "string", "maxLength": 80 },
+        "targetId": { "type": "string", "maxLength": 128 },
+        "summary": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["actorUid", "actorEmail", "actorRole", "action", "targetCollection", "summary", "createdAt"]
+    },
+    "Certificate": {
+      "title": "Certificate",
+      "description": "Certificado PDF oficial con código QR verificable públicamente.",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "maxLength": 32 },
+        "recipientUid": { "type": "string", "maxLength": 128 },
+        "recipientName": { "type": "string", "maxLength": 120 },
+        "certificateType": { "type": "string", "enum": ["asistencia", "membresia", "participacion", "reconocimiento"] },
+        "title": { "type": "string", "maxLength": 180 },
+        "issuedFor": { "type": "string", "maxLength": 500 },
+        "issuedAtIso": { "type": "string", "maxLength": 32 },
+        "issuedByUid": { "type": "string", "maxLength": 128 },
+        "issuedByName": { "type": "string", "maxLength": 120 },
+        "status": { "type": "string", "enum": ["vigente", "revocado"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["code", "recipientName", "certificateType", "title", "issuedFor", "issuedAtIso", "issuedByUid", "issuedByName", "status", "createdAt", "updatedAt"]
+    },
+    "AnnualActionPlanItem": {
+      "title": "AnnualActionPlanItem",
+      "description": "Meta cuantitativa del Plan de Acción Anual del CMJ Flandes.",
+      "type": "object",
+      "properties": {
+        "year": { "type": "number" },
+        "axis": { "type": "string" },
+        "title": { "type": "string", "maxLength": 180 },
+        "commissionId": { "type": "string", "maxLength": 128 },
+        "goalDescription": { "type": "string", "maxLength": 1000 },
+        "indicator": { "type": "string", "maxLength": 180 },
+        "targetValue": { "type": "number" },
+        "executedValue": { "type": "number" },
+        "status": { "type": "string", "enum": ["pendiente", "en_curso", "cumplido"] },
+        "responsibleName": { "type": "string", "maxLength": 120 },
+        "createdByUid": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["year", "axis", "title", "goalDescription", "indicator", "targetValue", "executedValue", "status", "responsibleName", "createdByUid", "createdAt", "updatedAt"]
+    },
+    "YouthInitiative": {
+      "title": "YouthInitiative",
+      "description": "Iniciativa ciudadana registrada en el Banco de Iniciativas Juveniles.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 160 },
+        "summary": { "type": "string", "maxLength": 1500 },
+        "neighborhood": { "type": "string", "maxLength": 120 },
+        "thematicArea": { "type": "string", "maxLength": 80 },
+        "proposerAlias": { "type": "string", "maxLength": 80 },
+        "status": { "type": "string", "enum": ["recibida", "en_evaluacion", "en_comision", "aprobada", "archivada"] },
+        "boardResponse": { "type": "string", "maxLength": 1200 },
+        "assignedCommissionId": { "type": "string", "maxLength": 128 },
+        "supportCount": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "summary", "neighborhood", "thematicArea", "proposerAlias", "status", "supportCount", "createdAt", "updatedAt"]
+    },
+    "InitiativeSupport": {
+      "title": "InitiativeSupport",
+      "description": "Constancia única de respaldo ciudadano por dispositivo.",
+      "type": "object",
+      "properties": { "createdAt": { "type": "string", "format": "date-time" } },
+      "required": ["createdAt"]
+    },
+    "SiteAnalyticsRecord": {
+      "title": "SiteAnalyticsRecord",
+      "description": "Conteo diario agregado de vistas por ruta sin cookies de terceros.",
+      "type": "object",
+      "properties": {
+        "route": { "type": "string", "maxLength": 100 },
+        "dateKey": { "type": "string", "maxLength": 12 },
+        "count": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["route", "dateKey", "count", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Perfil privado y configuración de privacidad por campo de cada consejero."
+    },
+    "/public_directory/{userId}": {
+      "schema": { "$ref": "#/entities/PublicDirectoryMember" },
+      "description": "Proyección pública aprobada para el directorio de consejeros."
+    },
+    "/commissions/{commissionId}": {
+      "schema": { "$ref": "#/entities/Commission" },
+      "description": "Comisiones de trabajo del CMJ."
+    },
+    "/commissions/{commissionId}/join_requests/{reqUid}": {
+      "schema": { "$ref": "#/entities/CommissionJoinRequest" },
+      "description": "Solicitudes de ingreso de consejeros a la comisión."
+    },
+    "/news/{newsId}": {
+      "schema": { "$ref": "#/entities/NewsItem" },
+      "description": "Noticias, comunicados y galería institucional."
+    },
+    "/projects/{projectId}": {
+      "schema": { "$ref": "#/entities/Project" },
+      "description": "Proyectos juveniles del CMJ."
+    },
+    "/sessions/{sessionId}": {
+      "schema": { "$ref": "#/entities/PlenarySession" },
+      "description": "Sesiones del pleno y comisiones."
+    },
+    "/attendance/{attendanceId}": {
+      "schema": { "$ref": "#/entities/AttendanceRecord" },
+      "description": "Registros de asistencia por sesión."
+    },
+    "/justifications/{justificationId}": {
+      "schema": { "$ref": "#/entities/Justification" },
+      "description": "Justificaciones de inasistencia."
+    },
+    "/documents/{documentId}": {
+      "schema": { "$ref": "#/entities/InstitutionalDocument" },
+      "description": "Documentos, actas e informes institucionales."
+    },
+    "/documents/{documentId}/versions/{versionId}": {
+      "schema": { "$ref": "#/entities/DocumentVersion" },
+      "description": "Versiones históricas de documentos."
+    },
+    "/documents/{documentId}/comments/{commentId}": {
+      "schema": { "$ref": "#/entities/DocumentComment" },
+      "description": "Comentarios de revisión editorial por documento."
+    },
+    "/document_counters/{counterId}": {
+      "schema": { "$ref": "#/entities/DocumentCounter" },
+      "description": "Contadores anuales consecutivos por categoría."
+    },
+    "/elections/{electionId}": {
+      "schema": { "$ref": "#/entities/Election" },
+      "description": "Votaciones internas del CMJ."
+    },
+    "/elections/{electionId}/ballot_receipts/{voterUid}": {
+      "schema": { "$ref": "#/entities/BallotReceipt" },
+      "description": "Registro de participación por consejero sin contenido de voto."
+    },
+    "/elections/{electionId}/ballots/{ballotId}": {
+      "schema": { "$ref": "#/entities/SecretBallot" },
+      "description": "Papeletas anónimas de escrutinio."
+    },
+    "/commitments/{commitmentId}": {
+      "schema": { "$ref": "#/entities/Commitment" },
+      "description": "Compromisos asignados."
+    },
+    "/calendar_events/{eventId}": {
+      "schema": { "$ref": "#/entities/CalendarEvent" },
+      "description": "Eventos y reuniones del calendario."
+    },
+    "/mailbox/{mailboxId}": {
+      "schema": { "$ref": "#/entities/MailboxEntry" },
+      "description": "Radicados completos del buzón juvenil y PQRSD."
+    },
+    "/mailbox_tracking/{trackingCode}": {
+      "schema": { "$ref": "#/entities/MailboxTrackingPublic" },
+      "description": "Estado público sin PII consultable por código exacto."
+    },
+    "/settings/{settingId}": {
+      "schema": { "$ref": "#/entities/SettingDoc" },
+      "description": "Documentos de configuración y apariencia pública."
+    },
+    "/site_content_versions/{versionId}": {
+      "schema": { "$ref": "#/entities/SiteAppearanceVersion" },
+      "description": "Historial de versiones de apariencia del portal (solo Mesa Directiva)."
+    },
+    "/workspace_links/{linkId}": {
+      "schema": { "$ref": "#/entities/WorkspaceLink" },
+      "description": "Referencias a documentos de Google Docs, Google Sheets y eventos de Calendar."
+    },
+    "/public_polls/{pollId}": {
+      "schema": { "$ref": "#/entities/PublicPoll" },
+      "description": "Encuestas ciudadanas publicadas en /participacion."
+    },
+    "/public_polls/{pollId}/votes/{voteId}": {
+      "schema": { "$ref": "#/entities/PollVoteReceipt" },
+      "description": "Constancia de participación única en encuesta."
+    },
+    "/public_calls/{callId}": {
+      "schema": { "$ref": "#/entities/PublicCall" },
+      "description": "Convocatorias juveniles abiertas en /participacion."
+    },
+    "/call_registrations/{registrationId}": {
+      "schema": { "$ref": "#/entities/CallRegistration" },
+      "description": "Inscripciones juveniles recibidas en convocatorias abiertas."
+    },
+    "/notifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/InternalNotification" },
+      "description": "Alertas internas del panel de consejeros."
+    },
+    "/audit_logs/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "Bitácora inmutable de auditoría."
+    },
+    "/certificates/{certificateId}": {
+      "schema": { "$ref": "#/entities/Certificate" },
+      "description": "Certificados institucionales verificables por código QR exacto."
+    },
+    "/annual_action_plans/{itemId}": {
+      "schema": { "$ref": "#/entities/AnnualActionPlanItem" },
+      "description": "Metas públicas del Plan de Acción Anual."
+    },
+    "/youth_initiatives/{initiativeId}": {
+      "schema": { "$ref": "#/entities/YouthInitiative" },
+      "description": "Banco público de iniciativas juveniles de Flandes."
+    },
+    "/youth_initiatives/{initiativeId}/support/{deviceId}": {
+      "schema": { "$ref": "#/entities/InitiativeSupport" },
+      "description": "Registro único de respaldo ciudadano por dispositivo."
+    },
+    "/site_analytics/{analyticsId}": {
+      "schema": { "$ref": "#/entities/SiteAnalyticsRecord" },
+      "description": "Estadísticas agregadas diarias por ruta sin cookies de terceros."
+    }
+  }
+}

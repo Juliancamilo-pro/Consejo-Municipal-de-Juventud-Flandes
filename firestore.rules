@@ -1,0 +1,1368 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Bloqueo global por defecto
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Primitivas base ---
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function userPath(uid) {
+      return /databases/$(database)/documents/users/$(uid);
+    }
+
+    function hasUserDoc() {
+      return isSignedIn() && exists(userPath(request.auth.uid));
+    }
+
+    function currentUser() {
+      return get(userPath(request.auth.uid)).data;
+    }
+
+    function isActiveUser() {
+      return hasUserDoc() && currentUser().status == 'activo';
+    }
+
+    function isAdmin() {
+      return isActiveUser() && currentUser().role == 'secretario_admin';
+    }
+
+    function isBoard() {
+      return isActiveUser() && currentUser().role in ['secretario_admin', 'presidente', 'vicepresidente'];
+    }
+
+    function isLeaderOrBoard() {
+      return isActiveUser() && currentUser().role in ['secretario_admin', 'presidente', 'vicepresidente', 'lider_comision'];
+    }
+
+    function isNonEmptyStr(val, minLen, maxLen) {
+      return val is string && val.size() >= minLen && val.size() <= maxLen;
+    }
+
+    function isOptionalStr(data, field, maxLen) {
+      return !(field in data) || (data[field] is string && data[field].size() <= maxLen);
+    }
+
+    function isOptionalBool(data, field) {
+      return !(field in data) || data[field] is bool;
+    }
+
+    function isOptionalNum(data, field, minVal, maxVal) {
+      return !(field in data) || (data[field] is number && data[field] >= minVal && data[field] <= maxVal);
+    }
+
+    // --- Validadores de entidades ---
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'displayName', 'role', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly([
+          'uid', 'email', 'displayName', 'slug', 'photoUrl', 'role', 'status',
+          'period', 'commissionId', 'positionTitle', 'sector',
+          'shortBio', 'bio', 'fullBio', 'educationOccupation', 'motivation', 'proposals',
+          'workAxes', 'achievements', 'skills', 'featuredQuote',
+          'projectIds', 'socialLinks', 'publicEmail', 'fieldVisibility',
+          'habeasDataAccepted', 'habeasDataAcceptedAt', 'isMinor',
+          'guardianAuthorizationNote', 'profileReviewStatus',
+          'profileReviewComment', 'profileReviewedByName', 'profileReviewedAt',
+          'showManagementKpis', 'emailNotifications', 'approvedByUid', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.uid)
+        && isNonEmptyStr(data.email, 5, 160)
+        && isNonEmptyStr(data.displayName, 2, 120)
+        && isOptionalStr(data, 'slug', 140)
+        && isOptionalStr(data, 'photoUrl', 1500)
+        && data.role in ['secretario_admin', 'presidente', 'vicepresidente', 'lider_comision', 'consejero']
+        && data.status in ['pendiente', 'activo', 'suspendido']
+        && isOptionalStr(data, 'period', 32)
+        && isOptionalStr(data, 'commissionId', 128)
+        && isOptionalStr(data, 'positionTitle', 120)
+        && isOptionalStr(data, 'sector', 120)
+        && isOptionalStr(data, 'shortBio', 280)
+        && isOptionalStr(data, 'bio', 800)
+        && isOptionalStr(data, 'fullBio', 3000)
+        && isOptionalStr(data, 'educationOccupation', 240)
+        && isOptionalStr(data, 'motivation', 1500)
+        && isOptionalStr(data, 'proposals', 2500)
+        && (!('workAxes' in data) || (data.workAxes is list && data.workAxes.size() <= 8))
+        && (!('achievements' in data) || (data.achievements is list && data.achievements.size() <= 12))
+        && (!('skills' in data) || (data.skills is list && data.skills.size() <= 12))
+        && isOptionalStr(data, 'featuredQuote', 140)
+        && (!('projectIds' in data) || (data.projectIds is list && data.projectIds.size() <= 12))
+        && (!('socialLinks' in data) || data.socialLinks is map)
+        && isOptionalStr(data, 'publicEmail', 160)
+        && (!('fieldVisibility' in data) || data.fieldVisibility is map)
+        && isOptionalBool(data, 'habeasDataAccepted')
+        && isOptionalStr(data, 'habeasDataAcceptedAt', 64)
+        && isOptionalBool(data, 'isMinor')
+        && isOptionalStr(data, 'guardianAuthorizationNote', 400)
+        && (!('profileReviewStatus' in data) || data.profileReviewStatus in ['borrador', 'revision', 'publicada'])
+        && isOptionalStr(data, 'profileReviewComment', 500)
+        && isOptionalStr(data, 'profileReviewedByName', 120)
+        && isOptionalStr(data, 'profileReviewedAt', 64)
+        && isOptionalBool(data, 'showManagementKpis')
+        && isOptionalBool(data, 'emailNotifications')
+        && isOptionalStr(data, 'approvedByUid', 128)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidPublicDirectory(data) {
+      return data.keys().hasAll(['uid', 'displayName', 'role', 'status', 'updatedAt'])
+        && data.keys().hasOnly([
+          'uid', 'slug', 'displayName', 'role', 'status', 'period', 'photoUrl',
+          'commissionId', 'commissionName', 'positionTitle', 'sector',
+          'shortBio', 'bio', 'fullBio', 'educationOccupation', 'motivation', 'proposals',
+          'workAxes', 'achievements', 'skills', 'featuredQuote',
+          'projectIds', 'socialLinks', 'publicEmail',
+          'showManagementKpis', 'kpiSessionsAttended', 'kpiCommitmentsFulfilled',
+          'updatedAt'
+        ])
+        && isValidId(data.uid)
+        && isOptionalStr(data, 'slug', 140)
+        && isNonEmptyStr(data.displayName, 2, 120)
+        && data.role in ['secretario_admin', 'presidente', 'vicepresidente', 'lider_comision', 'consejero']
+        && data.status in ['activo', 'inactivo']
+        && isOptionalStr(data, 'period', 32)
+        && isOptionalStr(data, 'photoUrl', 1500)
+        && isOptionalStr(data, 'commissionId', 128)
+        && isOptionalStr(data, 'commissionName', 140)
+        && isOptionalStr(data, 'positionTitle', 120)
+        && isOptionalStr(data, 'sector', 120)
+        && isOptionalStr(data, 'shortBio', 280)
+        && isOptionalStr(data, 'bio', 800)
+        && isOptionalStr(data, 'fullBio', 3000)
+        && isOptionalStr(data, 'educationOccupation', 240)
+        && isOptionalStr(data, 'motivation', 1500)
+        && isOptionalStr(data, 'proposals', 2500)
+        && (!('workAxes' in data) || (data.workAxes is list && data.workAxes.size() <= 8))
+        && (!('achievements' in data) || (data.achievements is list && data.achievements.size() <= 12))
+        && (!('skills' in data) || (data.skills is list && data.skills.size() <= 12))
+        && isOptionalStr(data, 'featuredQuote', 140)
+        && (!('projectIds' in data) || (data.projectIds is list && data.projectIds.size() <= 12))
+        && (!('socialLinks' in data) || data.socialLinks is map)
+        && isOptionalStr(data, 'publicEmail', 160)
+        && isOptionalBool(data, 'showManagementKpis')
+        && isOptionalNum(data, 'kpiSessionsAttended', 0, 5000)
+        && isOptionalNum(data, 'kpiCommitmentsFulfilled', 0, 5000)
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCommission(data) {
+      return data.keys().hasAll(['name', 'description', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly([
+          'name', 'slug', 'description', 'accentColor', 'iconName', 'coverImageUrl',
+          'mission', 'objectives', 'workLines', 'meetingPlace', 'meetingSchedule',
+          'leaderUid', 'leaderName', 'secretaryUid', 'secretaryName',
+          'memberUids', 'members', 'goals', 'status', 'createdAt', 'updatedAt'
+        ])
+        && isNonEmptyStr(data.name, 3, 120)
+        && isOptionalStr(data, 'slug', 100)
+        && isNonEmptyStr(data.description, 5, 1000)
+        && isOptionalStr(data, 'accentColor', 16)
+        && isOptionalStr(data, 'iconName', 32)
+        && isOptionalStr(data, 'coverImageUrl', 800)
+        && isOptionalStr(data, 'mission', 2500)
+        && (!('objectives' in data) || (data.objectives is list && data.objectives.size() <= 15))
+        && (!('workLines' in data) || (data.workLines is list && data.workLines.size() <= 15))
+        && isOptionalStr(data, 'meetingPlace', 240)
+        && isOptionalStr(data, 'meetingSchedule', 180)
+        && data.status in ['activa', 'inactiva', 'archivada']
+        && isOptionalStr(data, 'leaderUid', 128)
+        && isOptionalStr(data, 'leaderName', 120)
+        && isOptionalStr(data, 'secretaryUid', 128)
+        && isOptionalStr(data, 'secretaryName', 120)
+        && (!('memberUids' in data) || (data.memberUids is list && data.memberUids.size() <= 40))
+        && (!('members' in data) || (data.members is list && data.members.size() <= 40))
+        && (!('goals' in data) || (data.goals is list && data.goals.size() <= 25))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCommissionJoinRequest(data) {
+      return data.keys().hasAll(['commissionId', 'userUid', 'userName', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['commissionId', 'userUid', 'userName', 'userPhotoUrl', 'message', 'status', 'reviewedByUid', 'createdAt', 'updatedAt'])
+        && isValidId(data.commissionId)
+        && isValidId(data.userUid)
+        && isNonEmptyStr(data.userName, 2, 120)
+        && isOptionalStr(data, 'userPhotoUrl', 800)
+        && isOptionalStr(data, 'message', 400)
+        && data.status in ['pendiente', 'aprobada', 'rechazada']
+        && isOptionalStr(data, 'reviewedByUid', 128)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidNews(data) {
+      return data.keys().hasAll(['title', 'type', 'summary', 'content', 'status', 'authorUid', 'authorName', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly([
+          'title', 'type', 'summary', 'content', 'imageUrl', 'tags',
+          'seoTitle', 'seoDescription', 'scheduledPublishAt', 'status',
+          'authorUid', 'authorName', 'createdAt', 'updatedAt'
+        ])
+        && isNonEmptyStr(data.title, 3, 180)
+        && data.type in ['noticia', 'comunicado', 'galeria']
+        && isNonEmptyStr(data.summary, 5, 400)
+        && isNonEmptyStr(data.content, 5, 15000)
+        && isOptionalStr(data, 'imageUrl', 1500)
+        && (!('tags' in data) || (data.tags is list && data.tags.size() <= 10))
+        && isOptionalStr(data, 'seoTitle', 140)
+        && isOptionalStr(data, 'seoDescription', 240)
+        && isOptionalStr(data, 'scheduledPublishAt', 40)
+        && data.status in ['borrador', 'publicada', 'archivada']
+        && isValidId(data.authorUid)
+        && isNonEmptyStr(data.authorName, 2, 120)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidProject(data) {
+      return data.keys().hasAll(['title', 'summary', 'objective', 'status', 'progressPercent', 'authorUid', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['title', 'summary', 'objective', 'commissionId', 'status', 'progressPercent', 'authorUid', 'createdAt', 'updatedAt'])
+        && isNonEmptyStr(data.title, 3, 180)
+        && isNonEmptyStr(data.summary, 5, 500)
+        && isNonEmptyStr(data.objective, 5, 4000)
+        && isOptionalStr(data, 'commissionId', 128)
+        && data.status in ['borrador', 'publicada', 'archivada']
+        && data.progressPercent is number && data.progressPercent >= 0 && data.progressPercent <= 100
+        && isValidId(data.authorUid)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidSession(data) {
+      return data.keys().hasAll(['title', 'sessionType', 'dateIso', 'location', 'agenda', 'status', 'visibility', 'createdByUid', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['title', 'sessionType', 'dateIso', 'location', 'agenda', 'status', 'visibility', 'checkinCode', 'createdByUid', 'createdAt', 'updatedAt'])
+        && isNonEmptyStr(data.title, 3, 180)
+        && data.sessionType in ['ordinaria', 'extraordinaria', 'comision']
+        && isNonEmptyStr(data.dateIso, 8, 40)
+        && isNonEmptyStr(data.location, 2, 180)
+        && isNonEmptyStr(data.agenda, 3, 5000)
+        && data.status in ['borrador', 'programada', 'realizada', 'cancelada']
+        && data.visibility in ['publico', 'interno']
+        && isOptionalStr(data, 'checkinCode', 24)
+        && isValidId(data.createdByUid)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAttendance(data) {
+      return data.keys().hasAll(['sessionId', 'userUid', 'userName', 'status', 'recordedByUid', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['sessionId', 'userUid', 'userName', 'status', 'recordedByUid', 'notes', 'createdAt', 'updatedAt'])
+        && isValidId(data.sessionId)
+        && isValidId(data.userUid)
+        && isNonEmptyStr(data.userName, 2, 120)
+        && data.status in ['presente', 'ausente', 'justificada']
+        && isValidId(data.recordedByUid)
+        && isOptionalStr(data, 'notes', 500)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidJustification(data) {
+      return data.keys().hasAll(['sessionId', 'userUid', 'userName', 'reason', 'reviewStatus', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['sessionId', 'userUid', 'userName', 'reason', 'attachmentId', 'attachmentName', 'attachmentPath', 'reviewStatus', 'reviewedByUid', 'createdAt', 'updatedAt'])
+        && isValidId(data.sessionId)
+        && isValidId(data.userUid)
+        && isNonEmptyStr(data.userName, 2, 120)
+        && isNonEmptyStr(data.reason, 5, 2000)
+        && isOptionalStr(data, 'attachmentId', 128)
+        && isOptionalStr(data, 'attachmentName', 200)
+        && isOptionalStr(data, 'attachmentPath', 400)
+        && data.reviewStatus in ['pendiente', 'aprobada', 'rechazada']
+        && isOptionalStr(data, 'reviewedByUid', 128)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidDocument(data) {
+      return data.keys().hasAll(['title', 'category', 'status', 'visibility', 'currentVersion', 'fileId', 'fileName', 'fileMime', 'fileSize', 'authorUid', 'authorName', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly([
+          'title', 'category', 'description', 'tags', 'consecutiveNumber', 'year',
+          'commissionId', 'sessionId', 'projectId', 'downloadCount',
+          'reviewComment', 'reviewedByUid', 'reviewedByName', 'publishedByUid', 'archivedByUid',
+          'status', 'visibility', 'currentVersion', 'fileId', 'storagePath', 'downloadUrl',
+          'fileName', 'fileMime', 'fileSize', 'contentSha256', 'authorUid', 'authorName', 'createdAt', 'updatedAt'
+        ])
+        && isNonEmptyStr(data.title, 3, 200)
+        && data.category in ['acta', 'informe', 'resolucion', 'oficio', 'circular', 'convocatoria', 'proposicion', 'plan_accion', 'reglamento', 'presupuesto', 'otro']
+        && isOptionalStr(data, 'description', 2000)
+        && (!('tags' in data) || (data.tags is list && data.tags.size() <= 12))
+        && isOptionalStr(data, 'consecutiveNumber', 64)
+        && isOptionalNum(data, 'year', 2020, 2040)
+        && isOptionalStr(data, 'commissionId', 128)
+        && isOptionalStr(data, 'sessionId', 128)
+        && isOptionalStr(data, 'projectId', 128)
+        && isOptionalNum(data, 'downloadCount', 0, 10000000)
+        && isOptionalStr(data, 'reviewComment', 1000)
+        && isOptionalStr(data, 'reviewedByUid', 128)
+        && isOptionalStr(data, 'reviewedByName', 120)
+        && isOptionalStr(data, 'publishedByUid', 128)
+        && isOptionalStr(data, 'archivedByUid', 128)
+        && data.status in ['borrador', 'revision', 'aprobada', 'publicada', 'archivada']
+        && data.visibility in ['publico', 'interno']
+        && data.currentVersion is number && data.currentVersion >= 1 && data.currentVersion <= 200
+        && isValidId(data.fileId)
+        && isOptionalStr(data, 'storagePath', 400)
+        && isOptionalStr(data, 'downloadUrl', 800)
+        && isNonEmptyStr(data.fileName, 1, 200)
+        && isNonEmptyStr(data.fileMime, 3, 120)
+        && data.fileSize is number && data.fileSize > 0 && data.fileSize <= 52428800
+        && isOptionalStr(data, 'contentSha256', 80)
+        && isValidId(data.authorUid)
+        && isNonEmptyStr(data.authorName, 2, 120)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidDocumentComment(data) {
+      return data.keys().hasAll(['documentId', 'authorUid', 'authorName', 'authorRole', 'comment', 'actionType', 'createdAt'])
+        && data.keys().hasOnly(['documentId', 'authorUid', 'authorName', 'authorRole', 'comment', 'actionType', 'createdAt'])
+        && isValidId(data.documentId)
+        && isValidId(data.authorUid)
+        && isNonEmptyStr(data.authorName, 2, 120)
+        && isNonEmptyStr(data.authorRole, 2, 40)
+        && isNonEmptyStr(data.comment, 1, 1200)
+        && data.actionType in ['comentario', 'aprobacion', 'devolucion']
+        && data.createdAt is timestamp;
+    }
+
+    function isValidDocumentCounter(data) {
+      return data.keys().hasAll(['category', 'year', 'seq', 'updatedAt'])
+        && data.keys().hasOnly(['category', 'year', 'seq', 'updatedAt'])
+        && data.category in ['acta', 'informe', 'resolucion', 'oficio', 'circular', 'convocatoria', 'proposicion', 'plan_accion', 'reglamento', 'presupuesto', 'otro']
+        && data.year is number && data.year >= 2020 && data.year <= 2040
+        && data.seq is number && data.seq >= 1 && data.seq <= 1000000
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidDocumentVersion(data) {
+      return data.keys().hasAll(['versionNumber', 'fileId', 'fileName', 'fileMime', 'fileSize', 'uploadedByUid', 'uploadedByName', 'createdAt'])
+        && data.keys().hasOnly(['versionNumber', 'fileId', 'storagePath', 'downloadUrl', 'fileName', 'fileMime', 'fileSize', 'contentSha256', 'changelog', 'uploadedByUid', 'uploadedByName', 'createdAt'])
+        && data.versionNumber is number && data.versionNumber >= 1 && data.versionNumber <= 200
+        && isValidId(data.fileId)
+        && isOptionalStr(data, 'storagePath', 400)
+        && isOptionalStr(data, 'downloadUrl', 800)
+        && isNonEmptyStr(data.fileName, 1, 200)
+        && isNonEmptyStr(data.fileMime, 3, 120)
+        && data.fileSize is number && data.fileSize > 0 && data.fileSize <= 52428800
+        && isOptionalStr(data, 'contentSha256', 80)
+        && isOptionalStr(data, 'changelog', 500)
+        && isValidId(data.uploadedByUid)
+        && isNonEmptyStr(data.uploadedByName, 2, 120)
+        && data.createdAt is timestamp;
+    }
+
+    function isValidElection(data) {
+      return data.keys().hasAll(['title', 'description', 'options', 'status', 'createdByUid', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['title', 'description', 'options', 'status', 'closesAt', 'createdByUid', 'createdAt', 'updatedAt'])
+        && isNonEmptyStr(data.title, 3, 200)
+        && isNonEmptyStr(data.description, 5, 2000)
+        && data.options is list && data.options.size() >= 2 && data.options.size() <= 10
+        && data.options[0] is string && data.options[0].size() >= 1 && data.options[0].size() <= 120
+        && data.status in ['borrador', 'abierta', 'cerrada']
+        && isOptionalStr(data, 'closesAt', 40)
+        && isValidId(data.createdByUid)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCommitment(data) {
+      return data.keys().hasAll(['title', 'description', 'assigneeUid', 'assigneeName', 'dueDate', 'progressPercent', 'status', 'createdByUid', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['title', 'description', 'commissionId', 'assigneeUid', 'assigneeName', 'dueDate', 'progressPercent', 'status', 'comments', 'createdByUid', 'createdAt', 'updatedAt'])
+        && isNonEmptyStr(data.title, 3, 180)
+        && isNonEmptyStr(data.description, 3, 2000)
+        && isOptionalStr(data, 'commissionId', 128)
+        && isValidId(data.assigneeUid)
+        && isNonEmptyStr(data.assigneeName, 2, 120)
+        && isNonEmptyStr(data.dueDate, 8, 40)
+        && data.progressPercent is number && data.progressPercent >= 0 && data.progressPercent <= 100
+        && data.status in ['pendiente', 'en_progreso', 'cumplido', 'vencido']
+        && (!('comments' in data) || (data.comments is list && data.comments.size() <= 50))
+        && isValidId(data.createdByUid)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCalendarEvent(data) {
+      return data.keys().hasAll(['title', 'eventType', 'startIso', 'endIso', 'location', 'visibility', 'createdByUid', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['title', 'description', 'eventType', 'startIso', 'endIso', 'location', 'visibility', 'reminderNote', 'createdByUid', 'createdAt', 'updatedAt'])
+        && isNonEmptyStr(data.title, 3, 180)
+        && isOptionalStr(data, 'description', 1500)
+        && data.eventType in ['sesion', 'reunion', 'actividad']
+        && isNonEmptyStr(data.startIso, 8, 40)
+        && isNonEmptyStr(data.endIso, 8, 40)
+        && isNonEmptyStr(data.location, 2, 180)
+        && data.visibility in ['publico', 'interno']
+        && isOptionalStr(data, 'reminderNote', 400)
+        && isValidId(data.createdByUid)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidMailboxEntry(data) {
+      return data.keys().hasAll(['trackingCode', 'category', 'isAnonymous', 'subject', 'message', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['trackingCode', 'category', 'isAnonymous', 'senderName', 'senderEmail', 'senderNeighborhood', 'subject', 'message', 'status', 'officialResponse', 'respondedByUid', 'assignedToUid', 'assignedToName', 'history', 'createdAt', 'updatedAt'])
+        && data.trackingCode is string && data.trackingCode.matches('^PJ-FLA-[0-9]{4}-[A-Z0-9]{4}$')
+        && data.category in ['propuesta', 'inquietud', 'denuncia', 'pqrsd']
+        && data.isAnonymous is bool
+        && isOptionalStr(data, 'senderName', 120)
+        && isOptionalStr(data, 'senderEmail', 160)
+        && isOptionalStr(data, 'senderNeighborhood', 120)
+        && isNonEmptyStr(data.subject, 4, 180)
+        && isNonEmptyStr(data.message, 10, 4000)
+        && data.status in ['radicado', 'en_revision', 'respondido', 'archivado']
+        && isOptionalStr(data, 'officialResponse', 4000)
+        && isOptionalStr(data, 'respondedByUid', 128)
+        && isOptionalStr(data, 'assignedToUid', 128)
+        && isOptionalStr(data, 'assignedToName', 120)
+        && (!('history' in data) || (data.history is list && data.history.size() <= 30))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidMailboxTracking(data) {
+      return data.keys().hasAll(['trackingCode', 'category', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['trackingCode', 'category', 'status', 'officialResponse', 'createdAt', 'updatedAt'])
+        && data.trackingCode is string && data.trackingCode.matches('^PJ-FLA-[0-9]{4}-[A-Z0-9]{4}$')
+        && data.category in ['propuesta', 'inquietud', 'denuncia', 'pqrsd']
+        && data.status in ['radicado', 'en_revision', 'respondido', 'archivado']
+        && isOptionalStr(data, 'officialResponse', 4000)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCouncilInfo(data) {
+      return data.keys().hasAll(['kind', 'mission', 'vision', 'address', 'emailPublic', 'schedule', 'updatedAt'])
+        && data.keys().hasOnly(['kind', 'mission', 'vision', 'address', 'emailPublic', 'schedule', 'updatedAt'])
+        && data.kind == 'council_info'
+        && isNonEmptyStr(data.mission, 10, 2500)
+        && isNonEmptyStr(data.vision, 10, 2500)
+        && isOptionalStr(data, 'address', 240)
+        && isOptionalStr(data, 'emailPublic', 160)
+        && isOptionalStr(data, 'schedule', 240)
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidSiteAppearance(data) {
+      return data.keys().hasAll(['kind', 'heroTitle', 'councilTitle', 'updatedAt'])
+        && data.kind == 'site_appearance'
+        && isNonEmptyStr(data.heroTitle, 2, 220)
+        && isNonEmptyStr(data.councilTitle, 2, 220)
+        && isOptionalStr(data, 'updatedByUid', 128)
+        && isOptionalStr(data, 'updatedByName', 120)
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidInvitationSetting(data) {
+      return data.keys().hasAll(['kind', 'ciphertext', 'iv', 'tag', 'version', 'updatedByUid', 'updatedAt'])
+        && data.keys().hasOnly(['kind', 'ciphertext', 'iv', 'tag', 'version', 'updatedByUid', 'updatedAt'])
+        && data.kind == 'invitation'
+        && isNonEmptyStr(data.ciphertext, 10, 1000)
+        && isNonEmptyStr(data.iv, 8, 128)
+        && isNonEmptyStr(data.tag, 8, 128)
+        && data.version is number && data.version >= 1
+        && isValidId(data.updatedByUid)
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidPublicPoll(data) {
+      return data.keys().hasAll(['title', 'description', 'options', 'status', 'createdByUid', 'createdByName', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly([
+          'title', 'description', 'options', 'questions', 'audience', 'anonymity',
+          'opensAt', 'closesAt', 'thankYouMessage', 'responseCount', 'status',
+          'createdByUid', 'createdByName', 'createdAt', 'updatedAt'
+        ])
+        && isNonEmptyStr(data.title, 4, 180)
+        && isNonEmptyStr(data.description, 2, 600)
+        && data.options is list && data.options.size() >= 2 && data.options.size() <= 10
+        && data.options[0] is map
+        && (!('questions' in data) || (data.questions is list && data.questions.size() >= 1 && data.questions.size() <= 25))
+        && (!('audience' in data) || data.audience in ['publica', 'consejeros'])
+        && (!('anonymity' in data) || data.anonymity in ['anonima', 'identificada'])
+        && isOptionalStr(data, 'opensAt', 40)
+        && isOptionalStr(data, 'closesAt', 40)
+        && isOptionalStr(data, 'thankYouMessage', 300)
+        && (!('responseCount' in data) || (data.responseCount is number && data.responseCount >= 0 && data.responseCount <= 1000000))
+        && data.status in ['borrador', 'abierta', 'cerrada', 'archivada']
+        && isValidId(data.createdByUid)
+        && isNonEmptyStr(data.createdByName, 2, 120)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidPublicCall(data) {
+      return data.keys().hasAll(['title', 'category', 'summary', 'eventDateIso', 'location', 'status', 'createdByUid', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly([
+          'title', 'category', 'summary', 'eventDateIso', 'location', 'capacity',
+          'extraFields', 'status', 'createdByUid', 'createdAt', 'updatedAt'
+        ])
+        && isNonEmptyStr(data.title, 4, 180)
+        && data.category in ['evento', 'convocatoria', 'taller', 'cabildo']
+        && isNonEmptyStr(data.summary, 4, 1000)
+        && isNonEmptyStr(data.eventDateIso, 4, 60)
+        && isNonEmptyStr(data.location, 2, 180)
+        && (!('capacity' in data) || (data.capacity is number && data.capacity >= 1 && data.capacity <= 5000))
+        && (!('extraFields' in data) || (data.extraFields is list && data.extraFields.size() <= 15))
+        && data.status in ['borrador', 'abierta', 'cerrada', 'archivada']
+        && isValidId(data.createdByUid)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCallRegistration(data) {
+      return data.keys().hasAll(['callId', 'callTitle', 'fullName', 'age', 'neighborhood', 'email', 'createdAt'])
+        && data.keys().hasOnly(['callId', 'callTitle', 'fullName', 'age', 'neighborhood', 'email', 'phone', 'notes', 'extraAnswers', 'createdAt'])
+        && isValidId(data.callId)
+        && isNonEmptyStr(data.callTitle, 2, 180)
+        && isNonEmptyStr(data.fullName, 3, 120)
+        && data.age is number && data.age >= 10 && data.age <= 99
+        && isNonEmptyStr(data.neighborhood, 2, 120)
+        && isNonEmptyStr(data.email, 5, 160)
+        && isOptionalStr(data, 'phone', 30)
+        && isOptionalStr(data, 'notes', 600)
+        && (!('extraAnswers' in data) || data.extraAnswers is map)
+        && data.createdAt is timestamp;
+    }
+
+    function isValidNotification(data) {
+      return data.keys().hasAll(['title', 'body', 'category', 'readByUids', 'createdByUid', 'createdByName', 'createdAt'])
+        && data.keys().hasOnly(['title', 'body', 'category', 'sessionId', 'readByUids', 'createdByUid', 'createdByName', 'createdAt'])
+        && isNonEmptyStr(data.title, 3, 140)
+        && isNonEmptyStr(data.body, 3, 600)
+        && data.category in ['aviso', 'convocatoria_sesion', 'alerta']
+        && isOptionalStr(data, 'sessionId', 128)
+        && data.readByUids is list && data.readByUids.size() <= 200
+        && isValidId(data.createdByUid)
+        && isNonEmptyStr(data.createdByName, 2, 120)
+        && data.createdAt is timestamp;
+    }
+
+    function isValidAuditLog(data) {
+      return data.keys().hasAll(['actorUid', 'actorEmail', 'actorRole', 'action', 'targetCollection', 'summary', 'createdAt'])
+        && data.keys().hasOnly(['actorUid', 'actorEmail', 'actorRole', 'action', 'targetCollection', 'targetId', 'summary', 'createdAt'])
+        && isValidId(data.actorUid)
+        && isNonEmptyStr(data.actorEmail, 3, 160)
+        && isNonEmptyStr(data.actorRole, 2, 40)
+        && isNonEmptyStr(data.action, 2, 120)
+        && isNonEmptyStr(data.targetCollection, 2, 80)
+        && isOptionalStr(data, 'targetId', 128)
+        && isNonEmptyStr(data.summary, 3, 500)
+        && data.createdAt is timestamp;
+    }
+
+    function isValidCertificate(data) {
+      return data.keys().hasAll(['code', 'recipientName', 'certificateType', 'title', 'issuedFor', 'issuedAtIso', 'issuedByUid', 'issuedByName', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['code', 'recipientUid', 'recipientName', 'certificateType', 'title', 'issuedFor', 'issuedAtIso', 'issuedByUid', 'issuedByName', 'status', 'createdAt', 'updatedAt'])
+        && data.code is string && data.code.matches('^CMJ-CERT-20[0-9]{2}-[A-Z0-9]{4,10}$')
+        && isOptionalStr(data, 'recipientUid', 128)
+        && isNonEmptyStr(data.recipientName, 3, 120)
+        && data.certificateType in ['asistencia', 'membresia', 'participacion', 'reconocimiento']
+        && isNonEmptyStr(data.title, 5, 180)
+        && isNonEmptyStr(data.issuedFor, 10, 500)
+        && isNonEmptyStr(data.issuedAtIso, 8, 32)
+        && isValidId(data.issuedByUid)
+        && isNonEmptyStr(data.issuedByName, 2, 120)
+        && data.status in ['vigente', 'revocado']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidActionPlanItem(data) {
+      return data.keys().hasAll(['year', 'axis', 'title', 'goalDescription', 'indicator', 'targetValue', 'executedValue', 'status', 'responsibleName', 'createdByUid', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['year', 'axis', 'title', 'commissionId', 'goalDescription', 'indicator', 'targetValue', 'executedValue', 'status', 'responsibleName', 'createdByUid', 'createdAt', 'updatedAt'])
+        && data.year is number && data.year >= 2026 && data.year <= 2030
+        && data.axis in ['Participación Juvenil', 'Educación y Cultura', 'Ambiente y Ruralidad', 'Deporte y Bienestar', 'Control Social y Veeduría']
+        && isNonEmptyStr(data.title, 4, 180)
+        && isOptionalStr(data, 'commissionId', 128)
+        && isNonEmptyStr(data.goalDescription, 5, 1000)
+        && isNonEmptyStr(data.indicator, 2, 180)
+        && data.targetValue is number && data.targetValue >= 1 && data.targetValue <= 10000
+        && data.executedValue is number && data.executedValue >= 0 && data.executedValue <= 10000
+        && data.status in ['pendiente', 'en_curso', 'cumplido']
+        && isNonEmptyStr(data.responsibleName, 2, 120)
+        && isValidId(data.createdByUid)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidYouthInitiative(data) {
+      return data.keys().hasAll(['title', 'summary', 'neighborhood', 'thematicArea', 'proposerAlias', 'status', 'supportCount', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['title', 'summary', 'neighborhood', 'thematicArea', 'proposerAlias', 'status', 'boardResponse', 'assignedCommissionId', 'supportCount', 'createdAt', 'updatedAt'])
+        && isNonEmptyStr(data.title, 5, 160)
+        && isNonEmptyStr(data.summary, 10, 1500)
+        && isNonEmptyStr(data.neighborhood, 2, 120)
+        && isNonEmptyStr(data.thematicArea, 3, 80)
+        && isNonEmptyStr(data.proposerAlias, 2, 80)
+        && data.status in ['recibida', 'en_evaluacion', 'en_comision', 'aprobada', 'archivada']
+        && isOptionalStr(data, 'boardResponse', 1200)
+        && isOptionalStr(data, 'assignedCommissionId', 128)
+        && data.supportCount is number && data.supportCount >= 0 && data.supportCount <= 1000000
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // --- Reglas por colección ---
+
+    // 1. Usuarios (PII aislada)
+    match /users/{userId} {
+      allow get: if isValidId(userId) && isSignedIn() && (request.auth.uid == userId || isActiveUser());
+      allow list: if isActiveUser();
+
+      allow create: if isValidId(userId)
+        && isSignedIn()
+        && request.auth.uid == userId
+        && isValidUser(incoming())
+        && incoming().uid == request.auth.uid
+        && incoming().email == request.auth.token.email
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (
+          (incoming().role == 'consejero' && incoming().status == 'pendiente')
+          || (
+            incoming().role == 'secretario_admin'
+            && incoming().status == 'activo'
+            && !exists(/databases/$(database)/documents/settings/bootstrap)
+          )
+        );
+
+      allow update: if isValidId(userId)
+        && isSignedIn()
+        && isValidUser(incoming())
+        && incoming().uid == existing().uid
+        && incoming().email == existing().email
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (
+            request.auth.uid == userId
+            && isActiveUser()
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'displayName', 'slug', 'photoUrl', 'positionTitle', 'sector',
+              'shortBio', 'bio', 'fullBio', 'educationOccupation', 'motivation',
+              'proposals', 'workAxes', 'achievements', 'skills', 'featuredQuote',
+              'projectIds', 'socialLinks', 'publicEmail',
+              'fieldVisibility', 'habeasDataAccepted', 'habeasDataAcceptedAt',
+              'isMinor', 'emailNotifications', 'profileReviewStatus', 'period', 'updatedAt'
+            ])
+          )
+          || (
+            isBoard()
+            && existing().role != 'secretario_admin'
+            && incoming().role != 'secretario_admin'
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'role', 'status', 'commissionId', 'positionTitle', 'approvedByUid',
+              'slug', 'profileReviewStatus', 'profileReviewComment',
+              'profileReviewedByName', 'profileReviewedAt', 'showManagementKpis',
+              'guardianAuthorizationNote', 'updatedAt'
+            ])
+          )
+          || (
+            isAdmin()
+            && existing().role == 'secretario_admin'
+            && incoming().role == 'secretario_admin'
+            && incoming().status == 'activo'
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'displayName', 'slug', 'photoUrl', 'positionTitle', 'sector',
+              'shortBio', 'bio', 'fullBio', 'educationOccupation', 'motivation',
+              'proposals', 'workAxes', 'achievements', 'skills', 'featuredQuote',
+              'projectIds', 'socialLinks', 'publicEmail',
+              'fieldVisibility', 'habeasDataAccepted', 'habeasDataAcceptedAt',
+              'isMinor', 'guardianAuthorizationNote',
+              'emailNotifications', 'profileReviewStatus', 'profileReviewComment',
+              'profileReviewedByName', 'profileReviewedAt',
+              'showManagementKpis', 'period', 'updatedAt'
+            ])
+          )
+        );
+
+      allow delete: if false;
+    }
+
+    // 2. Directorio público sin PII
+    match /public_directory/{userId} {
+      allow get: if isValidId(userId);
+      allow list: if resource.data.status == 'activo' || isBoard();
+      allow create, update: if isValidId(userId)
+        && isBoard()
+        && isValidPublicDirectory(incoming())
+        && incoming().uid == userId
+        && incoming().updatedAt == request.time;
+      allow delete: if isValidId(userId) && (isBoard() || (isActiveUser() && request.auth.uid == userId));
+    }
+
+    // 3. Comisiones y solicitudes de ingreso
+    match /commissions/{commissionId} {
+      allow get: if isValidId(commissionId) && (existing().status == 'activa' || isActiveUser());
+      allow list: if resource.data.status == 'activa' || isActiveUser();
+      allow create: if isValidId(commissionId)
+        && isBoard()
+        && isValidCommission(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(commissionId)
+        && isValidCommission(incoming())
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isBoard()
+          || (
+            isLeaderOrBoard()
+            && existing().leaderUid == request.auth.uid
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'description', 'accentColor', 'iconName', 'coverImageUrl',
+              'mission', 'objectives', 'workLines', 'meetingPlace', 'meetingSchedule',
+              'secretaryUid', 'secretaryName', 'memberUids', 'members', 'goals', 'updatedAt'
+            ])
+          )
+        );
+      allow delete: if false;
+
+      match /join_requests/{reqUid} {
+        allow get: if isValidId(commissionId)
+          && isValidId(reqUid)
+          && isActiveUser()
+          && (
+            request.auth.uid == reqUid
+            || isBoard()
+            || get(/databases/$(database)/documents/commissions/$(commissionId)).data.leaderUid == request.auth.uid
+          );
+        allow list: if isValidId(commissionId)
+          && isActiveUser()
+          && (
+            isBoard()
+            || get(/databases/$(database)/documents/commissions/$(commissionId)).data.leaderUid == request.auth.uid
+          );
+        allow create: if isValidId(commissionId)
+          && isValidId(reqUid)
+          && isActiveUser()
+          && request.auth.uid == reqUid
+          && isValidCommissionJoinRequest(incoming())
+          && incoming().commissionId == commissionId
+          && incoming().userUid == request.auth.uid
+          && incoming().status == 'pendiente'
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isValidId(commissionId)
+          && isValidId(reqUid)
+          && isActiveUser()
+          && (
+            isBoard()
+            || get(/databases/$(database)/documents/commissions/$(commissionId)).data.leaderUid == request.auth.uid
+          )
+          && isValidCommissionJoinRequest(incoming())
+          && incoming().commissionId == existing().commissionId
+          && incoming().userUid == existing().userUid
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'reviewedByUid', 'updatedAt']);
+        allow delete: if false;
+      }
+    }
+
+    // 4. Noticias, comunicados y galería
+    match /news/{newsId} {
+      allow get: if isValidId(newsId) && (existing().status == 'publicada' || isActiveUser());
+      allow list: if resource.data.status == 'publicada' || isActiveUser();
+      allow create: if isValidId(newsId)
+        && isBoard()
+        && isValidNews(incoming())
+        && incoming().authorUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(newsId)
+        && isBoard()
+        && isValidNews(incoming())
+        && incoming().authorUid == existing().authorUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time;
+      allow delete: if isValidId(newsId) && isAdmin();
+    }
+
+    // 5. Proyectos
+    match /projects/{projectId} {
+      allow get: if isValidId(projectId) && (existing().status == 'publicada' || isActiveUser());
+      allow list: if resource.data.status == 'publicada' || isActiveUser();
+      allow create: if isValidId(projectId)
+        && isLeaderOrBoard()
+        && isValidProject(incoming())
+        && incoming().authorUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(projectId)
+        && isLeaderOrBoard()
+        && isValidProject(incoming())
+        && incoming().authorUid == existing().authorUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time;
+      allow delete: if isValidId(projectId) && isAdmin();
+    }
+
+    // 6. Sesiones del pleno
+    match /sessions/{sessionId} {
+      allow get: if isValidId(sessionId) && ((existing().visibility == 'publico' && existing().status != 'borrador') || isActiveUser());
+      allow list: if (resource.data.visibility == 'publico' && resource.data.status != 'borrador') || isActiveUser();
+      allow create: if isValidId(sessionId)
+        && isBoard()
+        && isValidSession(incoming())
+        && incoming().createdByUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(sessionId)
+        && isBoard()
+        && isValidSession(incoming())
+        && incoming().createdByUid == existing().createdByUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time;
+      allow delete: if isValidId(sessionId) && isAdmin();
+    }
+
+    // 7. Asistencia
+    match /attendance/{attendanceId} {
+      allow get: if isValidId(attendanceId) && isActiveUser();
+      allow list: if isActiveUser();
+      allow create: if isValidId(attendanceId)
+        && isActiveUser()
+        && isValidAttendance(incoming())
+        && incoming().recordedByUid == request.auth.uid
+        && (isBoard() || incoming().userUid == request.auth.uid)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(attendanceId)
+        && isBoard()
+        && isValidAttendance(incoming())
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time;
+      allow delete: if isValidId(attendanceId) && isAdmin();
+    }
+
+    // 8. Justificaciones
+    match /justifications/{justificationId} {
+      allow get: if isValidId(justificationId) && isActiveUser() && (existing().userUid == request.auth.uid || isBoard());
+      allow list: if isActiveUser() && (resource.data.userUid == request.auth.uid || isBoard());
+      allow create: if isValidId(justificationId)
+        && isActiveUser()
+        && isValidJustification(incoming())
+        && incoming().userUid == request.auth.uid
+        && incoming().reviewStatus == 'pendiente'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(justificationId)
+        && isBoard()
+        && isValidJustification(incoming())
+        && incoming().userUid == existing().userUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['reviewStatus', 'reviewedByUid', 'updatedAt']);
+      allow delete: if isValidId(justificationId) && isAdmin();
+    }
+
+    // 9. Documentos, versiones, comentarios y contadores consecutivos
+    match /documents/{documentId} {
+      allow get: if isValidId(documentId) && ((existing().visibility == 'publico' && existing().status == 'publicada') || isActiveUser());
+      allow list: if (resource.data.visibility == 'publico' && resource.data.status == 'publicada') || isActiveUser();
+      allow create: if isValidId(documentId)
+        && isLeaderOrBoard()
+        && isValidDocument(incoming())
+        && incoming().authorUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(documentId)
+        && isValidDocument(incoming())
+        && incoming().authorUid == existing().authorUid
+        && incoming().createdAt == existing().createdAt
+        && (
+          (
+            incoming().diff(existing()).affectedKeys().hasOnly(['downloadCount'])
+            && ((existing().visibility == 'publico' && existing().status == 'publicada') || isActiveUser())
+            && (
+              (!('downloadCount' in existing()) && incoming().downloadCount == 1)
+              || ('downloadCount' in existing() && incoming().downloadCount == existing().downloadCount + 1)
+            )
+          )
+          || (
+            incoming().updatedAt == request.time
+            && (
+              isBoard()
+              || (
+                isLeaderOrBoard()
+                && existing().authorUid == request.auth.uid
+                && existing().status in ['borrador', 'revision']
+                && incoming().status in ['borrador', 'revision']
+              )
+            )
+          )
+        );
+      allow delete: if isValidId(documentId) && isAdmin();
+
+      match /versions/{versionId} {
+        allow get: if isValidId(documentId) && isValidId(versionId) && ((get(/databases/$(database)/documents/documents/$(documentId)).data.visibility == 'publico' && get(/databases/$(database)/documents/documents/$(documentId)).data.status == 'publicada') || isActiveUser());
+        allow list: if isActiveUser();
+        allow create: if isValidId(documentId)
+          && isValidId(versionId)
+          && isLeaderOrBoard()
+          && exists(/databases/$(database)/documents/documents/$(documentId))
+          && isValidDocumentVersion(incoming())
+          && incoming().uploadedByUid == request.auth.uid
+          && incoming().createdAt == request.time;
+        allow update, delete: if false;
+      }
+
+      match /comments/{commentId} {
+        allow get, list: if isValidId(documentId) && isActiveUser();
+        allow create: if isValidId(documentId)
+          && isValidId(commentId)
+          && isActiveUser()
+          && exists(/databases/$(database)/documents/documents/$(documentId))
+          && isValidDocumentComment(incoming())
+          && incoming().documentId == documentId
+          && incoming().authorUid == request.auth.uid
+          && incoming().createdAt == request.time;
+        allow update, delete: if false;
+      }
+    }
+
+    match /document_counters/{counterId} {
+      allow get: if isValidId(counterId) && isActiveUser();
+      allow list: if false;
+      allow create: if isValidId(counterId)
+        && isLeaderOrBoard()
+        && isValidDocumentCounter(incoming())
+        && incoming().seq == 1
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(counterId)
+        && isLeaderOrBoard()
+        && isValidDocumentCounter(incoming())
+        && incoming().category == existing().category
+        && incoming().year == existing().year
+        && incoming().seq == existing().seq + 1
+        && incoming().updatedAt == request.time;
+      allow delete: if false;
+    }
+
+    // 10. Votaciones internas con voto secreto atómico
+    match /elections/{electionId} {
+      allow get: if isValidId(electionId) && isActiveUser();
+      allow list: if isActiveUser();
+      allow create: if isValidId(electionId)
+        && isBoard()
+        && isValidElection(incoming())
+        && incoming().createdByUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(electionId)
+        && isBoard()
+        && isValidElection(incoming())
+        && existing().status != 'cerrada'
+        && incoming().createdByUid == existing().createdByUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time;
+      allow delete: if isValidId(electionId) && isAdmin();
+
+      match /ballot_receipts/{voterUid} {
+        allow get: if isValidId(electionId) && isValidId(voterUid) && isActiveUser() && (request.auth.uid == voterUid || isBoard());
+        allow list: if isActiveUser() && isBoard();
+        allow create: if isValidId(electionId)
+          && isValidId(voterUid)
+          && isActiveUser()
+          && request.auth.uid == voterUid
+          && get(/databases/$(database)/documents/elections/$(electionId)).data.status == 'abierta'
+          && !exists(/databases/$(database)/documents/elections/$(electionId)/ballot_receipts/$(voterUid))
+          && incoming().keys().hasAll(['votedAt'])
+          && incoming().keys().hasOnly(['votedAt'])
+          && incoming().votedAt == request.time;
+        allow update, delete: if false;
+      }
+
+      match /ballots/{ballotId} {
+        allow get: if isValidId(electionId) && isValidId(ballotId) && isActiveUser() && get(/databases/$(database)/documents/elections/$(electionId)).data.status == 'cerrada';
+        allow list: if isActiveUser() && get(/databases/$(database)/documents/elections/$(electionId)).data.status == 'cerrada';
+        allow create: if isValidId(electionId)
+          && isValidId(ballotId)
+          && isActiveUser()
+          && get(/databases/$(database)/documents/elections/$(electionId)).data.status == 'abierta'
+          && !exists(/databases/$(database)/documents/elections/$(electionId)/ballot_receipts/$(request.auth.uid))
+          && existsAfter(/databases/$(database)/documents/elections/$(electionId)/ballot_receipts/$(request.auth.uid))
+          && incoming().keys().hasAll(['optionIndex', 'castAt'])
+          && incoming().keys().hasOnly(['optionIndex', 'castAt'])
+          && incoming().optionIndex is number
+          && incoming().optionIndex >= 0
+          && incoming().optionIndex < get(/databases/$(database)/documents/elections/$(electionId)).data.options.size()
+          && incoming().castAt == request.time;
+        allow update, delete: if false;
+      }
+    }
+
+    // 11. Compromisos
+    match /commitments/{commitmentId} {
+      allow get: if isValidId(commitmentId) && isActiveUser();
+      allow list: if isActiveUser();
+      allow create: if isValidId(commitmentId)
+        && isLeaderOrBoard()
+        && isValidCommitment(incoming())
+        && incoming().createdByUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(commitmentId)
+        && isActiveUser()
+        && isValidCommitment(incoming())
+        && incoming().createdByUid == existing().createdByUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isLeaderOrBoard()
+          || (
+            existing().assigneeUid == request.auth.uid
+            && incoming().diff(existing()).affectedKeys().hasOnly(['progressPercent', 'status', 'comments', 'updatedAt'])
+          )
+          || incoming().diff(existing()).affectedKeys().hasOnly(['comments', 'updatedAt'])
+        );
+      allow delete: if isValidId(commitmentId) && isAdmin();
+    }
+
+    // 12. Calendario
+    match /calendar_events/{eventId} {
+      allow get: if isValidId(eventId) && (existing().visibility == 'publico' || isActiveUser());
+      allow list: if resource.data.visibility == 'publico' || isActiveUser();
+      allow create: if isValidId(eventId)
+        && isLeaderOrBoard()
+        && isValidCalendarEvent(incoming())
+        && incoming().createdByUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(eventId)
+        && isLeaderOrBoard()
+        && isValidCalendarEvent(incoming())
+        && incoming().createdByUid == existing().createdByUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time;
+      allow delete: if isValidId(eventId) && isAdmin();
+    }
+
+    // 13. Buzón de participación juvenil
+    match /mailbox/{mailboxId} {
+      allow get: if isValidId(mailboxId) && isActiveUser();
+      allow list: if isActiveUser();
+      allow create: if isValidId(mailboxId)
+        && isValidMailboxEntry(incoming())
+        && incoming().status == 'radicado'
+        && !('officialResponse' in incoming())
+        && !('respondedByUid' in incoming())
+        && !('assignedToUid' in incoming())
+        && !('assignedToName' in incoming())
+        && !('history' in incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(mailboxId)
+        && isBoard()
+        && isValidMailboxEntry(incoming())
+        && incoming().trackingCode == existing().trackingCode
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'status', 'officialResponse', 'respondedByUid',
+          'assignedToUid', 'assignedToName', 'history', 'updatedAt'
+        ]);
+      allow delete: if isValidId(mailboxId) && isAdmin();
+    }
+
+    // 14. Consulta pública por código de seguimiento (sin PII, sin list)
+    match /mailbox_tracking/{trackingCode} {
+      allow get: if isValidId(trackingCode);
+      allow list: if false;
+      allow create: if isValidId(trackingCode)
+        && isValidMailboxTracking(incoming())
+        && incoming().trackingCode == trackingCode
+        && incoming().status == 'radicado'
+        && !('officialResponse' in incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(trackingCode)
+        && isBoard()
+        && isValidMailboxTracking(incoming())
+        && incoming().trackingCode == existing().trackingCode
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time;
+      allow delete: if isValidId(trackingCode) && isAdmin();
+    }
+
+    // 15. Configuración del sistema y apariencia
+    match /settings/{settingId} {
+      allow get: if settingId in ['bootstrap', 'council_info', 'invitation', 'site_appearance'];
+      allow list: if false;
+
+      allow create: if isValidId(settingId)
+        && isSignedIn()
+        && incoming().updatedAt == request.time
+        && (
+          (
+            settingId == 'bootstrap'
+            && !exists(/databases/$(database)/documents/settings/bootstrap)
+            && incoming().keys().hasAll(['kind', 'adminActivated', 'adminUid', 'updatedAt'])
+            && incoming().keys().hasOnly(['kind', 'adminActivated', 'adminUid', 'updatedAt'])
+            && incoming().kind == 'bootstrap'
+            && incoming().adminActivated == true
+            && incoming().adminUid == request.auth.uid
+          )
+          || (settingId == 'council_info' && isBoard() && isValidCouncilInfo(incoming()))
+          || (settingId == 'site_appearance' && isBoard() && isValidSiteAppearance(incoming()))
+          || (settingId == 'invitation' && isAdmin() && isValidInvitationSetting(incoming()))
+        );
+
+      allow update: if isValidId(settingId)
+        && incoming().updatedAt == request.time
+        && (
+          (settingId == 'council_info' && isBoard() && isValidCouncilInfo(incoming()))
+          || (settingId == 'site_appearance' && isBoard() && isValidSiteAppearance(incoming()))
+          || (settingId == 'invitation' && isAdmin() && isValidInvitationSetting(incoming()))
+        );
+
+      allow delete: if false;
+    }
+
+    // 15b. Historial de versiones de apariencia del portal (solo Mesa Directiva)
+    match /site_content_versions/{versionId} {
+      allow get, list: if isValidId(versionId) && isBoard();
+      allow create: if isValidId(versionId)
+        && isBoard()
+        && incoming().keys().hasAll(['label', 'snapshot', 'savedByUid', 'savedByName', 'createdAtIso'])
+        && incoming().keys().hasOnly(['label', 'snapshot', 'savedByUid', 'savedByName', 'createdAtIso'])
+        && isNonEmptyStr(incoming().label, 2, 140)
+        && incoming().snapshot is map
+        && incoming().savedByUid == request.auth.uid
+        && isNonEmptyStr(incoming().savedByName, 2, 120)
+        && isNonEmptyStr(incoming().createdAtIso, 8, 48);
+      allow update, delete: if false;
+    }
+
+    // 16. Enlaces de Google Workspace (escritura solo desde servidor Admin SDK)
+    match /workspace_links/{linkId} {
+      allow get: if isValidId(linkId) && isActiveUser();
+      allow list: if isActiveUser();
+      allow write: if false;
+    }
+
+    // 17. Encuestas ciudadanas y constancias de voto
+    match /public_polls/{pollId} {
+      allow get: if isValidId(pollId) && (existing().status in ['abierta', 'cerrada'] || isBoard());
+      allow list: if resource.data.status in ['abierta', 'cerrada'] || isBoard();
+      allow create: if isValidId(pollId)
+        && isBoard()
+        && isValidPublicPoll(incoming())
+        && incoming().createdByUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(pollId)
+        && isValidPublicPoll(incoming())
+        && incoming().createdByUid == existing().createdByUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (
+            isBoard()
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'title', 'description', 'opensAt', 'closesAt',
+              'thankYouMessage', 'audience', 'anonymity', 'updatedAt'
+            ])
+          )
+          || (
+            existing().status == 'abierta'
+            && incoming().status == 'abierta'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['options', 'questions', 'responseCount', 'updatedAt'])
+            && incoming().options.size() == existing().options.size()
+          )
+        );
+      allow delete: if isValidId(pollId) && isAdmin();
+
+      match /votes/{voteId} {
+        allow get: if isValidId(pollId) && isValidId(voteId) && isBoard();
+        allow list: if false;
+        allow create: if isValidId(pollId)
+          && isValidId(voteId)
+          && get(/databases/$(database)/documents/public_polls/$(pollId)).data.status == 'abierta'
+          && !exists(/databases/$(database)/documents/public_polls/$(pollId)/votes/$(voteId))
+          && incoming().keys().hasAll(['optionId', 'createdAt'])
+          && incoming().keys().hasOnly(['optionId', 'voterFingerprint', 'answers', 'createdAt'])
+          && isNonEmptyStr(incoming().optionId, 1, 80)
+          && isOptionalStr(incoming(), 'voterFingerprint', 128)
+          && (!('answers' in incoming()) || incoming().answers is map)
+          && incoming().createdAt == request.time;
+        allow update, delete: if false;
+      }
+    }
+
+    // 18. Convocatorias ciudadanas
+    match /public_calls/{callId} {
+      allow get: if isValidId(callId) && (existing().status in ['abierta', 'cerrada'] || isBoard());
+      allow list: if resource.data.status in ['abierta', 'cerrada'] || isBoard();
+      allow create: if isValidId(callId)
+        && isBoard()
+        && isValidPublicCall(incoming())
+        && incoming().createdByUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(callId)
+        && isBoard()
+        && isValidPublicCall(incoming())
+        && incoming().createdByUid == existing().createdByUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time;
+      allow delete: if isValidId(callId) && isAdmin();
+    }
+
+    // 19. Inscripciones juveniles a convocatorias (lectura solo Mesa Directiva)
+    match /call_registrations/{registrationId} {
+      allow get: if isValidId(registrationId) && isBoard();
+      allow list: if isBoard();
+      allow create: if isValidId(registrationId)
+        && isValidCallRegistration(incoming())
+        && exists(/databases/$(database)/documents/public_calls/$(incoming().callId))
+        && get(/databases/$(database)/documents/public_calls/$(incoming().callId)).data.status == 'abierta'
+        && incoming().createdAt == request.time;
+      allow update, delete: if false;
+    }
+
+    // 20. Centro de avisos internos
+    match /notifications/{notificationId} {
+      allow get: if isValidId(notificationId) && isActiveUser();
+      allow list: if isActiveUser();
+      allow create: if isValidId(notificationId)
+        && (isBoard() || (isLeaderOrBoard() && incoming().category == 'aviso'))
+        && isValidNotification(incoming())
+        && incoming().createdByUid == request.auth.uid
+        && incoming().createdAt == request.time;
+      allow update: if isValidId(notificationId)
+        && isActiveUser()
+        && isValidNotification(incoming())
+        && incoming().createdByUid == existing().createdByUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['readByUids'])
+        && incoming().readByUids.hasAll(existing().readByUids);
+      allow delete: if isValidId(notificationId) && isAdmin();
+    }
+
+    // 21. Bitácora inmutable de auditoría
+    match /audit_logs/{logId} {
+      allow get: if isValidId(logId) && isBoard();
+      allow list: if isBoard();
+      allow create: if isValidId(logId)
+        && isSignedIn()
+        && isValidAuditLog(incoming())
+        && incoming().actorUid == request.auth.uid
+        && incoming().createdAt == request.time;
+      allow update, delete: if false;
+    }
+
+    // 22. Certificados PDF con verificación QR por código exacto
+    match /certificates/{code} {
+      allow get: if isValidId(code);
+      allow list: if isActiveUser();
+      allow create: if isValidId(code)
+        && isBoard()
+        && isValidCertificate(incoming())
+        && incoming().code == code
+        && incoming().issuedByUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(code)
+        && isBoard()
+        && isValidCertificate(incoming())
+        && incoming().code == existing().code
+        && incoming().issuedByUid == existing().issuedByUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time;
+      allow delete: if false;
+    }
+
+    // 23. Plan de Acción Anual
+    match /annual_action_plans/{itemId} {
+      allow get, list: if true;
+      allow create: if isValidId(itemId)
+        && isBoard()
+        && isValidActionPlanItem(incoming())
+        && incoming().createdByUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(itemId)
+        && isBoard()
+        && isValidActionPlanItem(incoming())
+        && incoming().createdByUid == existing().createdByUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time;
+      allow delete: if isValidId(itemId) && isAdmin();
+    }
+
+    // 24. Banco de Iniciativas Juveniles y apoyos únicos por dispositivo
+    match /youth_initiatives/{initiativeId} {
+      allow get, list: if true;
+      allow create: if isValidId(initiativeId)
+        && isValidYouthInitiative(incoming())
+        && incoming().status == 'recibida'
+        && incoming().supportCount == 0
+        && !('boardResponse' in incoming())
+        && !('assignedCommissionId' in incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(initiativeId)
+        && isValidYouthInitiative(incoming())
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isBoard()
+          || (
+            incoming().diff(existing()).affectedKeys().hasOnly(['supportCount', 'updatedAt'])
+            && incoming().supportCount == existing().supportCount + 1
+          )
+        );
+      allow delete: if isValidId(initiativeId) && isAdmin();
+
+      match /support/{deviceId} {
+        allow get: if isValidId(initiativeId) && isValidId(deviceId);
+        allow list: if false;
+        allow create: if isValidId(initiativeId)
+          && isValidId(deviceId)
+          && exists(/databases/$(database)/documents/youth_initiatives/$(initiativeId))
+          && !exists(/databases/$(database)/documents/youth_initiatives/$(initiativeId)/support/$(deviceId))
+          && incoming().keys().hasAll(['createdAt'])
+          && incoming().keys().hasOnly(['createdAt'])
+          && incoming().createdAt == request.time;
+        allow update, delete: if false;
+      }
+    }
+
+    // 25. Estadísticas agregadas de uso sin cookies de terceros
+    match /site_analytics/{docId} {
+      allow get: if isValidId(docId);
+      allow list: if isBoard();
+      allow create: if isValidId(docId)
+        && incoming().keys().hasAll(['route', 'dateKey', 'count', 'updatedAt'])
+        && incoming().keys().hasOnly(['route', 'dateKey', 'count', 'updatedAt'])
+        && isNonEmptyStr(incoming().route, 1, 100)
+        && isNonEmptyStr(incoming().dateKey, 8, 12)
+        && incoming().count == 1
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(docId)
+        && incoming().keys().hasAll(['route', 'dateKey', 'count', 'updatedAt'])
+        && incoming().keys().hasOnly(['route', 'dateKey', 'count', 'updatedAt'])
+        && isNonEmptyStr(incoming().route, 1, 100)
+        && incoming().dateKey == existing().dateKey
+        && incoming().count == existing().count + 1
+        && incoming().updatedAt == request.time;
+      allow delete: if false;
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "CMJ Flandes · Consejo Municipal de Juventud (2026-2029)",
+  "description": "Plataforma institucional del Consejo Municipal de Juventud de Flandes, Tolima, Colombia para el periodo 2026-2029. Portal ciudadano de participación, transparencia y gestión juvenil.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

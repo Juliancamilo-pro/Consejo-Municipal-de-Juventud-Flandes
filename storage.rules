@@ -1,0 +1,77 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function userDoc() {
+      return firestore.get(
+        /databases/ai-studio-cmjflandesconsej-7b69e81f-e809-478e-9179-c7bab6dcdb2a/documents/users/$(request.auth.uid)
+      ).data;
+    }
+
+    function isActiveMember() {
+      return isSignedIn() && (
+        request.auth.token.status == 'activo' ||
+        userDoc().status == 'activo'
+      );
+    }
+
+    function isLeaderOrBoard() {
+      return isActiveMember() && (
+        request.auth.token.role in ['secretario_admin', 'presidente', 'vicepresidente', 'lider_comision'] ||
+        userDoc().role in ['secretario_admin', 'presidente', 'vicepresidente', 'lider_comision']
+      );
+    }
+
+    function isBoard() {
+      return isActiveMember() && (
+        request.auth.token.role in ['secretario_admin', 'presidente', 'vicepresidente'] ||
+        userDoc().role in ['secretario_admin', 'presidente', 'vicepresidente']
+      );
+    }
+
+    function isAllowedDocumentOrMedia() {
+      return request.resource != null
+        && request.resource.size > 0
+        && request.resource.size <= 50 * 1024 * 1024
+        && (
+          request.resource.contentType == 'application/pdf'
+          || request.resource.contentType == 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+          || request.resource.contentType == 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+          || request.resource.contentType == 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+          || request.resource.contentType.matches('image/(png|jpeg|webp)')
+          || request.resource.contentType.matches('video/(mp4|webm|quicktime)')
+        );
+    }
+
+    function isAllowedAvatar() {
+      return request.resource != null
+        && request.resource.size > 0
+        && request.resource.size <= 2 * 1024 * 1024
+        && request.resource.contentType.matches('image/(webp|jpeg|png)');
+    }
+
+    // Archivos públicos (noticias, portal, actas aprobadas, convocatorias)
+    match /public/{allPaths=**} {
+      allow read: if true;
+      allow write: if isLeaderOrBoard() && isAllowedDocumentOrMedia();
+      allow delete: if isBoard();
+    }
+
+    // Documentos internos (requieren sesión activa; descarga oficial vía URL firmada)
+    match /internal/{allPaths=**} {
+      allow read: if isActiveMember();
+      allow write: if isActiveMember() && isAllowedDocumentOrMedia();
+      allow delete: if isBoard();
+    }
+
+    // Fotografías de perfil de consejeros (máx 2 MB, WebP/PNG/JPG)
+    match /avatars/{userId}/{fileName} {
+      allow read: if true;
+      allow write: if isActiveMember() && (request.auth.uid == userId || isBoard()) && isAllowedAvatar();
+      allow delete: if isActiveMember() && (request.auth.uid == userId || isBoard());
+    }
+  }
+}
