@@ -8,9 +8,8 @@ import {
   Upload,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import { doc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
-import { db } from '../../firebase';
-import { hashEmail, isLeadershipTier, roleLabelToAccessTier } from '../../lib/security';
+import { apiRequest } from '../../lib/apiClient';
+import { isLeadershipTier } from '../../lib/security';
 import type {
   AccessTier,
   Commission,
@@ -197,41 +196,15 @@ export function SpreadsheetsModule({
     const draft = getDraft(c);
     setSavingRowId(c.id);
     try {
-      const commName =
-        commissions.find((cm) => cm.id === draft.commissionId)?.name || draft.commissionId;
-      await updateDoc(doc(db, 'public_councilors', c.id), {
-        fullName: draft.fullName.trim() || c.fullName,
-        roleLabel: draft.roleLabel,
-        commissionId: draft.commissionId,
-        commissionName: commName,
-        updatedAt: serverTimestamp(),
-      });
-
-      const priv = privateCouncilors.find((p) => p.uid === c.uid);
-      if (priv && !c.uid.startsWith('pending_')) {
-        const tier = roleLabelToAccessTier(draft.roleLabel);
-        await updateDoc(doc(db, 'roles', c.uid), {
-          accessTier: tier,
-          roleLabel: draft.roleLabel,
-          updatedAt: serverTimestamp(),
-        }).catch(() => {});
-        await updateDoc(doc(db, 'councilor_private', c.uid), {
-          accessTier: tier,
+      await apiRequest(`/api/councilors/${encodeURIComponent(c.uid)}`, {
+        method: 'PATCH',
+        body: {
+          fullName: draft.fullName.trim() || c.fullName,
           roleLabel: draft.roleLabel,
           commissionId: draft.commissionId,
           phone: draft.phone.trim(),
-          updatedAt: serverTimestamp(),
-        }).catch(() => {});
-        if (priv.email) {
-          const eh = await hashEmail(priv.email);
-          await updateDoc(doc(db, 'allowed_accounts', eh), {
-            accessTier: tier,
-            roleLabel: draft.roleLabel,
-            commissionId: draft.commissionId,
-            updatedAt: serverTimestamp(),
-          }).catch(() => {});
-        }
-      }
+        },
+      });
 
       setDraftEdits((prev) => {
         const next = { ...prev };
@@ -300,38 +273,10 @@ export function SpreadsheetsModule({
     if (!valids.length) return;
     setImporting(true);
     try {
-      let importedCount = 0;
-      for (const row of valids) {
-        const eh = await hashEmail(row.email);
-        const tier = roleLabelToAccessTier(row.roleLabel);
-        const commName =
-          commissions.find((c) => c.id === row.commissionId)?.name || row.commissionId;
-        const pendingId = `pending_${eh.slice(0, 16)}`;
-
-        await setDoc(doc(db, 'allowed_accounts', eh), {
-          active: true,
-          accessTier: tier,
-          roleLabel: row.roleLabel,
-          commissionId: row.commissionId,
-          accountProvisioned: false,
-          mustChangePassword: true,
-          updatedAt: serverTimestamp(),
-        });
-
-        await setDoc(doc(db, 'public_councilors', pendingId), {
-          uid: pendingId,
-          fullName: row.fullName,
-          roleLabel: row.roleLabel,
-          commissionId: row.commissionId,
-          commissionName: commName,
-          bio: '',
-          photoUrl: '',
-          active: true,
-          displayOrder: publicCouncilors.length + importedCount + 1,
-          updatedAt: serverTimestamp(),
-        });
-        importedCount++;
-      }
+      const res = await apiRequest<{ imported: number; ok: boolean }>('/api/councilors/bulk', {
+        method: 'POST',
+        body: { items: valids },
+      });
 
       await recordAudit({
         uid,
@@ -339,10 +284,10 @@ export function SpreadsheetsModule({
         actorRoleLabel,
         action: 'Importó consejeros desde planilla Excel/CSV',
         module: 'Planillas',
-        targetTitle: `${importedCount} registros habilitados`,
+        targetTitle: `${res.imported} registros habilitados`,
       });
       setImportPreview([]);
-      showToast(`${importedCount} consejero(s) habilitados correctamente`, 'success');
+      showToast(`${res.imported} consejero(s) habilitados correctamente`, 'success');
     } catch {
       showToast('Error al importar consejeros', 'error');
     } finally {

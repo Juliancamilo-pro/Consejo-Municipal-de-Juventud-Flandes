@@ -17,16 +17,7 @@ import {
   ThumbsUp,
   Trash2,
 } from 'lucide-react';
-import {
-  addDoc,
-  collection,
-  deleteDoc,
-  doc,
-  serverTimestamp,
-  setDoc,
-  updateDoc,
-} from 'firebase/firestore';
-import { db } from '../../firebase';
+import { apiRequest } from '../../lib/apiClient';
 import { isLeadershipTier } from '../../lib/security';
 import { FESTIVE_THEMES } from '../../lib/seedData';
 import { deleteStorageFile } from '../../lib/storageUtils';
@@ -81,17 +72,15 @@ export function SurveysAndMessagesModule({
       .map((s) => s.trim())
       .filter(Boolean);
     try {
-      await addDoc(collection(db, 'calls_surveys'), {
-        title: title.trim(),
-        kind,
-        description: desc.trim(),
-        deadline: deadline || new Date().toISOString().slice(0, 10),
-        status: 'abierta',
-        options: opts,
-        responseCount: 0,
-        createdByUid: uid,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
+      await apiRequest('/api/calls-surveys', {
+        method: 'POST',
+        body: {
+          title: title.trim(),
+          kind,
+          description: desc.trim(),
+          deadline: deadline || new Date().toISOString().slice(0, 10),
+          options: opts,
+        },
       });
       await recordAudit({
         uid,
@@ -198,10 +187,12 @@ export function SurveysAndMessagesModule({
                     <button
                       type="button"
                       onClick={() =>
-                        updateDoc(doc(db, 'calls_surveys', cs.id), {
-                          status: cs.status === 'abierta' ? 'cerrada' : 'abierta',
-                          updatedAt: serverTimestamp(),
-                        })
+                        apiRequest(`/api/calls-surveys/${encodeURIComponent(cs.id)}`, {
+                          method: 'PATCH',
+                          body: {
+                            status: cs.status === 'abierta' ? 'cerrada' : 'abierta',
+                          },
+                        }).catch(() => showToast('No se pudo actualizar', 'error'))
                       }
                       className="rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1 text-xs font-semibold cursor-pointer"
                     >
@@ -209,7 +200,11 @@ export function SurveysAndMessagesModule({
                     </button>
                     <button
                       type="button"
-                      onClick={() => deleteDoc(doc(db, 'calls_surveys', cs.id))}
+                      onClick={() =>
+                        apiRequest(`/api/calls-surveys/${encodeURIComponent(cs.id)}`, {
+                          method: 'DELETE',
+                        }).catch(() => showToast('No se pudo eliminar', 'error'))
+                      }
                       className="rounded-lg p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
@@ -248,9 +243,10 @@ export function SurveysAndMessagesModule({
                     <select
                       value={m.status}
                       onChange={(e) =>
-                        updateDoc(doc(db, 'contact_messages', m.id), {
-                          status: e.target.value,
-                        })
+                        apiRequest(`/api/contact-messages/${encodeURIComponent(m.id)}`, {
+                          method: 'PATCH',
+                          body: { status: e.target.value },
+                        }).catch(() => showToast('No se pudo actualizar el mensaje', 'error'))
                       }
                       className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2 py-1 text-[11px]"
                     >
@@ -436,17 +432,14 @@ export function IdeasBankModule({
     e.preventDefault();
     if (!title.trim() || !description.trim()) return;
     try {
-      await addDoc(collection(db, 'ideas_inbox'), {
-        title: title.trim(),
-        description: description.trim(),
-        category,
-        commissionId,
-        authorUid: uid,
-        authorName: actorName,
-        status: 'nueva',
-        upvoterUids: [uid],
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
+      await apiRequest('/api/ideas', {
+        method: 'POST',
+        body: {
+          title: title.trim(),
+          description: description.trim(),
+          category,
+          commissionId,
+        },
       });
       await recordAudit({
         uid,
@@ -465,12 +458,9 @@ export function IdeasBankModule({
   };
 
   const handleToggleVote = async (idea: IdeaItem) => {
-    const has = idea.upvoterUids.includes(uid);
-    const next = has ? idea.upvoterUids.filter((x) => x !== uid) : [...idea.upvoterUids, uid];
     try {
-      await updateDoc(doc(db, 'ideas_inbox', idea.id), {
-        upvoterUids: next,
-        updatedAt: serverTimestamp(),
+      await apiRequest(`/api/ideas/${encodeURIComponent(idea.id)}/upvote`, {
+        method: 'POST',
       });
     } catch {
       showToast('No se pudo registrar apoyo', 'error');
@@ -574,10 +564,10 @@ export function IdeasBankModule({
                       <select
                         value={idea.status}
                         onChange={(e) =>
-                          updateDoc(doc(db, 'ideas_inbox', idea.id), {
-                            status: e.target.value,
-                            updatedAt: serverTimestamp(),
-                          })
+                          apiRequest(`/api/ideas/${encodeURIComponent(idea.id)}`, {
+                            method: 'PATCH',
+                            body: { status: e.target.value },
+                          }).catch(() => showToast('No se pudo actualizar el estado', 'error'))
                         }
                         className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2 py-1 text-[11px]"
                       >
@@ -589,7 +579,11 @@ export function IdeasBankModule({
                     {(isLeader || idea.authorUid === uid) && (
                       <button
                         type="button"
-                        onClick={() => deleteDoc(doc(db, 'ideas_inbox', idea.id))}
+                        onClick={() =>
+                          apiRequest(`/api/ideas/${encodeURIComponent(idea.id)}`, {
+                            method: 'DELETE',
+                          }).catch(() => showToast('No se pudo eliminar', 'error'))
+                        }
                         className="text-rose-500 cursor-pointer"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
@@ -636,16 +630,17 @@ export function LetterTemplatesModule({
     e.preventDefault();
     if (!newTitle.trim() || newBody.trim().length < 10) return;
     try {
-      const refDoc = await addDoc(collection(db, 'letter_templates'), {
-        title: newTitle.trim(),
-        category: newCategory,
-        headerText: 'CONSEJO MUNICIPAL DE JUVENTUDES DE FLANDES – TOLIMA',
-        bodyTemplate: newBody.trim(),
-        signatoryRole: 'Presidencia y Secretaría',
-        updatedByUid: uid,
-        updatedAt: serverTimestamp(),
+      const res = await apiRequest<{ id: string; ok: boolean }>('/api/templates', {
+        method: 'POST',
+        body: {
+          title: newTitle.trim(),
+          category: newCategory,
+          headerText: 'CONSEJO MUNICIPAL DE JUVENTUDES DE FLANDES – TOLIMA',
+          bodyTemplate: newBody.trim(),
+          signatoryRole: 'Presidencia y Secretaría',
+        },
       });
-      setSelectedId(refDoc.id);
+      setSelectedId(res.id);
       setNewTitle('');
       showToast('Plantilla guardada', 'success');
     } catch {
@@ -728,7 +723,9 @@ export function LetterTemplatesModule({
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    deleteDoc(doc(db, 'letter_templates', t.id));
+                    apiRequest(`/api/templates/${encodeURIComponent(t.id)}`, {
+                      method: 'DELETE',
+                    }).catch(() => showToast('No se pudo eliminar', 'error'));
                   }}
                   className="text-rose-500 p-1 cursor-pointer"
                 >
@@ -824,16 +821,17 @@ export function WorkPlanAndCertsModule({
     e.preventDefault();
     if (!title.trim()) return;
     try {
-      await addDoc(collection(db, 'work_plans'), {
-        title: title.trim(),
-        axis: axis.trim(),
-        commissionId,
-        quarter,
-        status: 'planeado',
-        progress: 0,
-        evidenceCount: 0,
-        updatedByUid: uid,
-        updatedAt: serverTimestamp(),
+      await apiRequest('/api/work-plans', {
+        method: 'POST',
+        body: {
+          title: title.trim(),
+          axis: axis.trim(),
+          commissionId,
+          quarter,
+          status: 'planeado',
+          progress: 0,
+          evidenceCount: 0,
+        },
       });
       setTitle('');
       showToast('Meta agregada al plan de trabajo', 'success');
@@ -941,12 +939,13 @@ export function WorkPlanAndCertsModule({
                   value={wp.progress}
                   onChange={(e) => {
                     const p = Number(e.target.value);
-                    updateDoc(doc(db, 'work_plans', wp.id), {
-                      progress: p,
-                      status: p === 100 ? 'completado' : p > 0 ? 'ejecucion' : 'planeado',
-                      updatedByUid: uid,
-                      updatedAt: serverTimestamp(),
-                    });
+                    apiRequest(`/api/work-plans/${encodeURIComponent(wp.id)}`, {
+                      method: 'PATCH',
+                      body: {
+                        progress: p,
+                        status: p === 100 ? 'completado' : p > 0 ? 'ejecucion' : 'planeado',
+                      },
+                    }).catch(() => showToast('No se pudo actualizar el avance', 'error'));
                   }}
                   className="w-28 accent-blue-600 cursor-pointer no-print"
                 />
@@ -956,7 +955,11 @@ export function WorkPlanAndCertsModule({
                 {isLeader && (
                   <button
                     type="button"
-                    onClick={() => deleteDoc(doc(db, 'work_plans', wp.id))}
+                    onClick={() =>
+                      apiRequest(`/api/work-plans/${encodeURIComponent(wp.id)}`, {
+                        method: 'DELETE',
+                      }).catch(() => showToast('No se pudo eliminar', 'error'))
+                    }
                     className="no-print text-rose-500 p-1 cursor-pointer"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
@@ -1077,18 +1080,20 @@ export function PortalEditorModule({
     e.preventDefault();
     setSavingSettings(true);
     try {
-      await setDoc(doc(db, 'portal_settings', 'site_content'), {
-        heroTitle: heroTitle.trim(),
-        heroSubtitle: heroSubtitle.trim(),
-        heroImageUrl: settings.heroImageUrl || '',
-        heroStoragePath: settings.heroStoragePath || '',
-        aboutText: aboutText.trim(),
-        missionText: missionText.trim(),
-        visionText: visionText.trim(),
-        contactEmail: contactEmail.trim(),
-        contactAddress: contactAddress.trim(),
-        activeTheme,
-        updatedAt: serverTimestamp(),
+      await apiRequest('/api/portal-settings', {
+        method: 'PUT',
+        body: {
+          heroTitle: heroTitle.trim(),
+          heroSubtitle: heroSubtitle.trim(),
+          heroImageUrl: settings.heroImageUrl || '',
+          heroStoragePath: settings.heroStoragePath || '',
+          aboutText: aboutText.trim(),
+          missionText: missionText.trim(),
+          visionText: visionText.trim(),
+          contactEmail: contactEmail.trim(),
+          contactAddress: contactAddress.trim(),
+          activeTheme,
+        },
       });
       await recordAudit({
         uid,
@@ -1113,10 +1118,12 @@ export function PortalEditorModule({
       if (settings.heroStoragePath) {
         await deleteStorageFile(settings.heroStoragePath, settings.heroImageUrl);
       }
-      await updateDoc(doc(db, 'portal_settings', 'site_content'), {
-        heroImageUrl: f.url,
-        heroStoragePath: f.storagePath || '',
-        updatedAt: serverTimestamp(),
+      await apiRequest('/api/portal-settings', {
+        method: 'PUT',
+        body: {
+          heroImageUrl: f.url,
+          heroStoragePath: f.storagePath || '',
+        },
       });
       showToast('Portada del portal actualizada', 'success');
     } catch {
@@ -1128,21 +1135,20 @@ export function PortalEditorModule({
     e.preventDefault();
     if (!newsTitle.trim() || !newsSummary.trim() || !newsContent.trim()) return;
     try {
-      await addDoc(collection(db, 'news_events'), {
-        title: newsTitle.trim(),
-        type: newsType,
-        summary: newsSummary.trim(),
-        content: newsContent.trim(),
-        coverUrl: newsCoverUrl,
-        storagePath: newsStoragePath,
-        commissionId: newsComm,
-        eventDate: newsDate,
-        location: newsLocation.trim(),
-        authorUid: uid,
-        authorName: actorName,
-        status: isLeader ? 'publicado' : 'pendiente',
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
+      await apiRequest('/api/news', {
+        method: 'POST',
+        body: {
+          title: newsTitle.trim(),
+          type: newsType,
+          summary: newsSummary.trim(),
+          content: newsContent.trim(),
+          coverUrl: newsCoverUrl,
+          storagePath: newsStoragePath,
+          commissionId: newsComm,
+          eventDate: newsDate,
+          location: newsLocation.trim(),
+          status: isLeader ? 'publicado' : 'pendiente',
+        },
       });
       await recordAudit({
         uid,
@@ -1169,7 +1175,9 @@ export function PortalEditorModule({
   const handleDeleteNews = async (n: NewsEvent) => {
     try {
       await deleteStorageFile(n.storagePath, n.coverUrl);
-      await deleteDoc(doc(db, 'news_events', n.id));
+      await apiRequest(`/api/news/${encodeURIComponent(n.id)}`, {
+        method: 'DELETE',
+      });
       showToast('Publicación y archivo eliminados', 'info');
     } catch {
       showToast('Error al eliminar', 'error');
@@ -1182,8 +1190,10 @@ export function PortalEditorModule({
       if (g.thumbnailStoragePath) {
         await deleteStorageFile(g.thumbnailStoragePath, g.thumbnailUrl);
       }
-      await deleteDoc(doc(db, 'gallery_items', g.id));
-      showToast('Elemento eliminado de galería y Storage', 'info');
+      await apiRequest(`/api/gallery/${encodeURIComponent(g.id)}`, {
+        method: 'DELETE',
+      });
+      showToast('Elemento eliminado de galería y archivo', 'info');
     } catch {
       showToast('Error al eliminar', 'error');
     }
@@ -1395,10 +1405,10 @@ export function PortalEditorModule({
                       <button
                         type="button"
                         onClick={() =>
-                          updateDoc(doc(db, 'news_events', n.id), {
-                            status: 'publicado',
-                            updatedAt: serverTimestamp(),
-                          })
+                          apiRequest(`/api/news/${encodeURIComponent(n.id)}`, {
+                            method: 'PATCH',
+                            body: { status: 'publicado' },
+                          }).catch(() => showToast('No se pudo aprobar', 'error'))
                         }
                         className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-2.5 py-1 text-white font-semibold cursor-pointer"
                       >

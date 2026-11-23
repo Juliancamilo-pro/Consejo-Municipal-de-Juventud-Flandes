@@ -15,8 +15,7 @@ import {
   Vote,
   X,
 } from 'lucide-react';
-import { addDoc, collection, doc, increment, serverTimestamp, updateDoc } from 'firebase/firestore';
-import { db } from '../../firebase';
+import { apiRequest } from '../../lib/apiClient';
 import { formatBytes } from '../../lib/mediaProcessor';
 import type {
   CallOrSurvey,
@@ -114,17 +113,15 @@ export function PublicMediaAndCivic({
 
     setSubmittingSurvey(true);
     try {
-      await addDoc(collection(db, 'survey_responses'), {
-        surveyId: activeSurvey.id,
-        selectedOption: selectedOption || 'Inscripción / Participación',
-        respondentName: respondentName.trim(),
-        respondentEmail: respondentEmail.trim(),
-        comment: surveyComment.trim(),
-        createdAt: serverTimestamp(),
-      });
-      await updateDoc(doc(db, 'calls_surveys', activeSurvey.id), {
-        responseCount: increment(1),
-        updatedAt: serverTimestamp(),
+      await apiRequest('/api/public/survey-response', {
+        method: 'POST',
+        body: {
+          surveyId: activeSurvey.id,
+          selectedOption: selectedOption || 'Inscripción / Participación',
+          respondentName: respondentName.trim(),
+          respondentEmail: respondentEmail.trim(),
+          comment: surveyComment.trim(),
+        },
       });
       showToast('Participación registrada', 'success', 'Gracias por aportar al CMJ Flandes.');
       setActiveSurvey(null);
@@ -147,14 +144,15 @@ export function PublicMediaAndCivic({
     }
     setSendingMsg(true);
     try {
-      await addDoc(collection(db, 'contact_messages'), {
-        senderName: senderName.trim(),
-        senderEmail: senderEmail.trim(),
-        subject: subject.trim(),
-        category,
-        message: messageText.trim(),
-        status: 'nuevo',
-        createdAt: serverTimestamp(),
+      await apiRequest('/api/public/contact-message', {
+        method: 'POST',
+        body: {
+          senderName: senderName.trim(),
+          senderEmail: senderEmail.trim(),
+          subject: subject.trim(),
+          category,
+          message: messageText.trim(),
+        },
       });
       showToast('Mensaje enviado al CMJ Flandes', 'success', 'La Mesa Directiva lo revisará pronto.');
       setSenderName('');

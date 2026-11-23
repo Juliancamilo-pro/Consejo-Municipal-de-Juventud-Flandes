@@ -1,13 +1,3 @@
-import {
-  collection,
-  deleteDoc,
-  doc,
-  getDoc,
-  getDocs,
-  serverTimestamp,
-  setDoc,
-} from 'firebase/firestore';
-import { db } from '../firebase';
 import type { Commission, FestiveThemeId, PortalSettings } from '../types/cmj';
 
 export interface FestiveThemeConfig {
@@ -89,188 +79,61 @@ export const STRUCTURAL_COMMISSIONS: Commission[] = [
   {
     id: 'comision-1',
     number: 1,
-    name: 'Comisión 1',
-    iconName: 'GraduationCap',
+    name: 'Comisión de Educación, Cultura y Deporte',
+    iconName: 'BookOpen',
     accentColor: '#2563EB',
     coverUrl: '',
-    description: 'Temática y plan de trabajo por definir por sus integrantes.',
+    description:
+      'Espacio de trabajo del Consejo Municipal de Juventudes de Flandes para iniciativas educativas, culturales y deportivas.',
     coordinatorName: 'Por asignar',
     workPlanSummary: '',
   },
   {
     id: 'comision-2',
     number: 2,
-    name: 'Comisión 2',
-    iconName: 'Leaf',
-    accentColor: '#10B981',
+    name: 'Comisión de Empleo, Emprendimiento e Innovación',
+    iconName: 'Briefcase',
+    accentColor: '#059669',
     coverUrl: '',
-    description: 'Temática y plan de trabajo por definir por sus integrantes.',
+    description:
+      'Espacio de trabajo juvenil enfocado en emprendimiento, formación laboral y desarrollo económico en Flandes.',
     coordinatorName: 'Por asignar',
     workPlanSummary: '',
   },
   {
     id: 'comision-3',
     number: 3,
-    name: 'Comisión 3',
-    iconName: 'Music',
-    accentColor: '#EC4899',
+    name: 'Comisión de Salud Mental, Bienestar y Recreación',
+    iconName: 'HeartPulse',
+    accentColor: '#E11D48',
     coverUrl: '',
-    description: 'Temática y plan de trabajo por definir por sus integrantes.',
+    description:
+      'Espacio de seguimiento a bienestar integral, salud mental y convivencia juvenil en el municipio.',
     coordinatorName: 'Por asignar',
     workPlanSummary: '',
   },
   {
     id: 'comision-4',
     number: 4,
-    name: 'Comisión 4',
-    iconName: 'Briefcase',
-    accentColor: '#F59E0B',
+    name: 'Comisión de Ambiente, Territorio y Sostenibilidad',
+    iconName: 'Leaf',
+    accentColor: '#0D9488',
     coverUrl: '',
-    description: 'Temática y plan de trabajo por definir por sus integrantes.',
+    description:
+      'Espacio de gestión ambiental, cuidado del entorno urbano y rural y participación territorial juvenil.',
     coordinatorName: 'Por asignar',
     workPlanSummary: '',
   },
   {
     id: 'comision-5',
     number: 5,
-    name: 'Comisión 5',
+    name: 'Comisión de Derechos Humanos, Participación y Control Social',
     iconName: 'Scale',
-    accentColor: '#06B6D4',
+    accentColor: '#4F46E5',
     coverUrl: '',
-    description: 'Temática y plan de trabajo por definir por sus integrantes.',
+    description:
+      'Espacio de control social, transparencia institucional, veeduría y derechos juveniles en Flandes.',
     coordinatorName: 'Por asignar',
     workPlanSummary: '',
   },
 ];
-
-let structurePromise: Promise<void> | null = null;
-
-/**
- * Crea únicamente la estructura base vacía del portal (configuración mínima y las 5 comisiones sin datos ficticios).
- */
-export async function ensureMinimalStructure(): Promise<void> {
-  if (structurePromise) return structurePromise;
-  structurePromise = (async () => {
-    try {
-      const settingsRef = doc(db, 'portal_settings', 'site_content');
-      const settingsSnap = await getDoc(settingsRef);
-      if (!settingsSnap.exists()) {
-        await setDoc(settingsRef, {
-          heroTitle: EMPTY_PORTAL_SETTINGS.heroTitle,
-          heroSubtitle: EMPTY_PORTAL_SETTINGS.heroSubtitle,
-          heroImageUrl: '',
-          aboutText: EMPTY_PORTAL_SETTINGS.aboutText || '',
-          missionText: EMPTY_PORTAL_SETTINGS.missionText || '',
-          visionText: EMPTY_PORTAL_SETTINGS.visionText || '',
-          contactEmail: EMPTY_PORTAL_SETTINGS.contactEmail || '',
-          contactAddress: EMPTY_PORTAL_SETTINGS.contactAddress || '',
-          activeTheme: EMPTY_PORTAL_SETTINGS.activeTheme,
-          updatedAt: serverTimestamp(),
-        });
-      }
-
-      for (const comm of STRUCTURAL_COMMISSIONS) {
-        const cRef = doc(db, 'commissions', comm.id);
-        const cSnap = await getDoc(cRef);
-        if (!cSnap.exists()) {
-          await setDoc(cRef, {
-            id: comm.id,
-            number: comm.number,
-            name: comm.name,
-            iconName: comm.iconName || 'Layers',
-            accentColor: comm.accentColor || '#2563EB',
-            coverUrl: '',
-            description: comm.description,
-            coordinatorName: comm.coordinatorName,
-            workPlanSummary: '',
-            updatedAt: serverTimestamp(),
-          });
-        }
-      }
-    } catch (err) {
-      console.warn('No se pudo verificar la estructura mínima:', err);
-    } finally {
-      structurePromise = null;
-    }
-  })();
-  return structurePromise;
-}
-
-const LEGACY_SAMPLE_DOCS: { col: string; ids: string[] }[] = [
-  { col: 'news_events', ids: ['news-1', 'news-2', 'news-3'] },
-  { col: 'gallery_items', ids: ['gal-1', 'gal-2', 'gal-3', 'gal-4'] },
-  { col: 'documents', ids: ['doc-1', 'doc-2', 'doc-3'] },
-  { col: 'calls_surveys', ids: ['call-1', 'call-2'] },
-  { col: 'sessions', ids: ['ses-1', 'ses-2'] },
-  { col: 'votes', ids: ['vote-1'] },
-  { col: 'commitments', ids: ['comp-1', 'comp-2', 'comp-3'] },
-  { col: 'ideas_inbox', ids: ['idea-1', 'idea-2'] },
-  { col: 'letter_templates', ids: ['tpl-1', 'tpl-2'] },
-  { col: 'work_plans', ids: ['wp-1', 'wp-2', 'wp-3', 'wp-4', 'wp-5'] },
-  { col: 'public_councilors', ids: ['sample-pres', 'sample-vp', 'sample-sec', 'sample-c2', 'sample-c4'] },
-];
-
-/**
- * Elimina de Firestore cualquier documento ficticio sembrado anteriormente (solo Presidente/Secretario).
- */
-export async function purgeLegacySampleData(): Promise<number> {
-  let deletedCount = 0;
-
-  for (const group of LEGACY_SAMPLE_DOCS) {
-    for (const id of group.ids) {
-      try {
-        const snap = await getDoc(doc(db, group.col, id));
-        if (snap.exists()) {
-          await deleteDoc(doc(db, group.col, id));
-          deletedCount++;
-        }
-      } catch {
-        // Ignorar si no existe o ya fue eliminado
-      }
-    }
-  }
-
-  // Limpiar rutas rotas a /src/assets/images en portal_settings o commissions si quedaron guardadas
-  try {
-    const sSnap = await getDoc(doc(db, 'portal_settings', 'site_content'));
-    if (sSnap.exists()) {
-      const data = sSnap.data();
-      if (typeof data.heroImageUrl === 'string' && data.heroImageUrl.includes('/src/assets/images/')) {
-        await setDoc(doc(db, 'portal_settings', 'site_content'), {
-          ...EMPTY_PORTAL_SETTINGS,
-          updatedAt: serverTimestamp(),
-        });
-        deletedCount++;
-      }
-    }
-  } catch {
-    // non-blocking
-  }
-
-  try {
-    const commsSnap = await getDocs(collection(db, 'commissions'));
-    for (const cDoc of commsSnap.docs) {
-      const data = cDoc.data();
-      if (typeof data.coverUrl === 'string' && data.coverUrl.includes('/src/assets/images/')) {
-        const base = STRUCTURAL_COMMISSIONS.find((c) => c.id === cDoc.id);
-        await setDoc(doc(db, 'commissions', cDoc.id), {
-          id: cDoc.id,
-          number: Number(data.number || base?.number || 1),
-          name: base?.name || String(data.name || cDoc.id),
-          iconName: base?.iconName || 'Layers',
-          accentColor: base?.accentColor || '#2563EB',
-          coverUrl: '',
-          description: 'Temática y plan de trabajo por definir por sus integrantes.',
-          coordinatorName: 'Por asignar',
-          workPlanSummary: '',
-          updatedAt: serverTimestamp(),
-        });
-        deletedCount++;
-      }
-    }
-  } catch {
-    // non-blocking
-  }
-
-  return deletedCount;
-}

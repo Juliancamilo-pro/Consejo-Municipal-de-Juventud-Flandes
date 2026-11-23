@@ -10,15 +10,7 @@ import {
   Trash2,
   Users,
 } from 'lucide-react';
-import {
-  addDoc,
-  collection,
-  deleteDoc,
-  doc,
-  serverTimestamp,
-  updateDoc,
-} from 'firebase/firestore';
-import { db } from '../../firebase';
+import { apiRequest } from '../../lib/apiClient';
 import { isLeadershipTier } from '../../lib/security';
 import { deleteStorageFile } from '../../lib/storageUtils';
 import type {
@@ -123,7 +115,6 @@ export function CommissionsModule({
       const payload: Record<string, unknown> = {
         description: editDesc.trim(),
         workPlanSummary: editWorkPlan.trim(),
-        updatedAt: serverTimestamp(),
       };
       if (isLeader) {
         payload.name = editName.trim() || currentComm.name;
@@ -132,7 +123,10 @@ export function CommissionsModule({
           payload.coordinatorName = coord.fullName;
         }
       }
-      await updateDoc(doc(db, 'commissions', currentComm.id), payload);
+      await apiRequest(`/api/commissions/${encodeURIComponent(currentComm.id)}`, {
+        method: 'PATCH',
+        body: payload,
+      });
       await recordAudit({
         uid,
         actorName,
@@ -155,10 +149,12 @@ export function CommissionsModule({
       if (currentComm.storagePath) {
         await deleteStorageFile(currentComm.storagePath, currentComm.coverUrl);
       }
-      await updateDoc(doc(db, 'commissions', currentComm.id), {
-        coverUrl: first.url,
-        storagePath: first.storagePath || '',
-        updatedAt: serverTimestamp(),
+      await apiRequest(`/api/commissions/${encodeURIComponent(currentComm.id)}`, {
+        method: 'PATCH',
+        body: {
+          coverUrl: first.url,
+          storagePath: first.storagePath || '',
+        },
       });
       showToast('Portada de comisión actualizada', 'success');
     } catch {
@@ -171,15 +167,15 @@ export function CommissionsModule({
     if (!taskTitle.trim()) return;
     setAddingTask(true);
     try {
-      await addDoc(collection(db, 'commission_tasks'), {
-        commissionId: currentComm.id,
-        title: taskTitle.trim(),
-        status: 'pendiente' as TaskStatus,
-        assignedName: taskAssigned.trim() || actorName,
-        dueDate: taskDue,
-        createdByUid: uid,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
+      await apiRequest('/api/commission-tasks', {
+        method: 'POST',
+        body: {
+          commissionId: currentComm.id,
+          title: taskTitle.trim(),
+          status: 'pendiente' as TaskStatus,
+          assignedName: taskAssigned.trim() || actorName,
+          dueDate: taskDue,
+        },
       });
       setTaskTitle('');
       setTaskAssigned('');
@@ -200,9 +196,9 @@ export function CommissionsModule({
         ? 'hecha'
         : 'pendiente';
     try {
-      await updateDoc(doc(db, 'commission_tasks', task.id), {
-        status: next,
-        updatedAt: serverTimestamp(),
+      await apiRequest(`/api/commission-tasks/${encodeURIComponent(task.id)}`, {
+        method: 'PATCH',
+        body: { status: next },
       });
     } catch {
       showToast('Error al actualizar tarea', 'error');
@@ -211,7 +207,9 @@ export function CommissionsModule({
 
   const handleDeleteTask = async (task: CommissionTask) => {
     try {
-      await deleteDoc(doc(db, 'commission_tasks', task.id));
+      await apiRequest(`/api/commission-tasks/${encodeURIComponent(task.id)}`, {
+        method: 'DELETE',
+      });
       showToast('Tarea eliminada', 'info');
     } catch {
       showToast('No tienes permisos para eliminar esta tarea', 'error');
@@ -220,20 +218,20 @@ export function CommissionsModule({
 
   const handleEvidenceUploaded = async (files: UploadedFileInfo[]) => {
     for (const file of files) {
-      await addDoc(collection(db, 'gallery_items'), {
-        title: evidTitle.trim() || file.fileName.replace(/\.[^.]+$/, ''),
-        description: `Evidencia de ${currentComm.name}`,
-        mediaType: file.category === 'video' ? 'video' : 'image',
-        videoSource: file.videoSource || 'upload',
-        url: file.url,
-        thumbnailUrl: file.thumbnailUrl || '',
-        storagePath: file.storagePath || '',
-        thumbnailStoragePath: file.thumbnailStoragePath || '',
-        commissionId: currentComm.id,
-        authorUid: uid,
-        authorName: actorName,
-        status: 'publicado',
-        createdAt: serverTimestamp(),
+      await apiRequest('/api/gallery', {
+        method: 'POST',
+        body: {
+          title: evidTitle.trim() || file.fileName.replace(/\.[^.]+$/, ''),
+          description: `Evidencia de ${currentComm.name}`,
+          mediaType: file.category === 'video' ? 'video' : 'image',
+          videoSource: file.videoSource || 'upload',
+          url: file.url,
+          thumbnailUrl: file.thumbnailUrl || '',
+          storagePath: file.storagePath || '',
+          thumbnailStoragePath: file.thumbnailStoragePath || '',
+          commissionId: currentComm.id,
+          status: 'publicado',
+        },
       });
     }
     setEvidTitle('');
@@ -253,8 +251,10 @@ export function CommissionsModule({
       if (item.thumbnailStoragePath) {
         await deleteStorageFile(item.thumbnailStoragePath, item.thumbnailUrl);
       }
-      await deleteDoc(doc(db, 'gallery_items', item.id));
-      showToast('Evidencia eliminada de Firestore y Storage', 'info');
+      await apiRequest(`/api/gallery/${encodeURIComponent(item.id)}`, {
+        method: 'DELETE',
+      });
+      showToast('Evidencia eliminada del portal y archivo', 'info');
     } catch {
       showToast('No se pudo eliminar la evidencia', 'error');
     }

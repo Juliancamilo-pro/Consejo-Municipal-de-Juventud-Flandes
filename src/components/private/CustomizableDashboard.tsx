@@ -22,8 +22,7 @@ import {
   Vote,
   X,
 } from 'lucide-react';
-import { doc, serverTimestamp, updateDoc } from 'firebase/firestore';
-import { db } from '../../firebase';
+import { apiRequest } from '../../lib/apiClient';
 import { AnimatedCounter } from '../ui/AnimatedPrimitives';
 import { useToast } from '../ToastProvider';
 import { isLeadershipTier } from '../../lib/security';
@@ -379,10 +378,12 @@ export function CustomizableDashboard({
     const nextStatus = c.status === 'cumplido' ? 'en_progreso' : 'cumplido';
     const nextProgress = nextStatus === 'cumplido' ? 100 : 50;
     try {
-      await updateDoc(doc(db, 'commitments', c.id), {
-        status: nextStatus,
-        progress: nextProgress,
-        updatedAt: serverTimestamp(),
+      await apiRequest(`/api/commitments/${encodeURIComponent(c.id)}`, {
+        method: 'PATCH',
+        body: {
+          status: nextStatus,
+          progress: nextProgress,
+        },
       });
       showToast(
         nextStatus === 'cumplido' ? 'Compromiso marcado como cumplido' : 'Compromiso reabierto',
@@ -508,7 +509,7 @@ export function CustomizableDashboard({
         )}
       </AnimatePresence>
 
-      {/* KPIs reales 100% calculados de Firestore */}
+      {/* KPIs reales 100% calculados de la base de datos */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4">
           <p className="text-xs font-medium text-slate-500 dark:text-slate-400">

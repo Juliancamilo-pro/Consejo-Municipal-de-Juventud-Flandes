@@ -1,28 +1,23 @@
-import { deleteObject, ref } from 'firebase/storage';
-import { storage } from '../firebase';
+import { apiRequest } from './apiClient';
 
 export async function deleteStorageFile(storagePath?: string, urlFallback?: string): Promise<void> {
-  const path = storagePath?.trim();
-  if (path) {
-    try {
-      await deleteObject(ref(storage, path));
-      return;
-    } catch {
-      // Continuar intentando por URL si la ruta directa no existe
-    }
+  let mediaId = '';
+  const path = storagePath?.trim() || '';
+  if (path.startsWith('db-media/')) {
+    mediaId = path.slice('db-media/'.length);
+  } else if (urlFallback && urlFallback.startsWith('/api/media/')) {
+    mediaId = urlFallback.slice('/api/media/'.length);
   }
 
-  if (urlFallback && urlFallback.includes('firebasestorage.googleapis.com')) {
-    try {
-      const parsed = new URL(urlFallback);
-      const match = parsed.pathname.match(/\/o\/(.+)$/);
-      if (match?.[1]) {
-        const decodedPath = decodeURIComponent(match[1]);
-        await deleteObject(ref(storage, decodedPath));
-      }
-    } catch {
-      // No bloquear la eliminación en Firestore si el archivo ya fue borrado de Storage
-    }
+  if (!mediaId) return;
+
+  try {
+    await apiRequest(`/api/media/${encodeURIComponent(mediaId)}`, {
+      method: 'DELETE',
+      skipRefresh: true,
+    });
+  } catch {
+    // No bloquear eliminación del registro si el archivo ya fue borrado
   }
 }
 

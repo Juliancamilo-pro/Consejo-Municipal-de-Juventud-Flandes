@@ -1,25 +1,17 @@
-import React, { Suspense, lazy, useEffect, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useState } from 'react';
 import { MotionConfig } from 'motion/react';
-import { onAuthStateChanged, signOut, type User } from 'firebase/auth';
 import {
-  collection,
-  doc,
-  limit,
-  onSnapshot,
-  orderBy,
-  query,
-  serverTimestamp,
-  setDoc,
-  where,
-} from 'firebase/firestore';
-import { auth, db, testFirestoreConnection } from './firebase';
+  apiRequest,
+  clearAuthTokenInMemory,
+  setAuthTokenInMemory,
+  subscribePortalRefresh,
+  type SessionUser,
+} from './lib/apiClient';
 import { EMPTY_PORTAL_SETTINGS, STRUCTURAL_COMMISSIONS } from './lib/seedData';
-import { hashEmail, isLeadershipTier, SECRETARY_BOOTSTRAP_EMAIL } from './lib/security';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ToastProvider, useToast } from './components/ToastProvider';
 import { SkeletonBlock } from './components/ui/AnimatedPrimitives';
 import type {
-  AccessTier,
   AuditLog,
   CallOrSurvey,
   Commission,
@@ -36,7 +28,6 @@ import type {
   PortalDocument,
   PortalSettings,
   PublicCouncilor,
-  RoleLabel,
   WorkPlanItem,
 } from './types/cmj';
 
@@ -45,6 +36,29 @@ const PrivatePortal = lazy(() => import('./components/private/PrivatePortal'));
 const AuthModal = lazy(() =>
   import('./components/AuthModal').then((m) => ({ default: m.AuthModal }))
 );
+
+interface PublicStateResponse {
+  settings: PortalSettings | null;
+  commissions: Commission[];
+  publicCouncilors: PublicCouncilor[];
+  newsEvents: NewsEvent[];
+  galleryItems: GalleryItem[];
+  documents: PortalDocument[];
+  callsSurveys: CallOrSurvey[];
+}
+
+interface PrivateStateResponse extends PublicStateResponse {
+  commissionTasks: CommissionTask[];
+  privateCouncilors: CouncilorPrivate[];
+  contactMessages: ContactMessage[];
+  sessions: CouncilSession[];
+  votes: CouncilVote[];
+  commitments: Commitment[];
+  ideas: IdeaItem[];
+  auditLogs: AuditLog[];
+  templates: LetterTemplate[];
+  workPlans: WorkPlanItem[];
+}
 
 function FullScreenSkeleton() {
   return (
@@ -76,13 +90,8 @@ function PortalOrchestrator() {
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authModalTab, setAuthModalTab] = useState<'login' | 'change_password'>('login');
 
-  const [authUser, setAuthUser] = useState<User | null>(null);
+  const [authUser, setAuthUser] = useState<SessionUser | null>(null);
   const [authReady, setAuthReady] = useState(false);
-  const [userRole, setUserRole] = useState<{
-    accessTier: AccessTier;
-    roleLabel: RoleLabel;
-  } | null>(null);
-  const [sessionInitialSecret, setSessionInitialSecret] = useState('');
 
   // Estado inicial limpio (solo estructura base, cero datos ficticios)
   const [settings, setSettings] = useState<PortalSettings>(EMPTY_PORTAL_SETTINGS);
@@ -112,341 +121,141 @@ function PortalOrchestrator() {
     }
   }, [darkMode]);
 
-  useEffect(() => {
-    testFirestoreConnection();
-    const unsub = onAuthStateChanged(auth, (user) => {
-      setAuthUser(user);
-      setAuthReady(true);
-      if (!user) {
-        setUserRole(null);
-        setViewMode('public');
+  const loadPublicState = useCallback(async () => {
+    try {
+      const data = await apiRequest<PublicStateResponse>('/api/public/state', {
+        skipRefresh: true,
+      });
+      if (data.settings) setSettings(data.settings);
+      if (Array.isArray(data.commissions) && data.commissions.length > 0) {
+        setCommissions(data.commissions);
+      } else {
+        setCommissions(STRUCTURAL_COMMISSIONS);
       }
-    });
-    return () => unsub();
+      setPublicCouncilors(data.publicCouncilors || []);
+      setNewsEvents(data.newsEvents || []);
+      setGalleryItems(data.galleryItems || []);
+      setDocuments(data.documents || []);
+      setCallsSurveys(data.callsSurveys || []);
+    } catch {
+      // Silencioso en carga inicial pública
+    }
+  }, []);
+
+  const loadPrivateState = useCallback(async () => {
+    try {
+      const data = await apiRequest<PrivateStateResponse>('/api/private/state', {
+        skipRefresh: true,
+      });
+      if (data.settings) setSettings(data.settings);
+      if (Array.isArray(data.commissions) && data.commissions.length > 0) {
+        setCommissions(data.commissions);
+      }
+      setCommissionTasks(data.commissionTasks || []);
+      setPublicCouncilors(data.publicCouncilors || []);
+      setPrivateCouncilors(data.privateCouncilors || []);
+      setNewsEvents(data.newsEvents || []);
+      setGalleryItems(data.galleryItems || []);
+      setDocuments(data.documents || []);
+      setCallsSurveys(data.callsSurveys || []);
+      setContactMessages(data.contactMessages || []);
+      setSessions(data.sessions || []);
+      setVotes(data.votes || []);
+      setCommitments(data.commitments || []);
+      setIdeas(data.ideas || []);
+      setAuditLogs(data.auditLogs || []);
+      setTemplates(data.templates || []);
+      setWorkPlans(data.workPlans || []);
+    } catch {
+      // Si expira sesión en servidor, se maneja al siguiente check
+    }
   }, []);
 
   useEffect(() => {
-    if (!authReady || !authUser) return;
-    let repaired = false;
-    const unsub = onSnapshot(
-      doc(db, 'roles', authUser.uid),
-      async (snap) => {
-        if (snap.exists()) {
-          const d = snap.data();
-          setUserRole({
-            accessTier: d.accessTier as AccessTier,
-            roleLabel: d.roleLabel as RoleLabel,
-          });
-        } else if (
-          !repaired &&
-          authUser.email?.toLowerCase() === SECRETARY_BOOTSTRAP_EMAIL
-        ) {
-          repaired = true;
-          try {
-            const emailHash = await hashEmail(authUser.email);
-            await setDoc(doc(db, 'roles', authUser.uid), {
-              uid: authUser.uid,
-              accessTier: 'tier_3_sec' as AccessTier,
-              roleLabel: 'Secretario' as RoleLabel,
-              emailHash,
-              active: true,
-              updatedAt: serverTimestamp(),
-            });
-          } catch {
-            // Se completará desde AuthModal al iniciar sesión
-          }
+    let active = true;
+    (async () => {
+      try {
+        const res = await apiRequest<{ user: SessionUser | null; token?: string }>(
+          '/api/auth/me',
+          { skipRefresh: true }
+        );
+        if (!active) return;
+        if (res.user) {
+          if (res.token) setAuthTokenInMemory(res.token);
+          setAuthUser(res.user);
         }
-      },
-      () => {}
-    );
-    return () => unsub();
-  }, [authReady, authUser]);
+      } catch {
+        // Sin sesión activa
+      } finally {
+        if (active) setAuthReady(true);
+      }
+      await loadPublicState();
+    })();
+    return () => {
+      active = false;
+    };
+  }, [loadPublicState]);
 
-  // Suscripciones públicas acotadas
   useEffect(() => {
-    const unsubs: (() => void)[] = [];
-
-    unsubs.push(
-      onSnapshot(
-        doc(db, 'portal_settings', 'site_content'),
-        (snap) => {
-          if (snap.exists()) {
-            setSettings({ id: snap.id, ...(snap.data() as Omit<PortalSettings, 'id'>) });
-          } else {
-            setSettings(EMPTY_PORTAL_SETTINGS);
-          }
-        },
-        () => {}
-      )
-    );
-
-    unsubs.push(
-      onSnapshot(
-        collection(db, 'commissions'),
-        (snap) => {
-          if (!snap.empty) {
-            setCommissions(
-              snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Commission, 'id'>) }))
-            );
-          } else {
-            setCommissions(STRUCTURAL_COMMISSIONS);
-          }
-        },
-        () => {}
-      )
-    );
-
-    const councilorsQuery = userRole
-      ? query(collection(db, 'public_councilors'), limit(100))
-      : query(collection(db, 'public_councilors'), where('active', '==', true), limit(60));
-    unsubs.push(
-      onSnapshot(
-        councilorsQuery,
-        (snap) => {
-          setPublicCouncilors(
-            snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<PublicCouncilor, 'id'>) }))
-          );
-        },
-        () => {}
-      )
-    );
-
-    const newsQuery = userRole
-      ? query(collection(db, 'news_events'), limit(50))
-      : query(collection(db, 'news_events'), where('status', '==', 'publicado'), limit(30));
-    unsubs.push(
-      onSnapshot(
-        newsQuery,
-        (snap) => {
-          setNewsEvents(
-            snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<NewsEvent, 'id'>) }))
-          );
-        },
-        () => {}
-      )
-    );
-
-    const galleryQuery = userRole
-      ? query(collection(db, 'gallery_items'), limit(60))
-      : query(collection(db, 'gallery_items'), where('status', '==', 'publicado'), limit(40));
-    unsubs.push(
-      onSnapshot(
-        galleryQuery,
-        (snap) => {
-          setGalleryItems(
-            snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<GalleryItem, 'id'>) }))
-          );
-        },
-        () => {}
-      )
-    );
-
-    const docsQuery = userRole
-      ? query(collection(db, 'documents'), limit(80))
-      : query(collection(db, 'documents'), where('visibility', '==', 'publico'), limit(40));
-    unsubs.push(
-      onSnapshot(
-        docsQuery,
-        (snap) => {
-          setDocuments(
-            snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<PortalDocument, 'id'>) }))
-          );
-        },
-        () => {}
-      )
-    );
-
-    unsubs.push(
-      onSnapshot(
-        query(collection(db, 'calls_surveys'), limit(30)),
-        (snap) => {
-          setCallsSurveys(
-            snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<CallOrSurvey, 'id'>) }))
-          );
-        },
-        () => {}
-      )
-    );
-
-    return () => unsubs.forEach((u) => u());
-  }, [userRole]);
-
-  // Suscripciones privadas acotadas detrás de rol activo
-  useEffect(() => {
-    if (!authReady || !authUser || !userRole) return;
-    const unsubs: (() => void)[] = [];
-    const isLeader = isLeadershipTier(userRole.accessTier);
-
-    unsubs.push(
-      onSnapshot(
-        query(collection(db, 'commission_tasks'), limit(120)),
-        (snap) => {
-          setCommissionTasks(
-            snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<CommissionTask, 'id'>) }))
-          );
-        },
-        () => {}
-      )
-    );
-
-    unsubs.push(
-      onSnapshot(
-        query(collection(db, 'sessions'), limit(50)),
-        (snap) => {
-          setSessions(
-            snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<CouncilSession, 'id'>) }))
-          );
-        },
-        () => {}
-      )
-    );
-
-    unsubs.push(
-      onSnapshot(
-        query(collection(db, 'votes'), limit(50)),
-        (snap) => {
-          setVotes(
-            snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<CouncilVote, 'id'>) }))
-          );
-        },
-        () => {}
-      )
-    );
-
-    unsubs.push(
-      onSnapshot(
-        query(collection(db, 'commitments'), limit(80)),
-        (snap) => {
-          setCommitments(
-            snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Commitment, 'id'>) }))
-          );
-        },
-        () => {}
-      )
-    );
-
-    unsubs.push(
-      onSnapshot(
-        query(collection(db, 'ideas_inbox'), limit(50)),
-        (snap) => {
-          setIdeas(
-            snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<IdeaItem, 'id'>) }))
-          );
-        },
-        () => {}
-      )
-    );
-
-    unsubs.push(
-      onSnapshot(
-        query(collection(db, 'letter_templates'), limit(30)),
-        (snap) => {
-          setTemplates(
-            snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<LetterTemplate, 'id'>) }))
-          );
-        },
-        () => {}
-      )
-    );
-
-    unsubs.push(
-      onSnapshot(
-        query(collection(db, 'work_plans'), limit(60)),
-        (snap) => {
-          setWorkPlans(
-            snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<WorkPlanItem, 'id'>) }))
-          );
-        },
-        () => {}
-      )
-    );
-
-    if (isLeader) {
-      unsubs.push(
-        onSnapshot(
-          query(collection(db, 'councilor_private'), limit(100)),
-          (snap) => {
-            setPrivateCouncilors(
-              snap.docs.map((d) => ({ ...(d.data() as CouncilorPrivate), uid: d.id }))
-            );
-          },
-          () => {}
-        )
-      );
-
-      unsubs.push(
-        onSnapshot(
-          query(collection(db, 'contact_messages'), orderBy('createdAt', 'desc'), limit(50)),
-          (snap) => {
-            setContactMessages(
-              snap.docs.map((d) => ({
-                id: d.id,
-                ...(d.data() as Omit<ContactMessage, 'id'>),
-              }))
-            );
-          },
-          () => {}
-        )
-      );
-
-      unsubs.push(
-        onSnapshot(
-          query(collection(db, 'audit_logs'), orderBy('createdAt', 'desc'), limit(80)),
-          (snap) => {
-            setAuditLogs(
-              snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<AuditLog, 'id'>) }))
-            );
-          },
-          () => {}
-        )
-      );
-
-      unsubs.push(
-        onSnapshot(
-          doc(db, 'portal_security', 'leader_config'),
-          (snap) => {
-            if (snap.exists()) {
-              const pwd = snap.data().initialPassword;
-              if (typeof pwd === 'string' && pwd) setSessionInitialSecret(pwd);
-            }
-          },
-          () => {}
-        )
-      );
-    } else {
-      unsubs.push(
-        onSnapshot(
-          doc(db, 'councilor_private', authUser.uid),
-          (snap) => {
-            if (snap.exists()) {
-              setPrivateCouncilors([{ ...(snap.data() as CouncilorPrivate), uid: snap.id }]);
-            }
-          },
-          () => {}
-        )
-      );
+    if (!authReady) return;
+    if (authUser) {
+      loadPrivateState();
     }
+    const unsub = subscribePortalRefresh(() => {
+      if (authUser) {
+        loadPrivateState();
+      } else {
+        loadPublicState();
+      }
+    });
+    const timer = authUser
+      ? window.setInterval(() => {
+          loadPrivateState();
+        }, 15000)
+      : undefined;
 
-    return () => unsubs.forEach((u) => u());
-  }, [authReady, authUser, userRole]);
+    return () => {
+      unsub();
+      if (timer) window.clearInterval(timer);
+    };
+  }, [authReady, authUser, loadPrivateState, loadPublicState]);
 
   const currentProfile = publicCouncilors.find((c) => c.uid === authUser?.uid) || null;
   const currentPrivate =
     privateCouncilors.find((c) => c.uid === authUser?.uid) ||
-    (userRole && authUser
+    (authUser
       ? {
           uid: authUser.uid,
-          email: authUser.email || '',
-          accessTier: userRole.accessTier,
-          roleLabel: userRole.roleLabel,
-          commissionId: currentProfile?.commissionId || 'comision-1',
-          mustChangePassword: false,
+          email: authUser.email,
+          phone: authUser.phone,
+          accessTier: authUser.accessTier,
+          roleLabel: authUser.roleLabel,
+          commissionId: currentProfile?.commissionId || authUser.commissionId || 'comision-1',
+          active: authUser.active,
+          mustChangePassword: authUser.mustChangePassword,
         }
       : null);
 
   const handleSignOut = async () => {
-    await signOut(auth);
+    try {
+      await apiRequest('/api/auth/logout', { method: 'POST', skipRefresh: true });
+    } catch {
+      // ignore
+    }
+    clearAuthTokenInMemory();
+    setAuthUser(null);
+    setPrivateCouncilors([]);
+    setCommissionTasks([]);
+    setContactMessages([]);
+    setSessions([]);
+    setVotes([]);
+    setCommitments([]);
+    setIdeas([]);
+    setAuditLogs([]);
+    setTemplates([]);
+    setWorkPlans([]);
     setViewMode('public');
+    await loadPublicState();
     showToast('Sesión cerrada', 'info');
   };
 
@@ -455,7 +264,7 @@ function PortalOrchestrator() {
       {viewMode === 'private' && authUser ? (
         <PrivatePortal
           uid={authUser.uid}
-          email={authUser.email || ''}
+          email={authUser.email}
           profile={currentProfile}
           privateRecord={currentPrivate}
           commissions={commissions}
@@ -475,7 +284,6 @@ function PortalOrchestrator() {
           templates={templates}
           workPlans={workPlans}
           settings={settings}
-          sessionInitialSecret={sessionInitialSecret}
           darkMode={darkMode}
           onToggleDarkMode={() => setDarkMode((d) => !d)}
           onGoPublic={() => setViewMode('public')}
@@ -510,9 +318,12 @@ function PortalOrchestrator() {
           <AuthModal
             open={authModalOpen}
             initialTab={authModalTab}
+            currentUser={authUser}
             onClose={() => setAuthModalOpen(false)}
-            onSuccess={() => setViewMode('private')}
-            onSessionInitialSecret={(s) => setSessionInitialSecret(s)}
+            onAuthenticated={(user) => {
+              setAuthUser(user);
+              setViewMode('private');
+            }}
           />
         </Suspense>
       )}

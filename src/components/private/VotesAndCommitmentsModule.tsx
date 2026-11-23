@@ -10,15 +10,7 @@ import {
   Vote,
   X,
 } from 'lucide-react';
-import {
-  addDoc,
-  collection,
-  deleteDoc,
-  doc,
-  serverTimestamp,
-  updateDoc,
-} from 'firebase/firestore';
-import { db } from '../../firebase';
+import { ApiRequestError, apiRequest } from '../../lib/apiClient';
 import { isLeadershipTier } from '../../lib/security';
 import type {
   AccessTier,
@@ -89,21 +81,16 @@ export function VotesAndCommitmentsModule({
     });
 
     try {
-      await addDoc(collection(db, 'votes'), {
-        title: voteTitle.trim(),
-        description: voteDesc.trim() || 'Votación oficial de plenaria CMJ Flandes',
-        voteMode,
-        options: opts,
-        tallies,
-        nominalBallots: {},
-        voterUids: [],
-        quorumRequired: Math.max(1, Number(quorumReq) || 1),
-        closesAt,
-        deadline: closesAt,
-        status: 'abierta',
-        createdByUid: uid,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
+      await apiRequest('/api/votes', {
+        method: 'POST',
+        body: {
+          title: voteTitle.trim(),
+          description: voteDesc.trim() || 'Votación oficial de plenaria CMJ Flandes',
+          voteMode,
+          options: opts,
+          quorumRequired: Math.max(1, Number(quorumReq) || 1),
+          deadline: closesAt,
+        },
       });
       await recordAudit({
         uid,
@@ -116,8 +103,10 @@ export function VotesAndCommitmentsModule({
       setVoteTitle('');
       setVoteDesc('');
       showToast('Votación abierta', 'success');
-    } catch {
-      showToast('No se pudo crear la votación', 'error');
+    } catch (err) {
+      const msg =
+        err instanceof ApiRequestError ? err.message : 'No se pudo crear la votación';
+      showToast(msg, 'error');
     }
   };
 
@@ -128,32 +117,24 @@ export function VotesAndCommitmentsModule({
       return;
     }
     try {
-      const nextTallies = { ...(vote.tallies || {}) };
-      nextTallies[option] = (nextTallies[option] || 0) + 1;
-      const nextVoterUids = [...vote.voterUids, uid];
-      const nextNominal =
-        vote.voteMode === 'secreto'
-          ? vote.nominalBallots || {}
-          : { ...(vote.nominalBallots || {}), [uid]: option };
-
-      await updateDoc(doc(db, 'votes', vote.id), {
-        tallies: nextTallies,
-        voterUids: nextVoterUids,
-        nominalBallots: nextNominal,
-        updatedAt: serverTimestamp(),
+      await apiRequest(`/api/votes/${encodeURIComponent(vote.id)}/cast`, {
+        method: 'POST',
+        body: { option },
       });
       showToast('Voto registrado correctamente', 'success');
-    } catch {
-      showToast('No se pudo registrar el voto', 'error');
+    } catch (err) {
+      const msg =
+        err instanceof ApiRequestError ? err.message : 'No se pudo registrar el voto';
+      showToast(msg, 'error');
     }
   };
 
   const handleToggleVoteStatus = async (vote: CouncilVote) => {
     const next = vote.status === 'abierta' ? 'cerrada' : 'abierta';
     try {
-      await updateDoc(doc(db, 'votes', vote.id), {
-        status: next,
-        updatedAt: serverTimestamp(),
+      await apiRequest(`/api/votes/${encodeURIComponent(vote.id)}`, {
+        method: 'PATCH',
+        body: { status: next },
       });
       showToast(next === 'cerrada' ? 'Votación cerrada' : 'Votación reabierta', 'info');
     } catch {
@@ -163,7 +144,9 @@ export function VotesAndCommitmentsModule({
 
   const handleDeleteVote = async (vote: CouncilVote) => {
     try {
-      await deleteDoc(doc(db, 'votes', vote.id));
+      await apiRequest(`/api/votes/${encodeURIComponent(vote.id)}`, {
+        method: 'DELETE',
+      });
       showToast('Votación eliminada', 'info');
     } catch {
       showToast('No se pudo eliminar', 'error');
@@ -175,18 +158,16 @@ export function VotesAndCommitmentsModule({
     if (!compTitle.trim()) return;
     const resp = publicCouncilors.find((c) => c.uid === compRespUid);
     try {
-      await addDoc(collection(db, 'commitments'), {
-        title: compTitle.trim(),
-        description: '',
-        responsibleUid: compRespUid || uid,
-        responsibleName: resp?.fullName || actorName,
-        commissionId: compCommId,
-        dueDate: compDue,
-        status: 'pendiente',
-        progress: 0,
-        createdByUid: uid,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
+      await apiRequest('/api/commitments', {
+        method: 'POST',
+        body: {
+          title: compTitle.trim(),
+          description: '',
+          responsibleUid: compRespUid || uid,
+          responsibleName: resp?.fullName || actorName,
+          commissionId: compCommId,
+          dueDate: compDue,
+        },
       });
       setCompTitle('');
       setCompDue('');
@@ -202,13 +183,23 @@ export function VotesAndCommitmentsModule({
     progress: number
   ) => {
     try {
-      await updateDoc(doc(db, 'commitments', c.id), {
-        status,
-        progress,
-        updatedAt: serverTimestamp(),
+      await apiRequest(`/api/commitments/${encodeURIComponent(c.id)}`, {
+        method: 'PATCH',
+        body: { status, progress },
       });
     } catch {
       showToast('Sin permisos para actualizar compromiso', 'error');
+    }
+  };
+
+  const handleDeleteCommitment = async (c: Commitment) => {
+    try {
+      await apiRequest(`/api/commitments/${encodeURIComponent(c.id)}`, {
+        method: 'DELETE',
+      });
+      showToast('Compromiso eliminado', 'info');
+    } catch {
+      showToast('No se pudo eliminar el compromiso', 'error');
     }
   };
 
@@ -546,7 +537,7 @@ export function VotesAndCommitmentsModule({
                     {isLeader && (
                       <button
                         type="button"
-                        onClick={() => deleteDoc(doc(db, 'commitments', c.id))}
+                        onClick={() => handleDeleteCommitment(c)}
                         className="rounded-lg p-1 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
                       >
                         <Trash2 className="h-3.5 w-3.5" />

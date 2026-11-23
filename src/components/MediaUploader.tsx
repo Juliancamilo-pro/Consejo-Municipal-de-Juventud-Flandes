@@ -19,9 +19,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import { getDownloadURL, ref, uploadBytesResumable, type UploadTask } from 'firebase/storage';
-import { storage } from '../firebase';
-import { translateStorageError } from '../lib/firestoreError';
+import { apiRequest } from '../lib/apiClient';
 import {
   classifyFile,
   extractVideoThumbnail,
@@ -118,13 +116,9 @@ export function MediaUploader({
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
-  const tasksRef = useRef<Record<string, UploadTask>>({});
+  const cancelledIdsRef = useRef<Set<string>>(new Set());
 
-  const maxMbAllowed = storageFolder.startsWith('profiles/')
-    ? 15
-    : storageFolder.startsWith('gallery/') || storageFolder.startsWith('commissions/')
-    ? 150
-    : 50;
+  const maxMbAllowed = 20;
 
   const presetLabel =
     imagePreset === 'profile'
@@ -247,103 +241,110 @@ export function MediaUploader({
     return () => window.removeEventListener('paste', handlePaste);
   }, [addFiles, showToast]);
 
+  const blobToBase64 = (blob: Blob): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const res = typeof reader.result === 'string' ? reader.result : '';
+        const commaIdx = res.indexOf(',');
+        resolve(commaIdx >= 0 ? res.slice(commaIdx + 1) : res);
+      };
+      reader.onerror = () => reject(new Error('No se pudo leer el archivo.'));
+      reader.readAsDataURL(blob);
+    });
+
   const uploadSingleItem = async (item: QueuedItem): Promise<UploadedFileInfo | null> => {
     const blobToUpload = item.processedBlob || item.file;
-    const safeName = `${Date.now()}_${item.finalName.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
-    const storagePath = `${storageFolder}/${safeName}`;
-    const storageRef = ref(storage, storagePath);
+    cancelledIdsRef.current.delete(item.id);
 
     setQueue((prev) =>
       prev.map((q) =>
-        q.id === item.id ? { ...q, status: 'uploading', progress: 5, errorMsg: undefined } : q
+        q.id === item.id ? { ...q, status: 'uploading', progress: 20, errorMsg: undefined } : q
       )
     );
 
-    return new Promise((resolve) => {
-      const task = uploadBytesResumable(storageRef, blobToUpload, {
-        contentType: item.finalMime,
-      });
-      tasksRef.current[item.id] = task;
+    try {
+      const base64Data = await blobToBase64(blobToUpload);
+      if (cancelledIdsRef.current.has(item.id)) {
+        setQueue((prev) =>
+          prev.map((q) => (q.id === item.id ? { ...q, status: 'cancelled', progress: 0 } : q))
+        );
+        return null;
+      }
 
-      task.on(
-        'state_changed',
-        (snap) => {
-          const pct = Math.max(8, Math.round((snap.bytesTransferred / snap.totalBytes) * 100));
-          setQueue((prev) =>
-            prev.map((q) => (q.id === item.id ? { ...q, progress: pct } : q))
-          );
-        },
-        (error) => {
-          if (error.code === 'storage/canceled') {
-            setQueue((prev) =>
-              prev.map((q) =>
-                q.id === item.id ? { ...q, status: 'cancelled', progress: 0 } : q
-              )
-            );
-            resolve(null);
-            return;
-          }
-
-          setQueue((prev) =>
-            prev.map((q) =>
-              q.id === item.id
-                ? {
-                    ...q,
-                    status: 'error',
-                    errorMsg: translateStorageError(error),
-                  }
-                : q
-            )
-          );
-          resolve(null);
-        },
-        async () => {
-          try {
-            const downloadUrl = await getDownloadURL(task.snapshot.ref);
-            let thumbUrl: string | undefined;
-            let thumbStoragePath: string | undefined;
-            if (item.processedThumbBlob) {
-              thumbStoragePath = `${storageFolder}/thumb_${safeName}.webp`;
-              const thumbRef = ref(storage, thumbStoragePath);
-              const thumbTask = await uploadBytesResumable(thumbRef, item.processedThumbBlob, {
-                contentType: 'image/webp',
-              });
-              thumbUrl = await getDownloadURL(thumbTask.ref);
-            }
-            const info: UploadedFileInfo = {
-              url: downloadUrl,
-              thumbnailUrl: thumbUrl,
-              storagePath,
-              thumbnailStoragePath: thumbStoragePath,
-              videoSource: item.category === 'video' ? 'upload' : undefined,
-              fileName: item.finalName,
-              mimeType: item.finalMime,
-              fileSize: blobToUpload.size,
-              category: item.category,
-            };
-            setQueue((prev) =>
-              prev.map((q) =>
-                q.id === item.id ? { ...q, status: 'done', progress: 100, result: info } : q
-              )
-            );
-            resolve(info);
-          } catch {
-            setQueue((prev) =>
-              prev.map((q) =>
-                q.id === item.id
-                  ? { ...q, status: 'error', errorMsg: 'Error al obtener la URL del archivo en Storage.' }
-                  : q
-              )
-            );
-            resolve(null);
-          }
-        }
+      setQueue((prev) =>
+        prev.map((q) => (q.id === item.id ? { ...q, progress: 65 } : q))
       );
-    });
+
+      const mainRes = await apiRequest<{ url: string; storagePath: string }>('/api/media/upload', {
+        method: 'POST',
+        body: {
+          folder: storageFolder,
+          fileName: item.finalName,
+          mimeType: item.finalMime,
+          fileSize: blobToUpload.size,
+          base64Data,
+        },
+        skipRefresh: true,
+      });
+
+      let thumbUrl: string | undefined;
+      let thumbStoragePath: string | undefined;
+      if (item.processedThumbBlob) {
+        const thumbB64 = await blobToBase64(item.processedThumbBlob);
+        const thumbRes = await apiRequest<{ url: string; storagePath: string }>('/api/media/upload', {
+          method: 'POST',
+          body: {
+            folder: storageFolder,
+            fileName: `thumb_${item.finalName}.webp`,
+            mimeType: 'image/webp',
+            fileSize: item.processedThumbBlob.size,
+            base64Data: thumbB64,
+          },
+          skipRefresh: true,
+        });
+        thumbUrl = thumbRes.url;
+        thumbStoragePath = thumbRes.storagePath;
+      }
+
+      const info: UploadedFileInfo = {
+        url: mainRes.url,
+        thumbnailUrl: thumbUrl,
+        storagePath: mainRes.storagePath,
+        thumbnailStoragePath: thumbStoragePath,
+        videoSource: item.category === 'video' ? 'upload' : undefined,
+        fileName: item.finalName,
+        mimeType: item.finalMime,
+        fileSize: blobToUpload.size,
+        category: item.category,
+      };
+      setQueue((prev) =>
+        prev.map((q) =>
+          q.id === item.id ? { ...q, status: 'done', progress: 100, result: info } : q
+        )
+      );
+      return info;
+    } catch (error) {
+      setQueue((prev) =>
+        prev.map((q) =>
+          q.id === item.id
+            ? {
+                ...q,
+                status: 'error',
+                errorMsg:
+                  error instanceof Error ? error.message : 'No fue posible subir el archivo.',
+              }
+            : q
+        )
+      );
+      return null;
+    }
   };
 
   const handleUploadAll = async () => {
-    const ready = queue.filter((q) => q.status === 'pending' || q.status === 'error' || q.status === 'cancelled');
+    const ready = queue.filter(
+      (q) => q.status === 'pending' || q.status === 'error' || q.status === 'cancelled'
+    );
     if (!ready.length) return;
     const uploadedResults: UploadedFileInfo[] = [];
     for (const item of ready) {
@@ -354,8 +355,8 @@ export function MediaUploader({
       onUploaded(uploadedResults);
       showToast(
         uploadedResults.length === 1
-          ? 'Archivo subido a Firebase Storage'
-          : `${uploadedResults.length} archivos subidos a Firebase Storage`,
+          ? 'Archivo guardado correctamente'
+          : `${uploadedResults.length} archivos guardados correctamente`,
         'success'
       );
     }
@@ -383,8 +384,10 @@ export function MediaUploader({
   };
 
   const cancelUpload = (id: string) => {
-    const task = tasksRef.current[id];
-    if (task) task.cancel();
+    cancelledIdsRef.current.add(id);
+    setQueue((prev) =>
+      prev.map((q) => (q.id === id ? { ...q, status: 'cancelled', progress: 0 } : q))
+    );
   };
 
   const openCropEditor = (item: QueuedItem) => {
@@ -580,7 +583,7 @@ export function MediaUploader({
 
                   {item.status === 'done' && (
                     <p className="mt-1 inline-flex items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
-                      <Check className="h-3 w-3" /> Almacenado en Firebase Storage
+                      <Check className="h-3 w-3" /> Guardado correctamente
                     </p>
                   )}
 

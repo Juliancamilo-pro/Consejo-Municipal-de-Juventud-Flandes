@@ -10,8 +10,7 @@ import {
   Search,
   Trash2,
 } from 'lucide-react';
-import { addDoc, collection, deleteDoc, doc, serverTimestamp, updateDoc } from 'firebase/firestore';
-import { db } from '../../firebase';
+import { apiRequest } from '../../lib/apiClient';
 import { formatBytes } from '../../lib/mediaProcessor';
 import { isLeadershipTier } from '../../lib/security';
 import { deleteStorageFile } from '../../lib/storageUtils';
@@ -76,23 +75,21 @@ export function DocumentsAndArchiveModule({
   const handleUploadedDoc = async (files: UploadedFileInfo[]) => {
     for (const file of files) {
       const docTitle = title.trim() || file.fileName.replace(/\.[^.]+$/, '');
-      await addDoc(collection(db, 'documents'), {
-        title: docTitle,
-        folder: folder.trim() || 'General',
-        category,
-        version: version.trim() || 'v1.0',
-        fileUrl: file.url,
-        storagePath: file.storagePath || '',
-        fileName: file.fileName,
-        mimeType: file.mimeType,
-        fileSize: file.fileSize,
-        visibility: isLeader ? visibility : 'privado',
-        commissionId,
-        uploadedByUid: uid,
-        uploadedByName: actorName,
-        approvedByPresidente: actorRoleLabel === 'Presidente',
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
+      await apiRequest('/api/documents', {
+        method: 'POST',
+        body: {
+          title: docTitle,
+          folder: folder.trim() || 'General',
+          category,
+          version: version.trim() || 'v1.0',
+          fileUrl: file.url,
+          storagePath: file.storagePath || '',
+          fileName: file.fileName,
+          mimeType: file.mimeType,
+          fileSize: file.fileSize,
+          visibility: isLeader ? visibility : 'privado',
+          commissionId,
+        },
       });
       await recordAudit({
         uid,
@@ -108,9 +105,9 @@ export function DocumentsAndArchiveModule({
 
   const handleToggleApprove = async (d: PortalDocument) => {
     try {
-      await updateDoc(doc(db, 'documents', d.id), {
-        approvedByPresidente: !d.approvedByPresidente,
-        updatedAt: serverTimestamp(),
+      await apiRequest(`/api/documents/${encodeURIComponent(d.id)}`, {
+        method: 'PATCH',
+        body: { approvedByPresidente: !d.approvedByPresidente },
       });
       showToast(
         !d.approvedByPresidente ? 'Documento aprobado' : 'Aprobación retirada',
@@ -124,9 +121,9 @@ export function DocumentsAndArchiveModule({
   const handleToggleVisibility = async (d: PortalDocument) => {
     const next = d.visibility === 'publico' ? 'privado' : 'publico';
     try {
-      await updateDoc(doc(db, 'documents', d.id), {
-        visibility: next,
-        updatedAt: serverTimestamp(),
+      await apiRequest(`/api/documents/${encodeURIComponent(d.id)}`, {
+        method: 'PATCH',
+        body: { visibility: next },
       });
       showToast(`Visibilidad cambiada a ${next}`, 'info');
     } catch {
@@ -137,7 +134,9 @@ export function DocumentsAndArchiveModule({
   const handleDeleteDoc = async (d: PortalDocument) => {
     try {
       await deleteStorageFile(d.storagePath, d.fileUrl);
-      await deleteDoc(doc(db, 'documents', d.id));
+      await apiRequest(`/api/documents/${encodeURIComponent(d.id)}`, {
+        method: 'DELETE',
+      });
       await recordAudit({
         uid,
         actorName,
@@ -146,7 +145,7 @@ export function DocumentsAndArchiveModule({
         module: 'Documentos',
         targetTitle: d.title,
       });
-      showToast('Documento eliminado de Firestore y Storage', 'info');
+      showToast('Documento eliminado del archivo institucional', 'info');
     } catch {
       showToast('No se pudo eliminar el documento', 'error');
     }
@@ -160,7 +159,7 @@ export function DocumentsAndArchiveModule({
             Archivo Documental por Carpetas y Versiones
           </h2>
           <p className="text-xs text-slate-500">
-            Sube actas, oficios, reglamentos, hojas de cálculo y presentaciones directamente a Firebase Storage.
+            Sube actas, oficios, reglamentos, hojas de cálculo y presentaciones al repositorio seguro del CMJ.
           </p>
         </div>
 

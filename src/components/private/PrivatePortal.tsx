@@ -24,8 +24,7 @@ import {
   Vote,
   X,
 } from 'lucide-react';
-import { doc, serverTimestamp, updateDoc } from 'firebase/firestore';
-import { db } from '../../firebase';
+import { apiRequest } from '../../lib/apiClient';
 import { isLeadershipTier } from '../../lib/security';
 import { deleteStorageFile } from '../../lib/storageUtils';
 import type {
@@ -132,7 +131,6 @@ export function PrivatePortal({
   templates,
   workPlans,
   settings,
-  sessionInitialSecret,
   darkMode,
   onToggleDarkMode,
   onGoPublic,
@@ -160,7 +158,6 @@ export function PrivatePortal({
   templates: LetterTemplate[];
   workPlans: WorkPlanItem[];
   settings: PortalSettings;
-  sessionInitialSecret: string;
   darkMode: boolean;
   onToggleDarkMode: () => void;
   onGoPublic: () => void;
@@ -221,15 +218,17 @@ export function PrivatePortal({
 
   const handleAvatarUpload = async (files: UploadedFileInfo[]) => {
     const first = files[0];
-    if (!first || !profile) return;
+    if (!first) return;
     try {
-      if (profile.storagePath) {
+      if (profile?.storagePath) {
         await deleteStorageFile(profile.storagePath, profile.photoUrl);
       }
-      await updateDoc(doc(db, 'public_councilors', profile.id), {
-        photoUrl: first.url,
-        storagePath: first.storagePath || '',
-        updatedAt: serverTimestamp(),
+      await apiRequest(`/api/councilors/${encodeURIComponent(uid)}`, {
+        method: 'PATCH',
+        body: {
+          photoUrl: first.url,
+          storagePath: first.storagePath || '',
+        },
       });
       showToast('Foto de perfil actualizada', 'success');
     } catch {
@@ -240,19 +239,16 @@ export function PrivatePortal({
   const handleSaveMyProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      if (profile) {
-        await updateDoc(doc(db, 'public_councilors', profile.id), {
+      await apiRequest(`/api/councilors/${encodeURIComponent(uid)}`, {
+        method: 'PATCH',
+        body: {
           fullName: editName.trim() || fullName,
           bio: editBio.trim(),
           instagram: editIg.trim(),
           facebook: editFb.trim(),
-          updatedAt: serverTimestamp(),
-        });
-      }
-      await updateDoc(doc(db, 'councilor_private', uid), {
-        phone: editPhone.trim(),
-        updatedAt: serverTimestamp(),
-      }).catch(() => {});
+          phone: editPhone.trim(),
+        },
+      });
       setProfileModalOpen(false);
       showToast('Perfil actualizado', 'success');
     } catch {
@@ -464,7 +460,6 @@ export function PrivatePortal({
                   commissions={commissions}
                   publicCouncilors={publicCouncilors}
                   privateCouncilors={privateCouncilors}
-                  sessionInitialSecret={sessionInitialSecret}
                 />
               )}
 

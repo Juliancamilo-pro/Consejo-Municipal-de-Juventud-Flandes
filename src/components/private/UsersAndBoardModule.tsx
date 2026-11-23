@@ -12,12 +12,7 @@ import {
   UserX,
   X,
 } from 'lucide-react';
-import { createUserWithEmailAndPassword, signOut } from 'firebase/auth';
-import { doc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
-import { db, secondaryAuth } from '../../firebase';
-import { translateFirebaseAuthError } from '../../lib/firestoreError';
-import { hashEmail, hashSecretWithSalt, roleLabelToAccessTier } from '../../lib/security';
-import { purgeLegacySampleData } from '../../lib/seedData';
+import { ApiRequestError, apiRequest } from '../../lib/apiClient';
 import type {
   Commission,
   CouncilorPrivate,
@@ -34,7 +29,6 @@ export function UsersAndBoardModule({
   commissions,
   publicCouncilors,
   privateCouncilors,
-  sessionInitialSecret,
 }: {
   uid: string;
   actorName: string;
@@ -42,7 +36,6 @@ export function UsersAndBoardModule({
   commissions: Commission[];
   publicCouncilors: PublicCouncilor[];
   privateCouncilors: CouncilorPrivate[];
-  sessionInitialSecret: string;
 }) {
   const { showToast } = useToast();
   const [search, setSearch] = useState('');
@@ -106,71 +99,15 @@ export function UsersAndBoardModule({
 
     setCreating(true);
     try {
-      const emailHash = await hashEmail(cleanEmail);
-      const accessTier = roleLabelToAccessTier(roleLabel);
-      const comm = commissions.find((c) => c.id === commissionId);
-
-      // 1. Habilitar en directorio allowlist
-      await setDoc(doc(db, 'allowed_accounts', emailHash), {
-        active: true,
-        accessTier,
-        roleLabel,
-        commissionId,
-        accountProvisioned: Boolean(sessionInitialSecret),
-        mustChangePassword: true,
-        updatedAt: serverTimestamp(),
-      });
-
-      // 2. Si el líder conoce la clave inicial activa de sesión, aprovisionar también en Authentication usando secondaryAuth
-      let provisionedUid = `pending_${emailHash.slice(0, 16)}`;
-      if (sessionInitialSecret && sessionInitialSecret.length >= 6) {
-        try {
-          const created = await createUserWithEmailAndPassword(
-            secondaryAuth,
-            cleanEmail,
-            sessionInitialSecret
-          );
-          provisionedUid = created.user.uid;
-          await signOut(secondaryAuth).catch(() => {});
-
-          await setDoc(doc(db, 'roles', provisionedUid), {
-            uid: provisionedUid,
-            accessTier,
-            roleLabel,
-            emailHash,
-            active: true,
-            updatedAt: serverTimestamp(),
-          });
-
-          await setDoc(doc(db, 'councilor_private', provisionedUid), {
-            uid: provisionedUid,
-            email: cleanEmail,
-            phone: phone.trim(),
-            accessTier,
-            roleLabel,
-            commissionId,
-            active: true,
-            mustChangePassword: true,
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-          });
-        } catch (authErr) {
-          const t = translateFirebaseAuthError(authErr);
-          showToast('Habilitado en directorio', 'info', t.message);
-        }
-      }
-
-      await setDoc(doc(db, 'public_councilors', provisionedUid), {
-        uid: provisionedUid,
-        fullName: fullName.trim(),
-        roleLabel,
-        commissionId,
-        commissionName: comm?.name || commissionId,
-        bio: '',
-        photoUrl: '',
-        active: true,
-        displayOrder: publicCouncilors.length + 1,
-        updatedAt: serverTimestamp(),
+      await apiRequest<{ uid: string; ok: boolean }>('/api/councilors', {
+        method: 'POST',
+        body: {
+          fullName: fullName.trim(),
+          email: cleanEmail,
+          phone: phone.trim(),
+          roleLabel,
+          commissionId,
+        },
       });
 
       await recordAudit({
@@ -185,15 +122,15 @@ export function UsersAndBoardModule({
       showToast(
         'Consejero registrado',
         'success',
-        sessionInitialSecret
-          ? 'Cuenta lista para ingresar con su contraseña inicial o activar clave personal.'
-          : 'Correo habilitado. El consejero puede ingresar en "Activar cuenta".'
+        'Cuenta creada sin verificación en dos pasos. Ya puede ingresar con la clave inicial o activar su clave personal.'
       );
       setFullName('');
       setEmail('');
       setPhone('');
-    } catch {
-      showToast('Error al guardar consejero', 'error');
+    } catch (err) {
+      const msg =
+        err instanceof ApiRequestError ? err.message : 'Error al guardar consejero';
+      showToast(msg, 'error');
     } finally {
       setCreating(false);
     }
@@ -207,44 +144,19 @@ export function UsersAndBoardModule({
     setEditPhone(priv?.phone || '');
   };
 
-  const handleSaveEdit = async (pub: PublicCouncilor, priv?: CouncilorPrivate) => {
+  const handleSaveEdit = async (pub: PublicCouncilor) => {
     if (!editName.trim()) return;
     setSavingEdit(true);
     try {
-      const accessTier = roleLabelToAccessTier(editRole);
-      const commName = commissions.find((c) => c.id === editComm)?.name || editComm;
-
-      await updateDoc(doc(db, 'public_councilors', pub.id), {
-        fullName: editName.trim(),
-        roleLabel: editRole,
-        commissionId: editComm,
-        commissionName: commName,
-        updatedAt: serverTimestamp(),
-      });
-
-      if (priv && !pub.uid.startsWith('pending_')) {
-        const emailHash = await hashEmail(priv.email);
-        await updateDoc(doc(db, 'roles', pub.uid), {
-          accessTier,
-          roleLabel: editRole,
-          updatedAt: serverTimestamp(),
-        }).catch(() => {});
-
-        await updateDoc(doc(db, 'councilor_private', pub.uid), {
-          accessTier,
+      await apiRequest(`/api/councilors/${encodeURIComponent(pub.uid)}`, {
+        method: 'PATCH',
+        body: {
+          fullName: editName.trim(),
           roleLabel: editRole,
           commissionId: editComm,
           phone: editPhone.trim(),
-          updatedAt: serverTimestamp(),
-        }).catch(() => {});
-
-        await updateDoc(doc(db, 'allowed_accounts', emailHash), {
-          accessTier,
-          roleLabel: editRole,
-          commissionId: editComm,
-          updatedAt: serverTimestamp(),
-        }).catch(() => {});
-      }
+        },
+      });
 
       await recordAudit({
         uid,
@@ -257,39 +169,22 @@ export function UsersAndBoardModule({
 
       setEditingId(null);
       showToast('Datos actualizados', 'success');
-    } catch {
-      showToast('No se pudieron guardar los cambios', 'error');
+    } catch (err) {
+      const msg =
+        err instanceof ApiRequestError ? err.message : 'No se pudieron guardar los cambios';
+      showToast(msg, 'error');
     } finally {
       setSavingEdit(false);
     }
   };
 
-  const handleToggleActive = async (pub: PublicCouncilor, priv?: CouncilorPrivate) => {
+  const handleToggleActive = async (pub: PublicCouncilor) => {
     const nextActive = !pub.active;
     try {
-      await updateDoc(doc(db, 'public_councilors', pub.id), {
-        active: nextActive,
-        updatedAt: serverTimestamp(),
+      await apiRequest(`/api/councilors/${encodeURIComponent(pub.uid)}`, {
+        method: 'PATCH',
+        body: { active: nextActive },
       });
-
-      if (priv?.email) {
-        const emailHash = await hashEmail(priv.email);
-        await updateDoc(doc(db, 'allowed_accounts', emailHash), {
-          active: nextActive,
-          updatedAt: serverTimestamp(),
-        }).catch(() => {});
-      }
-
-      if (!pub.uid.startsWith('pending_')) {
-        await updateDoc(doc(db, 'roles', pub.uid), {
-          active: nextActive,
-          updatedAt: serverTimestamp(),
-        }).catch(() => {});
-        await updateDoc(doc(db, 'councilor_private', pub.uid), {
-          active: nextActive,
-          updatedAt: serverTimestamp(),
-        }).catch(() => {});
-      }
 
       await recordAudit({
         uid,
@@ -319,23 +214,12 @@ export function UsersAndBoardModule({
 
     setSavingSec(true);
     try {
-      const salt = `cmj-${Date.now()}`;
-      const inviteCodeHash = await hashSecretWithSalt(newInviteCode, salt);
-      const initialPasswordHash = await hashSecretWithSalt(newInitialPwd, salt);
-
-      await setDoc(doc(db, 'portal_security', 'public_hashes'), {
-        inviteCodeHash,
-        initialPasswordHash,
-        salt,
-        updatedByUid: uid,
-        updatedAt: serverTimestamp(),
-      });
-
-      await setDoc(doc(db, 'portal_security', 'leader_config'), {
-        inviteCode: newInviteCode.trim(),
-        initialPassword: newInitialPwd.trim(),
-        updatedByUid: uid,
-        updatedAt: serverTimestamp(),
+      await apiRequest('/api/security/rotate', {
+        method: 'POST',
+        body: {
+          inviteCode: newInviteCode.trim(),
+          initialPassword: newInitialPwd.trim(),
+        },
       });
 
       await recordAudit({
@@ -350,8 +234,10 @@ export function UsersAndBoardModule({
       setNewInviteCode('');
       setNewInitialPwd('');
       showToast('Credenciales institucionales actualizadas', 'success');
-    } catch {
-      showToast('Error al actualizar credenciales', 'error');
+    } catch (err) {
+      const msg =
+        err instanceof ApiRequestError ? err.message : 'Error al actualizar credenciales';
+      showToast(msg, 'error');
     } finally {
       setSavingSec(false);
     }
@@ -360,20 +246,19 @@ export function UsersAndBoardModule({
   const handlePurgeSamples = async () => {
     setPurging(true);
     try {
-      const count = await purgeLegacySampleData();
+      await apiRequest('/api/portal/purge-samples', {
+        method: 'POST',
+      });
       await recordAudit({
         uid,
         actorName,
         actorRoleLabel,
         action: 'Ejecutó limpieza de datos de ejemplo',
         module: 'Usuarios y Mesa',
-        targetTitle: `${count} registros limpiados`,
+        targetTitle: 'Depuración general ejecutada',
       });
       setPurgeConfirmStep(0);
-      showToast(
-        count > 0 ? `Limpieza completada (${count} elementos)` : 'Base de datos ya está limpia',
-        'success'
-      );
+      showToast('Limpieza completada correctamente', 'success');
     } catch {
       showToast('Error durante la limpieza', 'error');
     } finally {
@@ -574,7 +459,7 @@ export function UsersAndBoardModule({
                             <button
                               type="button"
                               disabled={savingEdit}
-                              onClick={() => handleSaveEdit(pub, priv)}
+                              onClick={() => handleSaveEdit(pub)}
                               title="Guardar"
                               className="rounded-lg bg-emerald-600 p-1.5 text-white hover:bg-emerald-700 cursor-pointer"
                             >
@@ -602,7 +487,7 @@ export function UsersAndBoardModule({
                             {pub.uid !== uid && (
                               <button
                                 type="button"
-                                onClick={() => handleToggleActive(pub, priv)}
+                                onClick={() => handleToggleActive(pub)}
                                 title={pub.active ? 'Desactivar acceso' : 'Reactivar acceso'}
                                 className={`rounded-lg p-1.5 cursor-pointer ${
                                   pub.active
@@ -683,7 +568,7 @@ export function UsersAndBoardModule({
             className="inline-flex items-center gap-2 rounded-xl bg-slate-900 dark:bg-white px-4 py-2.5 text-xs font-semibold text-white dark:text-slate-900 hover:opacity-90 disabled:opacity-60 cursor-pointer"
           >
             <Shield className="h-4 w-4" />
-            {savingSec ? 'Guardando...' : 'Rotar credenciales en Firestore'}
+            {savingSec ? 'Guardando...' : 'Actualizar credenciales institucionales'}
           </button>
         </form>
 
@@ -699,7 +584,7 @@ export function UsersAndBoardModule({
                   Limpiar datos de ejemplo previos
                 </h3>
                 <p className="text-xs text-slate-600 dark:text-slate-400">
-                  Elimina de Firestore cualquier noticia, galería, sesión, compromiso o perfil ficticio que haya quedado guardado antes de esta actualización.
+                  Elimina de la base de datos cualquier noticia, galería, sesión, compromiso o perfil ficticio de prueba.
                 </p>
               </div>
             </div>
@@ -711,7 +596,7 @@ export function UsersAndBoardModule({
                 className="inline-flex items-center gap-2 rounded-xl border border-amber-300 dark:border-amber-800 bg-white dark:bg-slate-800 px-4 py-2 text-xs font-semibold text-amber-800 dark:text-amber-300 hover:bg-amber-100 cursor-pointer"
               >
                 <Trash2 className="h-4 w-4" />
-                Limpiar datos de ejemplo en Firestore
+                Limpiar datos de ejemplo
               </button>
             )}
 

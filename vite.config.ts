@@ -16,9 +16,6 @@ export default defineConfig(() => {
         output: {
           manualChunks(id) {
             if (!id.includes('node_modules')) return undefined;
-            if (id.includes('/firebase/') || id.includes('/@firebase/')) {
-              return 'firebase-vendor';
-            }
             if (id.includes('/xlsx/')) {
               return 'xlsx-vendor';
             }

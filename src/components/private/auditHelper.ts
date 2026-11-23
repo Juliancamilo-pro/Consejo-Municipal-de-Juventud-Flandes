@@ -1,5 +1,4 @@
-import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
-import { db } from '../../firebase';
+import { apiRequest } from '../../lib/apiClient';
 import type { RoleLabel } from '../../types/cmj';
 
 export async function recordAudit(params: {
@@ -11,14 +10,14 @@ export async function recordAudit(params: {
   targetTitle: string;
 }): Promise<void> {
   try {
-    await addDoc(collection(db, 'audit_logs'), {
-      actorUid: params.uid,
-      actorName: params.actorName.slice(0, 120) || 'Consejero CMJ',
-      actorRoleLabel: params.actorRoleLabel,
-      action: params.action.slice(0, 180),
-      module: params.module.slice(0, 80),
-      targetTitle: params.targetTitle.slice(0, 180),
-      createdAt: serverTimestamp(),
+    await apiRequest('/api/audit', {
+      method: 'POST',
+      body: {
+        action: params.action.slice(0, 180),
+        module: params.module.slice(0, 80),
+        targetTitle: params.targetTitle.slice(0, 180),
+      },
+      skipRefresh: true,
     });
   } catch {
     // Registro no bloqueante

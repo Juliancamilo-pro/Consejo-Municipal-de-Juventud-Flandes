@@ -2,63 +2,44 @@ import React, { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   AlertCircle,
-  CheckCircle2,
   Eye,
   EyeOff,
   KeyRound,
   Loader2,
   Lock,
   Mail,
-  RefreshCw,
-  Send,
   ShieldCheck,
-  UserCheck,
   X,
 } from 'lucide-react';
 import {
-  createUserWithEmailAndPassword,
-  sendPasswordResetEmail,
-  signInWithEmailAndPassword,
-  updatePassword,
-} from 'firebase/auth';
-import { doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
-import { auth, db } from '../firebase';
-import { translateFirebaseAuthError } from '../lib/firestoreError';
-import {
-  getActiveSecurityHashes,
-  hashEmail,
-  SECRETARY_BOOTSTRAP_EMAIL,
-  verifyInviteCode,
-} from '../lib/security';
-import { ensureMinimalStructure, STRUCTURAL_COMMISSIONS } from '../lib/seedData';
+  ApiRequestError,
+  apiRequest,
+  setAuthTokenInMemory,
+  type SessionUser,
+} from '../lib/apiClient';
 import { useToast } from './ToastProvider';
-import type { AccessTier, RoleLabel } from '../types/cmj';
 
-type AuthTab = 'login' | 'activate' | 'reset';
-
-interface AllowAccountSnapshot {
-  active: boolean;
-  accessTier: AccessTier;
-  roleLabel: RoleLabel;
-  commissionId: string;
-  accountProvisioned: boolean;
-}
+type AuthTab = 'login' | 'activate' | 'help';
 
 export function AuthModal({
   open,
   initialTab = 'login',
+  currentUser,
   onClose,
-  onSuccess,
+  onAuthenticated,
   onSessionInitialSecret,
 }: {
   open: boolean;
   initialTab?: 'login' | 'change_password';
+  currentUser: SessionUser | null;
   onClose: () => void;
-  onSuccess: () => void;
+  onAuthenticated: (user: SessionUser) => void;
   onSessionInitialSecret?: (secret: string) => void;
 }) {
   const { showToast } = useToast();
-  const [tab, setTab] = useState<AuthTab>(initialTab === 'change_password' ? 'activate' : 'login');
+  const [tab, setTab] = useState<AuthTab>(
+    initialTab === 'change_password' ? 'activate' : 'login'
+  );
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [inviteCode, setInviteCode] = useState('');
@@ -70,202 +51,21 @@ export function AuthModal({
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [errorHint, setErrorHint] = useState<string | null>(null);
-  const [needsAuthSetup, setNeedsAuthSetup] = useState(false);
-  const [emailInUseConflict, setEmailInUseConflict] = useState(false);
-  const [mfaConflict, setMfaConflict] = useState(false);
-  const [userNotFoundSuggestActivate, setUserNotFoundSuggestActivate] = useState(false);
-  const [resetSentTo, setResetSentTo] = useState<string | null>(null);
+  const [suggestActivate, setSuggestActivate] = useState(false);
 
   useEffect(() => {
     if (open) {
       setTab(initialTab === 'change_password' ? 'activate' : 'login');
       setErrorMsg(null);
       setErrorHint(null);
-      setNeedsAuthSetup(false);
-      setEmailInUseConflict(false);
-      setMfaConflict(false);
-      setUserNotFoundSuggestActivate(false);
-      setResetSentTo(null);
+      setSuggestActivate(false);
     }
   }, [open, initialTab]);
 
   const clearFeedback = () => {
     setErrorMsg(null);
     setErrorHint(null);
-    setNeedsAuthSetup(false);
-    setEmailInUseConflict(false);
-    setMfaConflict(false);
-    setUserNotFoundSuggestActivate(false);
-    setResetSentTo(null);
-  };
-
-  /**
-   * Auto-repara cualquier documento faltante en Firestore para la cuenta del Secretario inicial,
-   * garantizando que nunca quede una cuenta "huérfana".
-   */
-  const ensureSecretaryBootstrapRecords = async (uid: string, normalizedEmail: string) => {
-    const emailHash = await hashEmail(normalizedEmail);
-
-    const roleRef = doc(db, 'roles', uid);
-    const roleSnap = await getDoc(roleRef);
-    const roleData = roleSnap.exists() ? roleSnap.data() : null;
-    if (!roleSnap.exists() || roleData?.active !== true || roleData?.accessTier !== 'tier_3_sec') {
-      await setDoc(roleRef, {
-        uid,
-        accessTier: 'tier_3_sec' as AccessTier,
-        roleLabel: 'Secretario' as RoleLabel,
-        emailHash,
-        active: true,
-        updatedAt: serverTimestamp(),
-      });
-    }
-
-    const allowRef = doc(db, 'allowed_accounts', emailHash);
-    const allowSnap = await getDoc(allowRef);
-    if (!allowSnap.exists() || allowSnap.data()?.active !== true) {
-      await setDoc(allowRef, {
-        active: true,
-        accessTier: 'tier_3_sec' as AccessTier,
-        roleLabel: 'Secretario' as RoleLabel,
-        commissionId: 'comision-5',
-        accountProvisioned: true,
-        mustChangePassword: false,
-        updatedAt: serverTimestamp(),
-      });
-    }
-
-    const pubRef = doc(db, 'public_councilors', uid);
-    if (!(await getDoc(pubRef)).exists()) {
-      await setDoc(pubRef, {
-        uid,
-        fullName: 'Secretario General CMJ',
-        roleLabel: 'Secretario' as RoleLabel,
-        commissionId: 'comision-5',
-        commissionName: 'Comisión 5',
-        bio: 'Secretario del Consejo Municipal de Juventudes de Flandes, Tolima.',
-        photoUrl: '',
-        active: true,
-        displayOrder: 3,
-        updatedAt: serverTimestamp(),
-      });
-    }
-
-    const privRef = doc(db, 'councilor_private', uid);
-    if (!(await getDoc(privRef)).exists()) {
-      await setDoc(privRef, {
-        uid,
-        email: normalizedEmail,
-        phone: '',
-        accessTier: 'tier_3_sec' as AccessTier,
-        roleLabel: 'Secretario' as RoleLabel,
-        commissionId: 'comision-5',
-        active: true,
-        mustChangePassword: false,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-    }
-
-    const secHashRef = doc(db, 'portal_security', 'public_hashes');
-    if (!(await getDoc(secHashRef)).exists()) {
-      const defaults = await getActiveSecurityHashes();
-      await setDoc(secHashRef, {
-        inviteCodeHash: defaults.inviteCodeHash,
-        initialPasswordHash: defaults.initialPasswordHash,
-        salt: defaults.salt,
-        updatedByUid: uid,
-        updatedAt: serverTimestamp(),
-      });
-    }
-
-    await ensureMinimalStructure();
-  };
-
-  /**
-   * Auto-repara roles, perfil público y ficha privada de cualquier consejero invitado
-   * cuya cuenta ya exista en Firebase Auth pero le falten documentos en Firestore.
-   */
-  const ensureInvitedCouncilorRecords = async (
-    uid: string,
-    normalizedEmail: string,
-    emailHash: string,
-    allowData: AllowAccountSnapshot
-  ) => {
-    const roleRef = doc(db, 'roles', uid);
-    if (!(await getDoc(roleRef)).exists()) {
-      await setDoc(roleRef, {
-        uid,
-        accessTier: allowData.accessTier,
-        roleLabel: allowData.roleLabel,
-        emailHash,
-        active: true,
-        updatedAt: serverTimestamp(),
-      });
-    }
-
-    const privRef = doc(db, 'councilor_private', uid);
-    if (!(await getDoc(privRef)).exists()) {
-      await setDoc(privRef, {
-        uid,
-        email: normalizedEmail,
-        phone: '',
-        accessTier: allowData.accessTier,
-        roleLabel: allowData.roleLabel,
-        commissionId: allowData.commissionId || 'comision-1',
-        active: true,
-        mustChangePassword: false,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-    }
-
-    const pubRef = doc(db, 'public_councilors', uid);
-    if (!(await getDoc(pubRef)).exists()) {
-      const comm =
-        STRUCTURAL_COMMISSIONS.find((c) => c.id === allowData.commissionId) ||
-        STRUCTURAL_COMMISSIONS[0];
-      const fallbackName =
-        normalizedEmail
-          .split('@')[0]
-          .replace(/[._-]+/g, ' ')
-          .replace(/\b\w/g, (l) => l.toUpperCase()) || 'Consejero CMJ';
-      await setDoc(pubRef, {
-        uid,
-        fullName: fallbackName,
-        roleLabel: allowData.roleLabel,
-        commissionId: comm.id,
-        commissionName: comm.name,
-        bio: '',
-        photoUrl: '',
-        active: true,
-        displayOrder: 10,
-        updatedAt: serverTimestamp(),
-      });
-    }
-
-    try {
-      await updateDoc(doc(db, 'allowed_accounts', emailHash), {
-        accountProvisioned: true,
-        updatedAt: serverTimestamp(),
-      });
-    } catch {
-      // Ignorar si ya estaba sincronizado
-    }
-  };
-
-  const checkAllowlistStatus = async (normalizedEmail: string) => {
-    const emailHash = await hashEmail(normalizedEmail);
-    const isBootstrapEmail = normalizedEmail === SECRETARY_BOOTSTRAP_EMAIL;
-    let allowData: AllowAccountSnapshot | null = null;
-    try {
-      const allowSnap = await getDoc(doc(db, 'allowed_accounts', emailHash));
-      if (allowSnap.exists()) {
-        allowData = allowSnap.data() as AllowAccountSnapshot;
-      }
-    } catch {
-      // Sin conexión o caché no disponible
-    }
-    return { emailHash, isBootstrapEmail, allowData };
+    setSuggestActivate(false);
   };
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -280,36 +80,26 @@ export function AuthModal({
 
     setLoading(true);
     try {
-      const { emailHash, isBootstrapEmail, allowData } = await checkAllowlistStatus(normalizedEmail);
+      const res = await apiRequest<{ token: string; user: SessionUser }>('/api/auth/login', {
+        method: 'POST',
+        body: { email: normalizedEmail, password },
+        skipRefresh: true,
+      });
 
-      if (!isBootstrapEmail && (!allowData || !allowData.active)) {
-        setErrorMsg('Este correo no figura habilitado en el directorio oficial del CMJ Flandes.');
-        setErrorHint(
-          'Solicita al Secretario, Presidente o Vicepresidente que agregue y active tu correo en el módulo "Usuarios y Mesa".'
-        );
-        setLoading(false);
-        return;
-      }
-
-      const cred = await signInWithEmailAndPassword(auth, normalizedEmail, password);
-      if (isBootstrapEmail) {
-        onSessionInitialSecret?.(password);
-        await ensureSecretaryBootstrapRecords(cred.user.uid, normalizedEmail);
-      } else if (allowData) {
-        await ensureInvitedCouncilorRecords(cred.user.uid, normalizedEmail, emailHash, allowData);
-      }
-
+      setAuthTokenInMemory(res.token);
+      onSessionInitialSecret?.(password);
+      onAuthenticated(res.user);
       showToast('Bienvenido al portal privado del CMJ Flandes', 'success');
-      onSuccess();
       onClose();
-    } catch (authErr) {
-      const translated = translateFirebaseAuthError(authErr);
-      setNeedsAuthSetup(Boolean(translated.needsConsoleAuthSetup));
-      setMfaConflict(Boolean(translated.isMfaRequired));
-      setErrorMsg(translated.message);
-      setErrorHint(translated.hint || null);
-      if (translated.code === 'auth/user-not-found') {
-        setUserNotFoundSuggestActivate(true);
+    } catch (err) {
+      if (err instanceof ApiRequestError) {
+        setErrorMsg(err.message);
+        setErrorHint(err.hint || null);
+        if (err.code === 'NEEDS_ACTIVATION_OR_WRONG_INITIAL' || err.status === 401) {
+          setSuggestActivate(true);
+        }
+      } else {
+        setErrorMsg('No fue posible iniciar sesión. Verifica tu conexión.');
       }
     } finally {
       setLoading(false);
@@ -332,99 +122,40 @@ export function AuthModal({
       setErrorMsg('La confirmación no coincide con la nueva contraseña.');
       return;
     }
-
-    setLoading(true);
-    try {
-      const validInvite = await verifyInviteCode(inviteCode);
-      if (!validInvite) {
-        setErrorMsg('El código de invitación no es válido.');
-        setErrorHint('Solicita el código vigente a la Secretaría o Presidencia del CMJ.');
-        setLoading(false);
-        return;
-      }
-
-      // Si el consejero ya inició sesión, actualizamos directamente su contraseña actual
-      if (auth.currentUser) {
-        await updatePassword(auth.currentUser, newPassword);
-        try {
-          await updateDoc(doc(db, 'councilor_private', auth.currentUser.uid), {
-            mustChangePassword: false,
-            updatedAt: serverTimestamp(),
-          });
-        } catch {
-          // No bloqueante
-        }
-        showToast('Contraseña actualizada correctamente', 'success');
-        onSuccess();
-        onClose();
-        return;
-      }
-
-      const normalizedEmail = email.trim().toLowerCase();
-      if (!normalizedEmail) {
-        setErrorMsg('Ingresa tu correo electrónico registrado para activar tu cuenta.');
-        setLoading(false);
-        return;
-      }
-
-      const { emailHash, isBootstrapEmail, allowData } = await checkAllowlistStatus(normalizedEmail);
-      if (!isBootstrapEmail && (!allowData || !allowData.active)) {
-        setErrorMsg('Tu correo no figura activo en el directorio de consejeros.');
-        setErrorHint('Pide a la Secretaría que registre tu correo antes de activar tu cuenta.');
-        setLoading(false);
-        return;
-      }
-
-      try {
-        const cred = await createUserWithEmailAndPassword(auth, normalizedEmail, newPassword);
-        if (isBootstrapEmail) {
-          await ensureSecretaryBootstrapRecords(cred.user.uid, normalizedEmail);
-        } else if (allowData) {
-          await ensureInvitedCouncilorRecords(cred.user.uid, normalizedEmail, emailHash, allowData);
-        }
-        showToast('Cuenta activada e ingreso exitoso', 'success');
-        onSuccess();
-        onClose();
-      } catch (err) {
-        const translated = translateFirebaseAuthError(err);
-        setNeedsAuthSetup(Boolean(translated.needsConsoleAuthSetup));
-        if (translated.isEmailAlreadyInUse) {
-          setEmailInUseConflict(true);
-          setErrorMsg(
-            'Este correo ya tenía una cuenta activada en Authentication.'
-          );
-          setErrorHint(
-            'No puedes activarla dos veces con este formulario. Inicia sesión con tu contraseña o envía un correo de restablecimiento ahora mismo.'
-          );
-        } else {
-          setErrorMsg(translated.message);
-          setErrorHint(translated.hint || null);
-        }
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const triggerPasswordReset = async (targetEmailRaw?: string) => {
-    clearFeedback();
-    const normalizedEmail = (targetEmailRaw ?? email).trim().toLowerCase();
-    if (!normalizedEmail) {
-      setErrorMsg('Escribe tu correo electrónico para enviarte el enlace de recuperación.');
+    if (!currentUser && !email.trim()) {
+      setErrorMsg('Ingresa tu correo electrónico registrado.');
       return;
     }
 
     setLoading(true);
     try {
-      await sendPasswordResetEmail(auth, normalizedEmail);
-      setResetSentTo(normalizedEmail);
-      setTab('reset');
-      showToast('Correo de recuperación enviado', 'success', `Revisa la bandeja de ${normalizedEmail}`);
+      const res = await apiRequest<{ token: string; user: SessionUser }>('/api/auth/activate', {
+        method: 'POST',
+        body: {
+          email: currentUser ? currentUser.email : email.trim().toLowerCase(),
+          inviteCode: inviteCode.trim(),
+          newPassword,
+        },
+        skipRefresh: true,
+      });
+
+      setAuthTokenInMemory(res.token);
+      onAuthenticated(res.user);
+      showToast(
+        currentUser ? 'Contraseña actualizada correctamente' : 'Cuenta activada e ingreso exitoso',
+        'success'
+      );
+      setInviteCode('');
+      setNewPassword('');
+      setConfirmPassword('');
+      onClose();
     } catch (err) {
-      const translated = translateFirebaseAuthError(err);
-      setNeedsAuthSetup(Boolean(translated.needsConsoleAuthSetup));
-      setErrorMsg(translated.message);
-      setErrorHint(translated.hint || null);
+      if (err instanceof ApiRequestError) {
+        setErrorMsg(err.message);
+        setErrorHint(err.hint || null);
+      } else {
+        setErrorMsg('No fue posible completar el cambio de contraseña.');
+      }
     } finally {
       setLoading(false);
     }
@@ -457,10 +188,10 @@ export function AuthModal({
                   {tab === 'login'
                     ? 'Iniciar sesión'
                     : tab === 'activate'
-                    ? auth.currentUser
-                      ? 'Actualizar mi contraseña'
-                      : 'Primer ingreso / Activar cuenta'
-                    : 'Recuperar contraseña'}
+                    ? currentUser
+                      ? 'Cambiar mi contraseña'
+                      : 'Activar / Cambiar clave'
+                    : 'Recuperar acceso'}
                 </h2>
               </div>
               <button
@@ -473,7 +204,6 @@ export function AuthModal({
               </button>
             </div>
 
-            {/* Selector de los 3 flujos */}
             <div className="mt-5 grid grid-cols-3 gap-1 rounded-xl bg-slate-100 dark:bg-slate-800/80 p-1">
               <button
                 type="button"
@@ -501,16 +231,16 @@ export function AuthModal({
                     : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                 }`}
               >
-                {auth.currentUser ? 'Cambiar clave' : 'Activar cuenta'}
+                {currentUser ? 'Cambiar clave' : 'Activar clave'}
               </button>
               <button
                 type="button"
                 onClick={() => {
-                  setTab('reset');
+                  setTab('help');
                   clearFeedback();
                 }}
                 className={`rounded-lg py-2 px-1.5 text-[11px] sm:text-xs font-semibold transition-colors cursor-pointer truncate ${
-                  tab === 'reset'
+                  tab === 'help'
                     ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
                     : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                 }`}
@@ -526,64 +256,10 @@ export function AuthModal({
                   <div className="space-y-1">
                     <p className="font-semibold leading-relaxed">{errorMsg}</p>
                     {errorHint && <p className="text-[11px] opacity-95 leading-relaxed">{errorHint}</p>}
-                    {needsAuthSetup && (
-                      <p className="text-[11px] font-medium opacity-95">
-                        Ruta: Firebase Console → Authentication → Sign-in method → Correo electrónico/contraseña → Habilitar.
-                      </p>
-                    )}
                   </div>
                 </div>
 
-                {emailInUseConflict && (
-                  <div className="flex flex-wrap gap-2 pt-1">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setTab('login');
-                        clearFeedback();
-                      }}
-                      className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 px-3 py-1.5 text-[11px] font-semibold cursor-pointer"
-                    >
-                      <UserCheck className="h-3.5 w-3.5" />
-                      Iniciar sesión
-                    </button>
-                    <button
-                      type="button"
-                      disabled={loading}
-                      onClick={() => triggerPasswordReset(email)}
-                      className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 text-white px-3 py-1.5 text-[11px] font-semibold hover:bg-rose-700 cursor-pointer disabled:opacity-60"
-                    >
-                      <Send className="h-3.5 w-3.5" />
-                      Restablecer contraseña por correo
-                    </button>
-                  </div>
-                )}
-
-                {mfaConflict && (
-                  <div className="rounded-xl bg-white/80 dark:bg-slate-900/70 border border-rose-200 dark:border-rose-900/50 p-2.5 space-y-2 text-[11px]">
-                    <p className="font-semibold text-rose-800 dark:text-rose-200">
-                      Cómo quitar este bloqueo en 30 segundos:
-                    </p>
-                    <ol className="list-decimal list-inside space-y-0.5 text-rose-700 dark:text-rose-300">
-                      <li>Abre Firebase Console → Authentication → Users y elimina esta cuenta con MFA.</li>
-                      <li>En Authentication → Settings → Multi-factor authentication, verifica que no sea obligatorio.</li>
-                      <li>Regresa aquí y pulsa el botón inferior para reactivar tu cuenta sin verificación en dos pasos.</li>
-                    </ol>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setTab('activate');
-                        clearFeedback();
-                      }}
-                      className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 text-white px-3 py-1.5 text-[11px] font-semibold hover:bg-blue-700 cursor-pointer"
-                    >
-                      <KeyRound className="h-3.5 w-3.5" />
-                      Ya la limpié, ir a Activar cuenta
-                    </button>
-                  </div>
-                )}
-
-                {userNotFoundSuggestActivate && (
+                {suggestActivate && (
                   <div className="pt-1">
                     <button
                       type="button"
@@ -594,22 +270,10 @@ export function AuthModal({
                       className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 text-white px-3 py-1.5 text-[11px] font-semibold hover:bg-blue-700 cursor-pointer"
                     >
                       <KeyRound className="h-3.5 w-3.5" />
-                      Ir a Primer ingreso / Activar cuenta
+                      Usar código de invitación para asignar clave nueva
                     </button>
                   </div>
                 )}
-              </div>
-            )}
-
-            {resetSentTo && (
-              <div className="mt-4 rounded-2xl border border-emerald-200 dark:border-emerald-900/60 bg-emerald-50 dark:bg-emerald-950/30 p-3.5 text-xs text-emerald-800 dark:text-emerald-300 flex items-start gap-2.5">
-                <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-semibold">Enlace enviado a {resetSentTo}</p>
-                  <p className="mt-1 opacity-90 leading-relaxed">
-                    Revisa tu bandeja de entrada o carpeta de spam, abre el enlace oficial de Firebase para elegir tu nueva contraseña y luego vuelve aquí a Iniciar sesión.
-                  </p>
-                </div>
               </div>
             )}
 
@@ -641,12 +305,12 @@ export function AuthModal({
                     <button
                       type="button"
                       onClick={() => {
-                        setTab('reset');
+                        setTab('activate');
                         clearFeedback();
                       }}
                       className="text-[11px] font-medium text-blue-600 dark:text-cyan-400 hover:underline cursor-pointer"
                     >
-                      ¿Olvidaste tu contraseña?
+                      Cambiar con código institucional
                     </button>
                   </div>
                   <div className="relative">
@@ -681,25 +345,14 @@ export function AuthModal({
                 </button>
 
                 <p className="text-center text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-                  Tu sesión permanecerá abierta en este equipo. Si es tu primera vez en el portal, usa la pestaña{' '}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setTab('activate');
-                      clearFeedback();
-                    }}
-                    className="font-semibold text-blue-600 dark:text-cyan-400 hover:underline cursor-pointer"
-                  >
-                    Activar cuenta
-                  </button>
-                  .
+                  Ingreso directo solo con correo y contraseña, sin verificación en dos pasos ni códigos SMS.
                 </p>
               </form>
             )}
 
             {tab === 'activate' && (
               <form onSubmit={handleActivateOrChangePassword} className="mt-5 space-y-3.5">
-                {!auth.currentUser && (
+                {!currentUser && (
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
                       Correo del consejero
@@ -794,51 +447,38 @@ export function AuthModal({
                 >
                   {loading && <Loader2 className="h-4 w-4 animate-spin" />}
                   {loading
-                    ? 'Configurando cuenta...'
-                    : auth.currentUser
+                    ? 'Guardando contraseña...'
+                    : currentUser
                     ? 'Actualizar contraseña'
-                    : 'Activar cuenta e ingresar'}
+                    : 'Activar clave e ingresar'}
                 </button>
               </form>
             )}
 
-            {tab === 'reset' && (
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  triggerPasswordReset();
-                }}
-                className="mt-5 space-y-4"
-              >
-                <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-                  Ingresa tu correo electrónico registrado (incluido el correo de Secretaría o Presidencia) y Firebase te enviará un enlace directo para asignar una contraseña nueva sin perder tus datos ni permisos.
-                </p>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                    Correo electrónico
-                  </label>
-                  <div className="relative">
-                    <Mail className="h-4 w-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="email"
-                      required
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      placeholder="correo@ejemplo.com"
-                      className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 pl-10 pr-4 py-2.5 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
+            {tab === 'help' && (
+              <div className="mt-5 space-y-4">
+                <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/70 p-4 text-xs text-slate-700 dark:text-slate-300 space-y-2 leading-relaxed">
+                  <p className="font-bold text-slate-900 dark:text-white">
+                    Cambio inmediato sin códigos por correo ni SMS
+                  </p>
+                  <p>
+                    Si olvidaste tu contraseña o es tu primer ingreso, solo necesitas tu{' '}
+                    <strong>correo electrónico habilitado</strong> y el{' '}
+                    <strong>código de invitación institucional</strong> vigente del CMJ Flandes.
+                  </p>
                 </div>
-
                 <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60 transition-colors cursor-pointer"
+                  type="button"
+                  onClick={() => {
+                    setTab('activate');
+                    clearFeedback();
+                  }}
+                  className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 cursor-pointer"
                 >
-                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                  {loading ? 'Enviando enlace...' : 'Enviar enlace de restablecimiento'}
+                  <KeyRound className="h-4 w-4" />
+                  Asignar nueva contraseña ahora
                 </button>
-              </form>
+              </div>
             )}
           </motion.div>
         </motion.div>

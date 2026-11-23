@@ -29,7 +29,7 @@ export class ErrorBoundary extends React.Component<
         try {
           const parsed = JSON.parse(friendly);
           if (parsed.error) {
-            friendly = `Error de permisos o conexión en Firestore (${parsed.operationType || 'operación'}): ${parsed.error}`;
+            friendly = `Error de permisos o conexión (${parsed.operationType || 'operación'}): ${parsed.error}`;
           }
         } catch {
           // conservar mensaje original

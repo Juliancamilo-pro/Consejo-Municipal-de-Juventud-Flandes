@@ -10,15 +10,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import {
-  addDoc,
-  collection,
-  deleteDoc,
-  doc,
-  serverTimestamp,
-  updateDoc,
-} from 'firebase/firestore';
-import { db } from '../../firebase';
+import { ApiRequestError, apiRequest } from '../../lib/apiClient';
 import { isLeadershipTier } from '../../lib/security';
 import type {
   AccessTier,
@@ -133,20 +125,18 @@ export function SessionsModule({
     setCreating(true);
     try {
       const code = generateSessionCode();
-      const docRef = await addDoc(collection(db, 'sessions'), {
-        title: title.trim(),
-        sessionType,
-        dateIso,
-        timeRange: timeRange.trim(),
-        location: location.trim(),
-        agenda: agenda.trim(),
-        status: 'programada',
-        attendance: {},
-        checkInCode: code,
-        quorumRequired: defaultQuorum,
-        createdByUid: uid,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
+      const res = await apiRequest<{ id: string; ok: boolean }>('/api/sessions', {
+        method: 'POST',
+        body: {
+          title: title.trim(),
+          sessionType,
+          dateIso,
+          timeRange: timeRange.trim(),
+          location: location.trim(),
+          agenda: agenda.trim(),
+          checkInCode: code,
+          quorumRequired: defaultQuorum,
+        },
       });
       await recordAudit({
         uid,
@@ -156,7 +146,7 @@ export function SessionsModule({
         module: 'Sesiones y Actas',
         targetTitle: title.trim(),
       });
-      setActiveSessionId(docRef.id);
+      setActiveSessionId(res.id);
       setTitle('');
       showToast('Sesión convocada', 'success', `Código de asistencia: ${code}`);
     } catch {
@@ -172,13 +162,17 @@ export function SessionsModule({
     status: AttendanceStatus
   ) => {
     try {
-      const next = { ...(session.attendance || {}), [councilorUid]: status };
-      await updateDoc(doc(db, 'sessions', session.id), {
-        attendance: next,
-        updatedAt: serverTimestamp(),
+      await apiRequest(`/api/sessions/${encodeURIComponent(session.id)}/attendance`, {
+        method: 'POST',
+        body: {
+          targetUid: councilorUid,
+          status,
+        },
       });
-    } catch {
-      showToast('No se pudo registrar la asistencia', 'error');
+    } catch (err) {
+      const msg =
+        err instanceof ApiRequestError ? err.message : 'No se pudo registrar la asistencia';
+      showToast(msg, 'error');
     }
   };
 
@@ -189,13 +183,20 @@ export function SessionsModule({
       showToast('Esta sesión no tiene código habilitado', 'info');
       return;
     }
-    if (selfCodeInput.trim().toUpperCase() !== selectedSession.checkInCode.toUpperCase()) {
-      showToast('El código de asistencia no coincide', 'error');
-      return;
+    try {
+      await apiRequest(`/api/sessions/${encodeURIComponent(selectedSession.id)}/checkin`, {
+        method: 'POST',
+        body: { code: selfCodeInput.trim() },
+      });
+      setSelfCodeInput('');
+      showToast('Tu asistencia quedó registrada como Presente', 'success');
+    } catch (err) {
+      const msg =
+        err instanceof ApiRequestError
+          ? err.message
+          : 'El código de asistencia no coincide';
+      showToast(msg, 'error');
     }
-    await handleSetAttendance(selectedSession, uid, 'presente');
-    setSelfCodeInput('');
-    showToast('Tu asistencia quedó registrada como Presente', 'success');
   };
 
   const handleChangeStatus = async (
@@ -203,9 +204,9 @@ export function SessionsModule({
     nextStatus: CouncilSession['status']
   ) => {
     try {
-      await updateDoc(doc(db, 'sessions', session.id), {
-        status: nextStatus,
-        updatedAt: serverTimestamp(),
+      await apiRequest(`/api/sessions/${encodeURIComponent(session.id)}`, {
+        method: 'PATCH',
+        body: { status: nextStatus },
       });
       showToast(`Estado actualizado a ${nextStatus.replace('_', ' ')}`, 'success');
     } catch {
@@ -215,7 +216,9 @@ export function SessionsModule({
 
   const handleDeleteSession = async (session: CouncilSession) => {
     try {
-      await deleteDoc(doc(db, 'sessions', session.id));
+      await apiRequest(`/api/sessions/${encodeURIComponent(session.id)}`, {
+        method: 'DELETE',
+      });
       showToast('Sesión eliminada', 'info');
     } catch {
       showToast('No se pudo eliminar la sesión', 'error');
@@ -483,7 +486,7 @@ export function SessionsModule({
                           {(['presente', 'tarde', 'excusa', 'ausente'] as AttendanceStatus[]).map(
                             (st) => {
                               const active = current === st;
-                              const disabled = !isLeader && c.uid !== uid;
+                              const disabled = !isLeader;
                               return (
                                 <button
                                   key={st}
