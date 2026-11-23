@@ -1,0 +1,6 @@
+{
+  "name": "CMJ Flandes — Consejo Municipal de Juventudes",
+  "description": "Portal oficial público y plataforma de gestión interna del Consejo Municipal de Juventudes de Flandes, Tolima, Colombia.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

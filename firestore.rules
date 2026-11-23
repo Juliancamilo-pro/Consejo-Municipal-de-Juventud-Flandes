@@ -1,0 +1,674 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 0. Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 1. Hardened Global Helpers
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.firebase.sign_in_provider == 'password';
+    }
+
+    function roleDoc() {
+      return get(/databases/$(database)/documents/roles/$(request.auth.uid)).data;
+    }
+
+    function hasActiveRole() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/roles/$(request.auth.uid))
+        && roleDoc().active == true;
+    }
+
+    function isCouncilor() {
+      return hasActiveRole()
+        && roleDoc().accessTier in ['tier_1_pres', 'tier_2_vp', 'tier_3_sec', 'tier_4_member'];
+    }
+
+    function isLeadership() {
+      return hasActiveRole()
+        && roleDoc().accessTier in ['tier_1_pres', 'tier_2_vp', 'tier_3_sec'];
+    }
+
+    function isBootstrapSecretary() {
+      return isSignedIn()
+        && request.auth.token.email == 'trujillogordilooo@gmail.com';
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isSafeUrl(url) {
+      return url is string && url.size() <= 2048 && (url == '' || url.matches('^(https://|http://|/).*'));
+    }
+
+    // 2. Entity Validation Blueprints
+    function isValidAllowedAccount(data) {
+      return data.keys().hasAll(['active', 'accessTier', 'roleLabel', 'commissionId', 'accountProvisioned', 'mustChangePassword', 'updatedAt'])
+        && data.keys().hasOnly(['active', 'accessTier', 'roleLabel', 'commissionId', 'accountProvisioned', 'mustChangePassword', 'updatedAt'])
+        && data.active is bool
+        && data.accessTier in ['tier_1_pres', 'tier_2_vp', 'tier_3_sec', 'tier_4_member']
+        && data.roleLabel in ['Presidente', 'Vicepresidente', 'Secretario', 'Consejero']
+        && isValidId(data.commissionId)
+        && data.accountProvisioned is bool
+        && data.mustChangePassword is bool
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidPortalSecurityHashes(data) {
+      return data.keys().hasAll(['inviteCodeHash', 'initialPasswordHash', 'salt', 'updatedAt'])
+        && data.keys().hasOnly(['inviteCodeHash', 'initialPasswordHash', 'salt', 'updatedByUid', 'updatedAt'])
+        && data.inviteCodeHash is string && data.inviteCodeHash.size() >= 32 && data.inviteCodeHash.size() <= 128
+        && data.initialPasswordHash is string && data.initialPasswordHash.size() >= 32 && data.initialPasswordHash.size() <= 128
+        && data.salt is string && data.salt.size() >= 4 && data.salt.size() <= 64
+        && (!('updatedByUid' in data) || (data.updatedByUid is string && data.updatedByUid.size() <= 128))
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidPortalLeaderConfig(data) {
+      return data.keys().hasAll(['inviteCode', 'initialPassword', 'updatedByUid', 'updatedAt'])
+        && data.keys().hasOnly(['inviteCode', 'initialPassword', 'updatedByUid', 'updatedAt'])
+        && data.inviteCode is string && data.inviteCode.size() >= 4 && data.inviteCode.size() <= 128
+        && data.initialPassword is string && data.initialPassword.size() >= 6 && data.initialPassword.size() <= 128
+        && data.updatedByUid is string && data.updatedByUid.size() <= 128
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidRoleAssignment(data, uid) {
+      return data.keys().hasAll(['uid', 'accessTier', 'roleLabel', 'emailHash', 'active', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'accessTier', 'roleLabel', 'emailHash', 'active', 'updatedAt'])
+        && data.uid == uid
+        && isValidId(data.uid)
+        && data.accessTier in ['tier_1_pres', 'tier_2_vp', 'tier_3_sec', 'tier_4_member']
+        && data.roleLabel in ['Presidente', 'Vicepresidente', 'Secretario', 'Consejero']
+        && data.emailHash is string && data.emailHash.size() >= 16 && data.emailHash.size() <= 128
+        && data.active is bool
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidPublicCouncilor(data) {
+      return data.keys().hasAll(['uid', 'fullName', 'roleLabel', 'commissionId', 'commissionName', 'active', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'fullName', 'roleLabel', 'commissionId', 'commissionName', 'bio', 'photoUrl', 'storagePath', 'instagram', 'facebook', 'active', 'displayOrder', 'updatedAt'])
+        && data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128
+        && data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 120
+        && data.roleLabel in ['Presidente', 'Vicepresidente', 'Secretario', 'Consejero']
+        && isValidId(data.commissionId)
+        && data.commissionName is string && data.commissionName.size() >= 2 && data.commissionName.size() <= 120
+        && (!('bio' in data) || (data.bio is string && data.bio.size() <= 600))
+        && (!('photoUrl' in data) || isSafeUrl(data.photoUrl))
+        && (!('storagePath' in data) || (data.storagePath is string && data.storagePath.size() <= 512))
+        && (!('instagram' in data) || (data.instagram is string && data.instagram.size() <= 120))
+        && (!('facebook' in data) || (data.facebook is string && data.facebook.size() <= 120))
+        && data.active is bool
+        && (!('displayOrder' in data) || data.displayOrder is number)
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCouncilorPrivate(data, uid) {
+      return data.keys().hasAll(['uid', 'email', 'accessTier', 'roleLabel', 'commissionId', 'mustChangePassword', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'phone', 'accessTier', 'roleLabel', 'commissionId', 'active', 'mustChangePassword', 'createdAt', 'updatedAt'])
+        && data.uid == uid
+        && isValidId(data.uid)
+        && data.email is string && data.email.size() >= 5 && data.email.size() <= 180
+        && (!('phone' in data) || (data.phone is string && data.phone.size() <= 40))
+        && (!('active' in data) || data.active is bool)
+        && data.accessTier in ['tier_1_pres', 'tier_2_vp', 'tier_3_sec', 'tier_4_member']
+        && data.roleLabel in ['Presidente', 'Vicepresidente', 'Secretario', 'Consejero']
+        && isValidId(data.commissionId)
+        && data.mustChangePassword is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCommission(data, commissionId) {
+      return data.keys().hasAll(['id', 'number', 'name', 'description', 'coordinatorName', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'number', 'name', 'iconName', 'accentColor', 'coverUrl', 'storagePath', 'description', 'coordinatorName', 'coordinatorUid', 'workPlanSummary', 'updatedAt'])
+        && data.id == commissionId
+        && isValidId(data.id)
+        && data.number is number && data.number >= 1 && data.number <= 5
+        && data.name is string && data.name.size() >= 2 && data.name.size() <= 120
+        && (!('iconName' in data) || (data.iconName is string && data.iconName.size() <= 40))
+        && (!('accentColor' in data) || (data.accentColor is string && data.accentColor.size() <= 32))
+        && (!('coverUrl' in data) || isSafeUrl(data.coverUrl))
+        && (!('storagePath' in data) || (data.storagePath is string && data.storagePath.size() <= 512))
+        && data.description is string && data.description.size() >= 2 && data.description.size() <= 800
+        && data.coordinatorName is string && data.coordinatorName.size() >= 2 && data.coordinatorName.size() <= 120
+        && (!('coordinatorUid' in data) || (data.coordinatorUid is string && data.coordinatorUid.size() <= 128))
+        && (!('workPlanSummary' in data) || (data.workPlanSummary is string && data.workPlanSummary.size() <= 1200))
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCommissionTask(data) {
+      return data.keys().hasAll(['commissionId', 'title', 'status', 'createdByUid', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['commissionId', 'title', 'status', 'assignedName', 'dueDate', 'createdByUid', 'createdAt', 'updatedAt'])
+        && isValidId(data.commissionId)
+        && data.title is string && data.title.size() >= 2 && data.title.size() <= 180
+        && data.status in ['pendiente', 'en_curso', 'hecha']
+        && (!('assignedName' in data) || (data.assignedName is string && data.assignedName.size() <= 120))
+        && (!('dueDate' in data) || (data.dueDate is string && data.dueDate.size() <= 40))
+        && data.createdByUid is string && data.createdByUid.size() >= 1 && data.createdByUid.size() <= 128
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidNewsEvent(data) {
+      return data.keys().hasAll(['title', 'type', 'summary', 'content', 'commissionId', 'authorUid', 'authorName', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['title', 'type', 'summary', 'content', 'coverUrl', 'storagePath', 'commissionId', 'eventDate', 'location', 'authorUid', 'authorName', 'status', 'createdAt', 'updatedAt'])
+        && data.title is string && data.title.size() >= 3 && data.title.size() <= 180
+        && data.type in ['noticia', 'evento']
+        && data.summary is string && data.summary.size() >= 4 && data.summary.size() <= 400
+        && data.content is string && data.content.size() >= 4 && data.content.size() <= 5000
+        && (!('coverUrl' in data) || isSafeUrl(data.coverUrl))
+        && (!('storagePath' in data) || (data.storagePath is string && data.storagePath.size() <= 512))
+        && isValidId(data.commissionId)
+        && (!('eventDate' in data) || (data.eventDate is string && data.eventDate.size() <= 40))
+        && (!('location' in data) || (data.location is string && data.location.size() <= 160))
+        && data.authorUid is string && data.authorUid.size() >= 1 && data.authorUid.size() <= 128
+        && data.authorName is string && data.authorName.size() >= 2 && data.authorName.size() <= 120
+        && data.status in ['borrador', 'pendiente', 'publicado']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidGalleryItem(data) {
+      return data.keys().hasAll(['title', 'mediaType', 'url', 'commissionId', 'authorUid', 'authorName', 'status', 'createdAt'])
+        && data.keys().hasOnly(['title', 'description', 'mediaType', 'videoSource', 'url', 'thumbnailUrl', 'storagePath', 'thumbnailStoragePath', 'commissionId', 'authorUid', 'authorName', 'status', 'createdAt'])
+        && data.title is string && data.title.size() >= 2 && data.title.size() <= 160
+        && (!('description' in data) || (data.description is string && data.description.size() <= 400))
+        && data.mediaType in ['image', 'video']
+        && (!('videoSource' in data) || data.videoSource in ['upload', 'youtube', 'vimeo'])
+        && isSafeUrl(data.url) && data.url.size() >= 5
+        && (!('thumbnailUrl' in data) || isSafeUrl(data.thumbnailUrl))
+        && (!('storagePath' in data) || (data.storagePath is string && data.storagePath.size() <= 512))
+        && (!('thumbnailStoragePath' in data) || (data.thumbnailStoragePath is string && data.thumbnailStoragePath.size() <= 512))
+        && isValidId(data.commissionId)
+        && data.authorUid is string && data.authorUid.size() >= 1 && data.authorUid.size() <= 128
+        && data.authorName is string && data.authorName.size() >= 2 && data.authorName.size() <= 120
+        && data.status in ['publicado', 'archivado']
+        && data.createdAt is timestamp;
+    }
+
+    function isValidPortalDocument(data) {
+      return data.keys().hasAll(['title', 'category', 'version', 'fileUrl', 'fileName', 'mimeType', 'visibility', 'uploadedByUid', 'uploadedByName', 'approvedByPresidente', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['title', 'folder', 'category', 'version', 'fileUrl', 'storagePath', 'fileName', 'mimeType', 'fileSize', 'visibility', 'commissionId', 'uploadedByUid', 'uploadedByName', 'approvedByPresidente', 'createdAt', 'updatedAt'])
+        && data.title is string && data.title.size() >= 2 && data.title.size() <= 180
+        && (!('folder' in data) || (data.folder is string && data.folder.size() <= 80))
+        && data.category is string && data.category.size() >= 2 && data.category.size() <= 60
+        && data.version is string && data.version.size() >= 1 && data.version.size() <= 24
+        && isSafeUrl(data.fileUrl) && data.fileUrl.size() >= 5
+        && (!('storagePath' in data) || (data.storagePath is string && data.storagePath.size() <= 512))
+        && data.fileName is string && data.fileName.size() >= 1 && data.fileName.size() <= 200
+        && data.mimeType is string && data.mimeType.size() >= 3 && data.mimeType.size() <= 120
+        && (!('fileSize' in data) || (data.fileSize is number && data.fileSize >= 0))
+        && data.visibility in ['publico', 'privado']
+        && (!('commissionId' in data) || isValidId(data.commissionId))
+        && data.uploadedByUid is string && data.uploadedByUid.size() >= 1 && data.uploadedByUid.size() <= 128
+        && data.uploadedByName is string && data.uploadedByName.size() >= 2 && data.uploadedByName.size() <= 120
+        && data.approvedByPresidente is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCallOrSurvey(data) {
+      return data.keys().hasAll(['title', 'kind', 'description', 'deadline', 'status', 'responseCount', 'createdByUid', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['title', 'kind', 'description', 'deadline', 'status', 'options', 'responseCount', 'createdByUid', 'createdAt', 'updatedAt'])
+        && data.title is string && data.title.size() >= 3 && data.title.size() <= 180
+        && data.kind in ['convocatoria', 'encuesta']
+        && data.description is string && data.description.size() >= 4 && data.description.size() <= 1200
+        && data.deadline is string && data.deadline.size() >= 4 && data.deadline.size() <= 40
+        && data.status in ['abierta', 'cerrada']
+        && (!('options' in data) || (data.options is list && data.options.size() <= 10))
+        && data.responseCount is number && data.responseCount >= 0
+        && data.createdByUid is string && data.createdByUid.size() >= 1 && data.createdByUid.size() <= 128
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidSurveyResponse(data) {
+      return data.keys().hasAll(['surveyId', 'selectedOption', 'respondentName', 'createdAt'])
+        && data.keys().hasOnly(['surveyId', 'selectedOption', 'respondentName', 'respondentEmail', 'comment', 'createdAt'])
+        && isValidId(data.surveyId)
+        && data.selectedOption is string && data.selectedOption.size() >= 1 && data.selectedOption.size() <= 160
+        && data.respondentName is string && data.respondentName.size() >= 2 && data.respondentName.size() <= 120
+        && (!('respondentEmail' in data) || (data.respondentEmail is string && data.respondentEmail.size() <= 180))
+        && (!('comment' in data) || (data.comment is string && data.comment.size() <= 600))
+        && data.createdAt is timestamp;
+    }
+
+    function isValidContactMessage(data) {
+      return data.keys().hasAll(['senderName', 'senderEmail', 'subject', 'message', 'status', 'createdAt'])
+        && data.keys().hasOnly(['senderName', 'senderEmail', 'subject', 'message', 'category', 'status', 'createdAt'])
+        && data.senderName is string && data.senderName.size() >= 2 && data.senderName.size() <= 120
+        && data.senderEmail is string && data.senderEmail.size() >= 5 && data.senderEmail.size() <= 180
+        && data.subject is string && data.subject.size() >= 2 && data.subject.size() <= 180
+        && data.message is string && data.message.size() >= 4 && data.message.size() <= 2000
+        && (!('category' in data) || (data.category is string && data.category.size() <= 64))
+        && data.status in ['nuevo', 'en_proceso', 'respondido']
+        && data.createdAt is timestamp;
+    }
+
+    function isValidCouncilSession(data) {
+      return data.keys().hasAll(['title', 'sessionType', 'dateIso', 'location', 'status', 'createdByUid', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['title', 'sessionType', 'dateIso', 'timeRange', 'location', 'agenda', 'status', 'actaUrl', 'attendance', 'checkInCode', 'quorumRequired', 'createdByUid', 'createdAt', 'updatedAt'])
+        && data.title is string && data.title.size() >= 3 && data.title.size() <= 180
+        && data.sessionType is string && data.sessionType.size() >= 2 && data.sessionType.size() <= 64
+        && data.dateIso is string && data.dateIso.size() >= 4 && data.dateIso.size() <= 40
+        && (!('timeRange' in data) || (data.timeRange is string && data.timeRange.size() <= 64))
+        && data.location is string && data.location.size() >= 2 && data.location.size() <= 160
+        && (!('agenda' in data) || (data.agenda is string && data.agenda.size() <= 2000))
+        && data.status in ['programada', 'en_curso', 'finalizada']
+        && (!('actaUrl' in data) || isSafeUrl(data.actaUrl))
+        && (!('attendance' in data) || (data.attendance is map && data.attendance.size() <= 100))
+        && (!('checkInCode' in data) || (data.checkInCode is string && data.checkInCode.size() <= 16))
+        && (!('quorumRequired' in data) || (data.quorumRequired is number && data.quorumRequired >= 1))
+        && data.createdByUid is string && data.createdByUid.size() >= 1 && data.createdByUid.size() <= 128
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCouncilVote(data) {
+      return data.keys().hasAll(['title', 'description', 'options', 'voterUids', 'status', 'createdByUid', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['title', 'description', 'commissionId', 'voteMode', 'options', 'tallies', 'nominalBallots', 'voterUids', 'quorumRequired', 'opensAt', 'closesAt', 'status', 'deadline', 'createdByUid', 'createdAt', 'updatedAt'])
+        && data.title is string && data.title.size() >= 3 && data.title.size() <= 180
+        && data.description is string && data.description.size() >= 2 && data.description.size() <= 1000
+        && (!('commissionId' in data) || isValidId(data.commissionId))
+        && (!('voteMode' in data) || data.voteMode in ['nominal', 'secreto'])
+        && data.options is list && data.options.size() >= 2 && data.options.size() <= 8
+        && (!('tallies' in data) || (data.tallies is map && data.tallies.size() <= 8))
+        && (!('nominalBallots' in data) || (data.nominalBallots is map && data.nominalBallots.size() <= 100))
+        && data.voterUids is list && data.voterUids.size() <= 100
+        && (!('quorumRequired' in data) || (data.quorumRequired is number && data.quorumRequired >= 1))
+        && (!('opensAt' in data) || (data.opensAt is string && data.opensAt.size() <= 40))
+        && (!('closesAt' in data) || (data.closesAt is string && data.closesAt.size() <= 40))
+        && data.status in ['abierta', 'cerrada']
+        && (!('deadline' in data) || (data.deadline is string && data.deadline.size() <= 40))
+        && data.createdByUid is string && data.createdByUid.size() >= 1 && data.createdByUid.size() <= 128
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCommitment(data) {
+      return data.keys().hasAll(['title', 'responsibleUid', 'responsibleName', 'commissionId', 'status', 'progress', 'createdByUid', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['title', 'description', 'responsibleUid', 'responsibleName', 'commissionId', 'dueDate', 'status', 'progress', 'createdByUid', 'createdAt', 'updatedAt'])
+        && data.title is string && data.title.size() >= 3 && data.title.size() <= 180
+        && (!('description' in data) || (data.description is string && data.description.size() <= 800))
+        && data.responsibleUid is string && data.responsibleUid.size() >= 1 && data.responsibleUid.size() <= 128
+        && data.responsibleName is string && data.responsibleName.size() >= 2 && data.responsibleName.size() <= 120
+        && isValidId(data.commissionId)
+        && (!('dueDate' in data) || (data.dueDate is string && data.dueDate.size() <= 40))
+        && data.status in ['pendiente', 'en_progreso', 'cumplido']
+        && data.progress is number && data.progress >= 0 && data.progress <= 100
+        && data.createdByUid is string && data.createdByUid.size() >= 1 && data.createdByUid.size() <= 128
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidIdeaItem(data) {
+      return data.keys().hasAll(['title', 'description', 'category', 'authorUid', 'authorName', 'status', 'upvoterUids', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['title', 'description', 'category', 'commissionId', 'authorUid', 'authorName', 'status', 'upvoterUids', 'createdAt', 'updatedAt'])
+        && data.title is string && data.title.size() >= 3 && data.title.size() <= 160
+        && data.description is string && data.description.size() >= 4 && data.description.size() <= 1500
+        && data.category is string && data.category.size() >= 2 && data.category.size() <= 64
+        && (!('commissionId' in data) || isValidId(data.commissionId))
+        && data.authorUid is string && data.authorUid.size() >= 1 && data.authorUid.size() <= 128
+        && data.authorName is string && data.authorName.size() >= 2 && data.authorName.size() <= 120
+        && data.status in ['nueva', 'en_revision', 'aprobada']
+        && data.upvoterUids is list && data.upvoterUids.size() <= 100
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidLetterTemplate(data) {
+      return data.keys().hasAll(['title', 'category', 'bodyTemplate', 'signatoryRole', 'updatedByUid', 'updatedAt'])
+        && data.keys().hasOnly(['title', 'category', 'headerText', 'bodyTemplate', 'signatoryRole', 'updatedByUid', 'updatedAt'])
+        && data.title is string && data.title.size() >= 2 && data.title.size() <= 160
+        && data.category is string && data.category.size() >= 2 && data.category.size() <= 64
+        && (!('headerText' in data) || (data.headerText is string && data.headerText.size() <= 500))
+        && data.bodyTemplate is string && data.bodyTemplate.size() >= 10 && data.bodyTemplate.size() <= 5000
+        && data.signatoryRole is string && data.signatoryRole.size() >= 2 && data.signatoryRole.size() <= 64
+        && data.updatedByUid is string && data.updatedByUid.size() >= 1 && data.updatedByUid.size() <= 128
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidWorkPlanItem(data) {
+      return data.keys().hasAll(['title', 'axis', 'commissionId', 'quarter', 'status', 'progress', 'updatedByUid', 'updatedAt'])
+        && data.keys().hasOnly(['title', 'axis', 'commissionId', 'quarter', 'status', 'progress', 'evidenceCount', 'updatedByUid', 'updatedAt'])
+        && data.title is string && data.title.size() >= 3 && data.title.size() <= 180
+        && data.axis is string && data.axis.size() >= 2 && data.axis.size() <= 100
+        && isValidId(data.commissionId)
+        && data.quarter is string && data.quarter.size() >= 2 && data.quarter.size() <= 24
+        && data.status in ['planeado', 'ejecucion', 'completado']
+        && data.progress is number && data.progress >= 0 && data.progress <= 100
+        && (!('evidenceCount' in data) || (data.evidenceCount is number && data.evidenceCount >= 0))
+        && data.updatedByUid is string && data.updatedByUid.size() >= 1 && data.updatedByUid.size() <= 128
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAuditLog(data) {
+      return data.keys().hasAll(['actorUid', 'actorName', 'actorRoleLabel', 'action', 'module', 'targetTitle', 'createdAt'])
+        && data.keys().hasOnly(['actorUid', 'actorName', 'actorRoleLabel', 'action', 'module', 'targetTitle', 'createdAt'])
+        && data.actorUid is string && data.actorUid == request.auth.uid
+        && data.actorName is string && data.actorName.size() >= 2 && data.actorName.size() <= 120
+        && data.actorRoleLabel in ['Presidente', 'Vicepresidente', 'Secretario', 'Consejero']
+        && data.action is string && data.action.size() >= 2 && data.action.size() <= 180
+        && data.module is string && data.module.size() >= 2 && data.module.size() <= 80
+        && data.targetTitle is string && data.targetTitle.size() >= 1 && data.targetTitle.size() <= 180
+        && data.createdAt is timestamp;
+    }
+
+    function isValidPortalSettings(data) {
+      return data.keys().hasAll(['heroTitle', 'heroSubtitle', 'activeTheme', 'updatedAt'])
+        && data.keys().hasOnly(['heroTitle', 'heroSubtitle', 'heroImageUrl', 'heroStoragePath', 'aboutText', 'missionText', 'visionText', 'contactEmail', 'contactAddress', 'activeTheme', 'updatedAt'])
+        && data.heroTitle is string && data.heroTitle.size() >= 3 && data.heroTitle.size() <= 160
+        && data.heroSubtitle is string && data.heroSubtitle.size() >= 3 && data.heroSubtitle.size() <= 400
+        && (!('heroImageUrl' in data) || isSafeUrl(data.heroImageUrl))
+        && (!('heroStoragePath' in data) || (data.heroStoragePath is string && data.heroStoragePath.size() <= 512))
+        && (!('aboutText' in data) || (data.aboutText is string && data.aboutText.size() <= 2000))
+        && (!('missionText' in data) || (data.missionText is string && data.missionText.size() <= 1000))
+        && (!('visionText' in data) || (data.visionText is string && data.visionText.size() <= 1000))
+        && (!('contactEmail' in data) || (data.contactEmail is string && data.contactEmail.size() <= 180))
+        && (!('contactAddress' in data) || (data.contactAddress is string && data.contactAddress.size() <= 240))
+        && data.activeTheme in ['default', 'san_pedro', 'independencia', 'semana_juventud', 'amor_amistad', 'navidad']
+        && data.updatedAt is timestamp;
+    }
+
+    // 3. Collection Rules
+
+    match /test/connection {
+      allow get: if true;
+    }
+
+    match /allowed_accounts/{emailHash} {
+      allow get: if isValidId(emailHash);
+      allow list: if false;
+      allow create: if isValidId(emailHash) && isValidAllowedAccount(incoming()) && incoming().updatedAt == request.time && (
+        isLeadership()
+        || (isBootstrapSecretary() && incoming().accessTier == 'tier_3_sec' && incoming().roleLabel == 'Secretario')
+      );
+      allow update: if isValidId(emailHash) && isValidAllowedAccount(incoming()) && incoming().updatedAt == request.time && (
+        isLeadership()
+        || isBootstrapSecretary()
+        || (
+          isSignedIn()
+          && (
+            (hasActiveRole() && roleDoc().emailHash == emailHash)
+            || (!exists(/databases/$(database)/documents/roles/$(request.auth.uid)) && getAfter(/databases/$(database)/documents/roles/$(request.auth.uid)).data.emailHash == emailHash)
+          )
+          && incoming().diff(existing()).affectedKeys().hasOnly(['accountProvisioned', 'mustChangePassword', 'updatedAt'])
+        )
+      );
+      allow delete: if isValidId(emailHash) && isLeadership();
+    }
+
+    match /portal_security/public_hashes {
+      allow get: if true;
+      allow list: if false;
+      allow create: if isValidPortalSecurityHashes(incoming()) && (isLeadership() || isBootstrapSecretary()) && incoming().updatedAt == request.time;
+      allow update: if isValidPortalSecurityHashes(incoming()) && (isLeadership() || isBootstrapSecretary()) && incoming().updatedAt == request.time;
+    }
+
+    match /portal_security/leader_config {
+      allow get: if isLeadership();
+      allow list: if false;
+      allow create: if isValidPortalLeaderConfig(incoming()) && (isLeadership() || isBootstrapSecretary()) && incoming().updatedAt == request.time;
+      allow update: if isValidPortalLeaderConfig(incoming()) && isLeadership() && incoming().updatedAt == request.time;
+    }
+
+    match /roles/{uid} {
+      allow get: if isValidId(uid) && (isOwner(uid) || isLeadership());
+      allow list: if isLeadership();
+      allow create: if isValidId(uid) && isValidRoleAssignment(incoming(), uid) && incoming().updatedAt == request.time && (
+        isLeadership()
+        || (isBootstrapSecretary() && isOwner(uid) && incoming().accessTier == 'tier_3_sec' && incoming().roleLabel == 'Secretario')
+        || (
+          isSignedIn()
+          && isOwner(uid)
+          && exists(/databases/$(database)/documents/allowed_accounts/$(incoming().emailHash))
+          && get(/databases/$(database)/documents/allowed_accounts/$(incoming().emailHash)).data.active == true
+          && incoming().accessTier == get(/databases/$(database)/documents/allowed_accounts/$(incoming().emailHash)).data.accessTier
+          && incoming().roleLabel == get(/databases/$(database)/documents/allowed_accounts/$(incoming().emailHash)).data.roleLabel
+        )
+      );
+      allow update: if isValidId(uid) && isValidRoleAssignment(incoming(), uid) && incoming().updatedAt == request.time && (
+        isLeadership()
+        || (isBootstrapSecretary() && isOwner(uid) && incoming().accessTier == 'tier_3_sec' && incoming().roleLabel == 'Secretario')
+      );
+      allow delete: if isValidId(uid) && isLeadership();
+    }
+
+    match /public_councilors/{councilorId} {
+      allow get: if isValidId(councilorId) && (resource.data.active == true || isCouncilor());
+      allow list: if resource.data.active == true || isCouncilor();
+      allow create: if isValidId(councilorId) && isValidPublicCouncilor(incoming()) && incoming().updatedAt == request.time && (
+        isLeadership()
+        || (isBootstrapSecretary() && incoming().uid == request.auth.uid)
+        || (isCouncilor() && incoming().uid == request.auth.uid && councilorId == request.auth.uid)
+      );
+      allow update: if isValidId(councilorId) && isValidPublicCouncilor(incoming()) && incoming().updatedAt == request.time && (
+        isLeadership()
+        || (isBootstrapSecretary() && incoming().uid == request.auth.uid && councilorId == request.auth.uid)
+        || (
+          isCouncilor()
+          && existing().uid == request.auth.uid
+          && incoming().uid == existing().uid
+          && incoming().diff(existing()).affectedKeys().hasOnly(['bio', 'photoUrl', 'storagePath', 'instagram', 'facebook', 'fullName', 'updatedAt'])
+        )
+      );
+      allow delete: if isValidId(councilorId) && isLeadership();
+    }
+
+    match /councilor_private/{uid} {
+      allow get: if isValidId(uid) && (isOwner(uid) || isLeadership());
+      allow list: if isLeadership();
+      allow create: if isValidId(uid) && isValidCouncilorPrivate(incoming(), uid) && incoming().createdAt == request.time && incoming().updatedAt == request.time && (
+        isLeadership()
+        || (isBootstrapSecretary() && isOwner(uid) && incoming().accessTier == 'tier_3_sec' && incoming().roleLabel == 'Secretario')
+        || (
+          isOwner(uid)
+          && hasActiveRole()
+          && incoming().accessTier == roleDoc().accessTier
+          && incoming().roleLabel == roleDoc().roleLabel
+        )
+      );
+      allow update: if isValidId(uid) && isValidCouncilorPrivate(incoming(), uid) && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
+        isLeadership()
+        || (isBootstrapSecretary() && isOwner(uid) && incoming().accessTier == 'tier_3_sec' && incoming().roleLabel == 'Secretario')
+        || (
+          isOwner(uid)
+          && isCouncilor()
+          && incoming().diff(existing()).affectedKeys().hasOnly(['phone', 'mustChangePassword', 'updatedAt'])
+        )
+      );
+      allow delete: if isValidId(uid) && isLeadership();
+    }
+
+    match /commissions/{commissionId} {
+      allow get, list: if true;
+      allow create: if isValidId(commissionId) && isValidCommission(incoming(), commissionId) && (isLeadership() || isBootstrapSecretary()) && incoming().updatedAt == request.time;
+      allow update: if isValidId(commissionId) && isValidCommission(incoming(), commissionId) && incoming().updatedAt == request.time && (
+        isLeadership()
+        || (isCouncilor() && existing().coordinatorUid == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['description', 'workPlanSummary', 'coverUrl', 'storagePath', 'updatedAt']))
+      );
+      allow delete: if isValidId(commissionId) && isLeadership();
+    }
+
+    match /commission_tasks/{taskId} {
+      allow get, list: if isCouncilor();
+      allow create: if isValidId(taskId) && isValidCommissionTask(incoming()) && isCouncilor() && incoming().createdByUid == request.auth.uid && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isValidId(taskId) && isValidCommissionTask(incoming()) && isCouncilor() && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
+        isLeadership()
+        || incoming().diff(existing()).affectedKeys().hasOnly(['status', 'assignedName', 'dueDate', 'updatedAt'])
+      );
+      allow delete: if isValidId(taskId) && (isLeadership() || (isCouncilor() && existing().createdByUid == request.auth.uid));
+    }
+
+    match /news_events/{itemId} {
+      allow get: if isValidId(itemId) && (resource.data.status == 'publicado' || isCouncilor());
+      allow list: if resource.data.status == 'publicado' || isCouncilor();
+      allow create: if isValidId(itemId) && isValidNewsEvent(incoming()) && isCouncilor() && incoming().authorUid == request.auth.uid && incoming().createdAt == request.time && incoming().updatedAt == request.time && (
+        isLeadership() || incoming().status in ['borrador', 'pendiente']
+      );
+      allow update: if isValidId(itemId) && isValidNewsEvent(incoming()) && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
+        isLeadership()
+        || (isCouncilor() && existing().authorUid == request.auth.uid && incoming().authorUid == existing().authorUid && incoming().status in ['borrador', 'pendiente'] && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'summary', 'content', 'coverUrl', 'storagePath', 'eventDate', 'location', 'status', 'updatedAt']))
+      );
+      allow delete: if isValidId(itemId) && isLeadership();
+    }
+
+    match /gallery_items/{itemId} {
+      allow get: if isValidId(itemId) && (resource.data.status == 'publicado' || isCouncilor());
+      allow list: if resource.data.status == 'publicado' || isCouncilor();
+      allow create: if isValidId(itemId) && isValidGalleryItem(incoming()) && isCouncilor() && incoming().authorUid == request.auth.uid && incoming().createdAt == request.time;
+      allow update: if isValidId(itemId) && isValidGalleryItem(incoming()) && incoming().createdAt == existing().createdAt && (isLeadership() || (isCouncilor() && existing().authorUid == request.auth.uid));
+      allow delete: if isValidId(itemId) && (isLeadership() || (isCouncilor() && existing().authorUid == request.auth.uid));
+    }
+
+    match /documents/{docId} {
+      allow get: if isValidId(docId) && (resource.data.visibility == 'publico' || isCouncilor());
+      allow list: if resource.data.visibility == 'publico' || isCouncilor();
+      allow create: if isValidId(docId) && isValidPortalDocument(incoming()) && isCouncilor() && incoming().uploadedByUid == request.auth.uid && incoming().createdAt == request.time && incoming().updatedAt == request.time && (
+        isLeadership() || (incoming().visibility == 'privado' && incoming().approvedByPresidente == false)
+      );
+      allow update: if isValidId(docId) && isValidPortalDocument(incoming()) && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && isLeadership();
+      allow delete: if isValidId(docId) && isLeadership();
+    }
+
+    match /calls_surveys/{itemId} {
+      allow get, list: if true;
+      allow create: if isValidId(itemId) && isValidCallOrSurvey(incoming()) && (isLeadership() || isBootstrapSecretary()) && incoming().createdByUid == request.auth.uid && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isValidId(itemId) && isValidCallOrSurvey(incoming()) && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
+        isLeadership()
+        || (
+          existing().status == 'abierta'
+          && incoming().diff(existing()).affectedKeys().hasOnly(['responseCount', 'updatedAt'])
+          && incoming().responseCount == existing().responseCount + 1
+        )
+      );
+      allow delete: if isValidId(itemId) && isLeadership();
+    }
+
+    match /survey_responses/{responseId} {
+      allow get, list: if isCouncilor();
+      allow create: if isValidId(responseId)
+        && isValidSurveyResponse(incoming())
+        && incoming().createdAt == request.time
+        && exists(/databases/$(database)/documents/calls_surveys/$(incoming().surveyId))
+        && get(/databases/$(database)/documents/calls_surveys/$(incoming().surveyId)).data.status == 'abierta';
+      allow delete: if isValidId(responseId) && isLeadership();
+    }
+
+    match /contact_messages/{msgId} {
+      allow get, list: if isLeadership();
+      allow create: if isValidId(msgId) && isValidContactMessage(incoming()) && incoming().status == 'nuevo' && incoming().createdAt == request.time;
+      allow update: if isValidId(msgId) && isValidContactMessage(incoming()) && incoming().createdAt == existing().createdAt && isLeadership() && incoming().diff(existing()).affectedKeys().hasOnly(['status']);
+      allow delete: if isValidId(msgId) && isLeadership();
+    }
+
+    match /sessions/{sessionId} {
+      allow get, list: if isCouncilor();
+      allow create: if isValidId(sessionId) && isValidCouncilSession(incoming()) && isLeadership() && incoming().createdByUid == request.auth.uid && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isValidId(sessionId) && isValidCouncilSession(incoming()) && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
+        isLeadership()
+        || (
+          isCouncilor()
+          && existing().status != 'finalizada'
+          && incoming().diff(existing()).affectedKeys().hasOnly(['attendance', 'updatedAt'])
+        )
+      );
+      allow delete: if isValidId(sessionId) && isLeadership();
+    }
+
+    match /votes/{voteId} {
+      allow get, list: if isCouncilor();
+      allow create: if isValidId(voteId) && isValidCouncilVote(incoming()) && isLeadership() && incoming().createdByUid == request.auth.uid && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isValidId(voteId) && isValidCouncilVote(incoming()) && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
+        isLeadership()
+        || (
+          isCouncilor()
+          && existing().status == 'abierta'
+          && existing().options == incoming().options
+          && !(request.auth.uid in existing().voterUids)
+          && request.auth.uid in incoming().voterUids
+          && incoming().voterUids.size() == existing().voterUids.size() + 1
+          && incoming().diff(existing()).affectedKeys().hasOnly(['voterUids', 'tallies', 'nominalBallots', 'updatedAt'])
+        )
+      );
+      allow delete: if isValidId(voteId) && isLeadership();
+    }
+
+    match /commitments/{commitmentId} {
+      allow get, list: if isCouncilor();
+      allow create: if isValidId(commitmentId) && isValidCommitment(incoming()) && isLeadership() && incoming().createdByUid == request.auth.uid && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isValidId(commitmentId) && isValidCommitment(incoming()) && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
+        isLeadership()
+        || (
+          isCouncilor()
+          && existing().responsibleUid == request.auth.uid
+          && existing().status != 'cumplido'
+          && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'progress', 'updatedAt'])
+        )
+      );
+      allow delete: if isValidId(commitmentId) && isLeadership();
+    }
+
+    match /ideas_inbox/{ideaId} {
+      allow get, list: if isCouncilor();
+      allow create: if isValidId(ideaId) && isValidIdeaItem(incoming()) && isCouncilor() && incoming().authorUid == request.auth.uid && incoming().status == 'nueva' && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isValidId(ideaId) && isValidIdeaItem(incoming()) && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time && (
+        isLeadership()
+        || (
+          isCouncilor()
+          && incoming().upvoterUids.size() <= existing().upvoterUids.size() + 1
+          && incoming().upvoterUids.size() >= existing().upvoterUids.size() - 1
+          && incoming().diff(existing()).affectedKeys().hasOnly(['upvoterUids', 'updatedAt'])
+        )
+      );
+      allow delete: if isValidId(ideaId) && (isLeadership() || (isCouncilor() && existing().authorUid == request.auth.uid));
+    }
+
+    match /letter_templates/{tplId} {
+      allow get, list: if isCouncilor();
+      allow create: if isValidId(tplId) && isValidLetterTemplate(incoming()) && (isLeadership() || isBootstrapSecretary()) && incoming().updatedAt == request.time;
+      allow update: if isValidId(tplId) && isValidLetterTemplate(incoming()) && isLeadership() && incoming().updatedAt == request.time;
+      allow delete: if isValidId(tplId) && isLeadership();
+    }
+
+    match /work_plans/{planId} {
+      allow get, list: if isCouncilor();
+      allow create: if isValidId(planId) && isValidWorkPlanItem(incoming()) && (isLeadership() || isBootstrapSecretary()) && incoming().updatedAt == request.time;
+      allow update: if isValidId(planId) && isValidWorkPlanItem(incoming()) && incoming().updatedAt == request.time && (
+        isLeadership()
+        || (isCouncilor() && incoming().diff(existing()).affectedKeys().hasOnly(['evidenceCount', 'progress', 'updatedByUid', 'updatedAt']))
+      );
+      allow delete: if isValidId(planId) && isLeadership();
+    }
+
+    match /audit_logs/{logId} {
+      allow get, list: if isLeadership();
+      allow create: if isValidId(logId) && isValidAuditLog(incoming()) && isSignedIn() && incoming().createdAt == request.time;
+      allow update, delete: if false;
+    }
+
+    match /portal_settings/{settingId} {
+      allow get, list: if true;
+      allow create: if isValidId(settingId) && isValidPortalSettings(incoming()) && (isLeadership() || isBootstrapSecretary()) && incoming().updatedAt == request.time;
+      allow update: if isValidId(settingId) && isValidPortalSettings(incoming()) && isLeadership() && incoming().updatedAt == request.time;
+      allow delete: if isValidId(settingId) && isLeadership();
+    }
+  }
+}

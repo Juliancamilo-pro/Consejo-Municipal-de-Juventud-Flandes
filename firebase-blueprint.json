@@ -1,0 +1,509 @@
+{
+  "entities": {
+    "AllowedAccount": {
+      "title": "AllowedAccount",
+      "description": "Allowlist entry keyed by email SHA-256 hash without exposing PII.",
+      "type": "object",
+      "properties": {
+        "active": { "type": "boolean" },
+        "accessTier": {
+          "type": "string",
+          "enum": ["tier_1_pres", "tier_2_vp", "tier_3_sec", "tier_4_member"]
+        },
+        "roleLabel": {
+          "type": "string",
+          "enum": ["Presidente", "Vicepresidente", "Secretario", "Consejero"]
+        },
+        "commissionId": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "accountProvisioned": { "type": "boolean" },
+        "mustChangePassword": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["active", "accessTier", "roleLabel", "commissionId", "accountProvisioned", "mustChangePassword", "updatedAt"]
+    },
+    "PortalSecurityHashes": {
+      "title": "PortalSecurityHashes",
+      "description": "Salted SHA-256 hashes for verifying invitation code and initial password.",
+      "type": "object",
+      "properties": {
+        "inviteCodeHash": { "type": "string", "maxLength": 128 },
+        "initialPasswordHash": { "type": "string", "maxLength": 128 },
+        "salt": { "type": "string", "maxLength": 64 },
+        "updatedByUid": { "type": "string", "maxLength": 128 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["inviteCodeHash", "initialPasswordHash", "salt", "updatedAt"]
+    },
+    "PortalLeaderConfig": {
+      "title": "PortalLeaderConfig",
+      "description": "Protected access configuration managed strictly by leadership.",
+      "type": "object",
+      "properties": {
+        "inviteCode": { "type": "string", "maxLength": 128 },
+        "initialPassword": { "type": "string", "maxLength": 128 },
+        "updatedByUid": { "type": "string", "maxLength": 128 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["inviteCode", "initialPassword", "updatedByUid", "updatedAt"]
+    },
+    "RoleAssignment": {
+      "title": "RoleAssignment",
+      "description": "Authoritative RBAC record mapped to Firebase Auth UID.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "accessTier": {
+          "type": "string",
+          "enum": ["tier_1_pres", "tier_2_vp", "tier_3_sec", "tier_4_member"]
+        },
+        "roleLabel": {
+          "type": "string",
+          "enum": ["Presidente", "Vicepresidente", "Secretario", "Consejero"]
+        },
+        "emailHash": { "type": "string", "maxLength": 128 },
+        "active": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "accessTier", "roleLabel", "emailHash", "active", "updatedAt"]
+    },
+    "PublicCouncilor": {
+      "title": "PublicCouncilor",
+      "description": "Public directory profile for youth councilors without PII.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "fullName": { "type": "string", "maxLength": 120 },
+        "roleLabel": {
+          "type": "string",
+          "enum": ["Presidente", "Vicepresidente", "Secretario", "Consejero"]
+        },
+        "commissionId": { "type": "string", "maxLength": 64 },
+        "commissionName": { "type": "string", "maxLength": 120 },
+        "bio": { "type": "string", "maxLength": 600 },
+        "photoUrl": { "type": "string", "maxLength": 2048 },
+        "storagePath": { "type": "string", "maxLength": 512 },
+        "instagram": { "type": "string", "maxLength": 120 },
+        "facebook": { "type": "string", "maxLength": 120 },
+        "active": { "type": "boolean" },
+        "displayOrder": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "fullName", "roleLabel", "commissionId", "commissionName", "active", "updatedAt"]
+    },
+    "CouncilorPrivate": {
+      "title": "CouncilorPrivate",
+      "description": "Private PII and operational account data for an individual councilor.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "maxLength": 180 },
+        "phone": { "type": "string", "maxLength": 40 },
+        "accessTier": {
+          "type": "string",
+          "enum": ["tier_1_pres", "tier_2_vp", "tier_3_sec", "tier_4_member"]
+        },
+        "roleLabel": {
+          "type": "string",
+          "enum": ["Presidente", "Vicepresidente", "Secretario", "Consejero"]
+        },
+        "commissionId": { "type": "string", "maxLength": 64 },
+        "active": { "type": "boolean" },
+        "mustChangePassword": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "accessTier", "roleLabel", "commissionId", "mustChangePassword", "createdAt", "updatedAt"]
+    },
+    "Commission": {
+      "title": "Commission",
+      "description": "One of the five CMJ thematic commissions.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "number": { "type": "number" },
+        "name": { "type": "string", "maxLength": 120 },
+        "iconName": { "type": "string", "maxLength": 40 },
+        "accentColor": { "type": "string", "maxLength": 32 },
+        "coverUrl": { "type": "string", "maxLength": 2048 },
+        "storagePath": { "type": "string", "maxLength": 512 },
+        "description": { "type": "string", "maxLength": 800 },
+        "coordinatorName": { "type": "string", "maxLength": 120 },
+        "coordinatorUid": { "type": "string", "maxLength": 128 },
+        "workPlanSummary": { "type": "string", "maxLength": 1200 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "number", "name", "description", "coordinatorName", "updatedAt"]
+    },
+    "CommissionTask": {
+      "title": "CommissionTask",
+      "description": "Task assigned to one of the five commissions.",
+      "type": "object",
+      "properties": {
+        "commissionId": { "type": "string", "maxLength": 64 },
+        "title": { "type": "string", "maxLength": 180 },
+        "status": { "type": "string", "enum": ["pendiente", "en_curso", "hecha"] },
+        "assignedName": { "type": "string", "maxLength": 120 },
+        "dueDate": { "type": "string", "maxLength": 40 },
+        "createdByUid": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["commissionId", "title", "status", "createdByUid", "createdAt", "updatedAt"]
+    },
+    "NewsEvent": {
+      "title": "NewsEvent",
+      "description": "News article or event published by CMJ Flandes.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 180 },
+        "type": { "type": "string", "enum": ["noticia", "evento"] },
+        "summary": { "type": "string", "maxLength": 400 },
+        "content": { "type": "string", "maxLength": 5000 },
+        "coverUrl": { "type": "string", "maxLength": 2048 },
+        "storagePath": { "type": "string", "maxLength": 512 },
+        "commissionId": { "type": "string", "maxLength": 64 },
+        "eventDate": { "type": "string", "maxLength": 40 },
+        "location": { "type": "string", "maxLength": 160 },
+        "authorUid": { "type": "string", "maxLength": 128 },
+        "authorName": { "type": "string", "maxLength": 120 },
+        "status": { "type": "string", "enum": ["borrador", "pendiente", "publicado"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "type", "summary", "content", "commissionId", "authorUid", "authorName", "status", "createdAt", "updatedAt"]
+    },
+    "GalleryItem": {
+      "title": "GalleryItem",
+      "description": "Photo or video item in the CMJ gallery or commission evidence.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 160 },
+        "description": { "type": "string", "maxLength": 400 },
+        "mediaType": { "type": "string", "enum": ["image", "video"] },
+        "videoSource": { "type": "string", "enum": ["upload", "youtube", "vimeo"] },
+        "url": { "type": "string", "maxLength": 2048 },
+        "thumbnailUrl": { "type": "string", "maxLength": 2048 },
+        "storagePath": { "type": "string", "maxLength": 512 },
+        "thumbnailStoragePath": { "type": "string", "maxLength": 512 },
+        "commissionId": { "type": "string", "maxLength": 64 },
+        "authorUid": { "type": "string", "maxLength": 128 },
+        "authorName": { "type": "string", "maxLength": 120 },
+        "status": { "type": "string", "enum": ["publicado", "archivado"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "mediaType", "url", "commissionId", "authorUid", "authorName", "status", "createdAt"]
+    },
+    "PortalDocument": {
+      "title": "PortalDocument",
+      "description": "Public transparency document or internal council document.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 180 },
+        "folder": { "type": "string", "maxLength": 80 },
+        "category": { "type": "string", "maxLength": 60 },
+        "version": { "type": "string", "maxLength": 24 },
+        "fileUrl": { "type": "string", "maxLength": 2048 },
+        "storagePath": { "type": "string", "maxLength": 512 },
+        "fileName": { "type": "string", "maxLength": 200 },
+        "mimeType": { "type": "string", "maxLength": 120 },
+        "fileSize": { "type": "number" },
+        "visibility": { "type": "string", "enum": ["publico", "privado"] },
+        "commissionId": { "type": "string", "maxLength": 64 },
+        "uploadedByUid": { "type": "string", "maxLength": 128 },
+        "uploadedByName": { "type": "string", "maxLength": 120 },
+        "approvedByPresidente": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "category", "version", "fileUrl", "fileName", "mimeType", "visibility", "uploadedByUid", "uploadedByName", "approvedByPresidente", "createdAt", "updatedAt"]
+    },
+    "CallOrSurvey": {
+      "title": "CallOrSurvey",
+      "description": "Public youth call or survey.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 180 },
+        "kind": { "type": "string", "enum": ["convocatoria", "encuesta"] },
+        "description": { "type": "string", "maxLength": 1200 },
+        "deadline": { "type": "string", "maxLength": 40 },
+        "status": { "type": "string", "enum": ["abierta", "cerrada"] },
+        "options": { "type": "array" },
+        "responseCount": { "type": "number" },
+        "createdByUid": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "kind", "description", "deadline", "status", "responseCount", "createdByUid", "createdAt", "updatedAt"]
+    },
+    "SurveyResponse": {
+      "title": "SurveyResponse",
+      "description": "Citizen submission for an open survey or call.",
+      "type": "object",
+      "properties": {
+        "surveyId": { "type": "string", "maxLength": 128 },
+        "selectedOption": { "type": "string", "maxLength": 160 },
+        "respondentName": { "type": "string", "maxLength": 120 },
+        "respondentEmail": { "type": "string", "maxLength": 180 },
+        "comment": { "type": "string", "maxLength": 600 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["surveyId", "selectedOption", "respondentName", "createdAt"]
+    },
+    "ContactMessage": {
+      "title": "ContactMessage",
+      "description": "Citizen contact message sent via the public contact form.",
+      "type": "object",
+      "properties": {
+        "senderName": { "type": "string", "maxLength": 120 },
+        "senderEmail": { "type": "string", "maxLength": 180 },
+        "subject": { "type": "string", "maxLength": 180 },
+        "message": { "type": "string", "maxLength": 2000 },
+        "category": { "type": "string", "maxLength": 64 },
+        "status": { "type": "string", "enum": ["nuevo", "en_proceso", "respondido"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["senderName", "senderEmail", "subject", "message", "status", "createdAt"]
+    },
+    "CouncilSession": {
+      "title": "CouncilSession",
+      "description": "Council plenary or commission session with attendance and quorum.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 180 },
+        "sessionType": { "type": "string", "maxLength": 64 },
+        "dateIso": { "type": "string", "maxLength": 40 },
+        "timeRange": { "type": "string", "maxLength": 64 },
+        "location": { "type": "string", "maxLength": 160 },
+        "agenda": { "type": "string", "maxLength": 2000 },
+        "status": { "type": "string", "enum": ["programada", "en_curso", "finalizada"] },
+        "actaUrl": { "type": "string", "maxLength": 2048 },
+        "checkInCode": { "type": "string", "maxLength": 16 },
+        "quorumRequired": { "type": "number" },
+        "createdByUid": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "sessionType", "dateIso", "location", "status", "createdByUid", "createdAt", "updatedAt"]
+    },
+    "CouncilVote": {
+      "title": "CouncilVote",
+      "description": "Internal council motion or vote (secret or nominal).",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 180 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "commissionId": { "type": "string", "maxLength": 64 },
+        "voteMode": { "type": "string", "enum": ["nominal", "secreto"] },
+        "options": { "type": "array" },
+        "voterUids": { "type": "array" },
+        "quorumRequired": { "type": "number" },
+        "opensAt": { "type": "string", "maxLength": 40 },
+        "closesAt": { "type": "string", "maxLength": 40 },
+        "status": { "type": "string", "enum": ["abierta", "cerrada"] },
+        "deadline": { "type": "string", "maxLength": 40 },
+        "createdByUid": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "description", "options", "voterUids", "status", "createdByUid", "createdAt", "updatedAt"]
+    },
+    "Commitment": {
+      "title": "Commitment",
+      "description": "Action item or commitment assigned during sessions.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 180 },
+        "description": { "type": "string", "maxLength": 800 },
+        "responsibleUid": { "type": "string", "maxLength": 128 },
+        "responsibleName": { "type": "string", "maxLength": 120 },
+        "commissionId": { "type": "string", "maxLength": 64 },
+        "dueDate": { "type": "string", "maxLength": 40 },
+        "status": { "type": "string", "enum": ["pendiente", "en_progreso", "cumplido"] },
+        "progress": { "type": "number" },
+        "createdByUid": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "responsibleUid", "responsibleName", "commissionId", "status", "progress", "createdByUid", "createdAt", "updatedAt"]
+    },
+    "IdeaItem": {
+      "title": "IdeaItem",
+      "description": "Internal proposal submitted to the councilors' idea inbox.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 160 },
+        "description": { "type": "string", "maxLength": 1500 },
+        "category": { "type": "string", "maxLength": 64 },
+        "commissionId": { "type": "string", "maxLength": 64 },
+        "authorUid": { "type": "string", "maxLength": 128 },
+        "authorName": { "type": "string", "maxLength": 120 },
+        "status": { "type": "string", "enum": ["nueva", "en_revision", "aprobada"] },
+        "upvoterUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "description", "category", "authorUid", "authorName", "status", "upvoterUids", "createdAt", "updatedAt"]
+    },
+    "LetterTemplate": {
+      "title": "LetterTemplate",
+      "description": "Official CMJ document and oficio template.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 160 },
+        "category": { "type": "string", "maxLength": 64 },
+        "headerText": { "type": "string", "maxLength": 500 },
+        "bodyTemplate": { "type": "string", "maxLength": 5000 },
+        "signatoryRole": { "type": "string", "maxLength": 64 },
+        "updatedByUid": { "type": "string", "maxLength": 128 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "category", "bodyTemplate", "signatoryRole", "updatedByUid", "updatedAt"]
+    },
+    "WorkPlanItem": {
+      "title": "WorkPlanItem",
+      "description": "Strategic objective in the CMJ annual work plan.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 180 },
+        "axis": { "type": "string", "maxLength": 100 },
+        "commissionId": { "type": "string", "maxLength": 64 },
+        "quarter": { "type": "string", "maxLength": 24 },
+        "status": { "type": "string", "enum": ["planeado", "ejecucion", "completado"] },
+        "progress": { "type": "number" },
+        "updatedByUid": { "type": "string", "maxLength": 128 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "axis", "commissionId", "quarter", "status", "progress", "updatedByUid", "updatedAt"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Immutable audit trail entry recording actor and action.",
+      "type": "object",
+      "properties": {
+        "actorUid": { "type": "string", "maxLength": 128 },
+        "actorName": { "type": "string", "maxLength": 120 },
+        "actorRoleLabel": {
+          "type": "string",
+          "enum": ["Presidente", "Vicepresidente", "Secretario", "Consejero"]
+        },
+        "action": { "type": "string", "maxLength": 180 },
+        "module": { "type": "string", "maxLength": 80 },
+        "targetTitle": { "type": "string", "maxLength": 180 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["actorUid", "actorName", "actorRoleLabel", "action", "module", "targetTitle", "createdAt"]
+    },
+    "PortalSettings": {
+      "title": "PortalSettings",
+      "description": "Public portal branding, copy, and active festive theme.",
+      "type": "object",
+      "properties": {
+        "heroTitle": { "type": "string", "maxLength": 160 },
+        "heroSubtitle": { "type": "string", "maxLength": 400 },
+        "heroImageUrl": { "type": "string", "maxLength": 2048 },
+        "heroStoragePath": { "type": "string", "maxLength": 512 },
+        "aboutText": { "type": "string", "maxLength": 2000 },
+        "missionText": { "type": "string", "maxLength": 1000 },
+        "visionText": { "type": "string", "maxLength": 1000 },
+        "contactEmail": { "type": "string", "maxLength": 180 },
+        "contactAddress": { "type": "string", "maxLength": 240 },
+        "activeTheme": {
+          "type": "string",
+          "enum": ["default", "san_pedro", "independencia", "semana_juventud", "amor_amistad", "navidad"]
+        },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["heroTitle", "heroSubtitle", "activeTheme", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/allowed_accounts/{emailHash}": {
+      "schema": { "$ref": "#/entities/AllowedAccount" },
+      "description": "Email-hash allowlist for login validation without exposing PII."
+    },
+    "/portal_security/public_hashes": {
+      "schema": { "$ref": "#/entities/PortalSecurityHashes" },
+      "description": "Salted SHA-256 hashes for verifying initial password and invitation code."
+    },
+    "/portal_security/leader_config": {
+      "schema": { "$ref": "#/entities/PortalLeaderConfig" },
+      "description": "Protected operational config accessible only to leadership."
+    },
+    "/roles/{uid}": {
+      "schema": { "$ref": "#/entities/RoleAssignment" },
+      "description": "Authoritative RBAC assignment for each councilor."
+    },
+    "/public_councilors/{councilorId}": {
+      "schema": { "$ref": "#/entities/PublicCouncilor" },
+      "description": "Public profiles for CMJ Flandes councilors."
+    },
+    "/councilor_private/{uid}": {
+      "schema": { "$ref": "#/entities/CouncilorPrivate" },
+      "description": "Private PII for individual councilors."
+    },
+    "/commissions/{commissionId}": {
+      "schema": { "$ref": "#/entities/Commission" },
+      "description": "Five thematic CMJ commissions."
+    },
+    "/commission_tasks/{taskId}": {
+      "schema": { "$ref": "#/entities/CommissionTask" },
+      "description": "Operational tasks inside each commission."
+    },
+    "/news_events/{itemId}": {
+      "schema": { "$ref": "#/entities/NewsEvent" },
+      "description": "Public news and calendar events."
+    },
+    "/gallery_items/{itemId}": {
+      "schema": { "$ref": "#/entities/GalleryItem" },
+      "description": "Photo and video gallery items."
+    },
+    "/documents/{docId}": {
+      "schema": { "$ref": "#/entities/PortalDocument" },
+      "description": "Transparency documents and internal acts."
+    },
+    "/calls_surveys/{itemId}": {
+      "schema": { "$ref": "#/entities/CallOrSurvey" },
+      "description": "Youth calls and surveys."
+    },
+    "/survey_responses/{responseId}": {
+      "schema": { "$ref": "#/entities/SurveyResponse" },
+      "description": "Citizen survey submissions."
+    },
+    "/contact_messages/{msgId}": {
+      "schema": { "$ref": "#/entities/ContactMessage" },
+      "description": "Public contact messages."
+    },
+    "/sessions/{sessionId}": {
+      "schema": { "$ref": "#/entities/CouncilSession" },
+      "description": "Private council sessions and attendance."
+    },
+    "/votes/{voteId}": {
+      "schema": { "$ref": "#/entities/CouncilVote" },
+      "description": "Private internal council votes."
+    },
+    "/commitments/{commitmentId}": {
+      "schema": { "$ref": "#/entities/Commitment" },
+      "description": "Private council commitments and tracking."
+    },
+    "/ideas_inbox/{ideaId}": {
+      "schema": { "$ref": "#/entities/IdeaItem" },
+      "description": "Private councilor idea inbox."
+    },
+    "/letter_templates/{tplId}": {
+      "schema": { "$ref": "#/entities/LetterTemplate" },
+      "description": "Official letter templates."
+    },
+    "/work_plans/{planId}": {
+      "schema": { "$ref": "#/entities/WorkPlanItem" },
+      "description": "Council work plan milestones."
+    },
+    "/audit_logs/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "Immutable activity audit trail."
+    },
+    "/portal_settings/{settingId}": {
+      "schema": { "$ref": "#/entities/PortalSettings" },
+      "description": "Public portal settings and festive theme."
+    }
+  }
+}
