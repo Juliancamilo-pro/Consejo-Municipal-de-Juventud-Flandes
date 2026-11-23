@@ -14,6 +14,7 @@ export type FestiveThemeId =
 export type AttendanceStatus = 'presente' | 'tarde' | 'excusa' | 'ausente';
 export type VoteMode = 'nominal' | 'secreto';
 export type TaskStatus = 'pendiente' | 'en_curso' | 'hecha';
+export type AffiliationType = '' | 'partido' | 'fundacion' | 'independiente';
 
 export interface PublicCouncilor {
   id: string;
@@ -22,6 +23,8 @@ export interface PublicCouncilor {
   roleLabel: RoleLabel;
   commissionId: string;
   commissionName: string;
+  affiliationType?: AffiliationType;
+  affiliationName?: string;
   bio?: string;
   photoUrl?: string;
   storagePath?: string;
@@ -51,6 +54,8 @@ export interface AllowedAccount {
   accessTier: AccessTier;
   roleLabel: RoleLabel;
   commissionId: string;
+  affiliationType?: AffiliationType;
+  affiliationName?: string;
   accountProvisioned: boolean;
   mustChangePassword: boolean;
   updatedAt?: unknown;

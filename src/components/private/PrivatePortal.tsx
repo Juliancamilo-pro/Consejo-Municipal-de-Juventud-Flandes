@@ -28,6 +28,7 @@ import { apiRequest } from '../../lib/apiClient';
 import { isLeadershipTier } from '../../lib/security';
 import { deleteStorageFile } from '../../lib/storageUtils';
 import type {
+  AffiliationType,
   AuditLog,
   CallOrSurvey,
   Commission,
@@ -172,7 +173,7 @@ export function PrivatePortal({
   const roleLabel = privateRecord?.roleLabel || profile?.roleLabel || 'Consejero';
   const accessTier = privateRecord?.accessTier || 'tier_4_member';
   const isLeader = isLeadershipTier(accessTier);
-  const commissionId = profile?.commissionId || privateRecord?.commissionId || 'comision-1';
+  const commissionId = profile?.commissionId ?? privateRecord?.commissionId ?? '';
   const fullName = profile?.fullName || email.split('@')[0] || 'Consejero CMJ';
 
   const [editBio, setEditBio] = useState(profile?.bio || '');
@@ -180,6 +181,11 @@ export function PrivatePortal({
   const [editFb, setEditFb] = useState(profile?.facebook || '');
   const [editPhone, setEditPhone] = useState(privateRecord?.phone || '');
   const [editName, setEditName] = useState(fullName);
+  const [editCommissionId, setEditCommissionId] = useState(commissionId);
+  const [editAffiliationType, setEditAffiliationType] = useState<AffiliationType>(
+    profile?.affiliationType || ''
+  );
+  const [editAffiliationName, setEditAffiliationName] = useState(profile?.affiliationName || '');
 
   const navItems: {
     id: PrivateModule;
@@ -239,15 +245,21 @@ export function PrivatePortal({
   const handleSaveMyProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      const payload: Record<string, unknown> = {
+        fullName: editName.trim() || fullName,
+        bio: editBio.trim(),
+        instagram: editIg.trim(),
+        facebook: editFb.trim(),
+        phone: editPhone.trim(),
+        affiliationType: editAffiliationType,
+        affiliationName: editAffiliationName.trim(),
+      };
+      if (isLeader) {
+        payload.commissionId = editCommissionId;
+      }
       await apiRequest(`/api/councilors/${encodeURIComponent(uid)}`, {
         method: 'PATCH',
-        body: {
-          fullName: editName.trim() || fullName,
-          bio: editBio.trim(),
-          instagram: editIg.trim(),
-          facebook: editFb.trim(),
-          phone: editPhone.trim(),
-        },
+        body: payload,
       });
       setProfileModalOpen(false);
       showToast('Perfil actualizado', 'success');
@@ -351,6 +363,9 @@ export function PrivatePortal({
                 setEditIg(profile?.instagram || '');
                 setEditFb(profile?.facebook || '');
                 setEditPhone(privateRecord?.phone || '');
+                setEditCommissionId(commissionId);
+                setEditAffiliationType(profile?.affiliationType || '');
+                setEditAffiliationName(profile?.affiliationName || '');
                 setProfileModalOpen(true);
               }}
               className="flex items-center gap-2 rounded-xl border border-slate-200 dark:border-slate-800 px-2.5 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
@@ -436,6 +451,8 @@ export function PrivatePortal({
                   roleLabel={roleLabel}
                   accessTier={accessTier}
                   commissionId={commissionId}
+                  affiliationType={profile?.affiliationType}
+                  affiliationName={profile?.affiliationName}
                   mustChangePassword={Boolean(privateRecord?.mustChangePassword)}
                   commissions={commissions}
                   commissionTasks={commissionTasks}
@@ -643,6 +660,50 @@ export function PrivatePortal({
               placeholder="Biografía breve"
               className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3.5 py-2 text-xs"
             />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <select
+                value={editAffiliationType}
+                onChange={(e) => setEditAffiliationType(e.target.value as AffiliationType)}
+                className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs"
+              >
+                <option value="">Filiación (opcional)</option>
+                <option value="partido">Partido político</option>
+                <option value="fundacion">Fundación / Organización</option>
+                <option value="independiente">Independiente</option>
+              </select>
+              <input
+                type="text"
+                value={editAffiliationName}
+                onChange={(e) => setEditAffiliationName(e.target.value)}
+                placeholder={
+                  editAffiliationType === 'partido'
+                    ? 'Nombre del partido político'
+                    : editAffiliationType === 'fundacion'
+                    ? 'Nombre de la fundación u org.'
+                    : 'Nombre de lista o colectivo'
+                }
+                className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs"
+              />
+            </div>
+            {isLeader && (
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-500 mb-1">
+                  Comisión asignada
+                </label>
+                <select
+                  value={editCommissionId}
+                  onChange={(e) => setEditCommissionId(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs"
+                >
+                  <option value="">Sin comisión asignada</option>
+                  {commissions.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-2">
               <input
                 type="text"

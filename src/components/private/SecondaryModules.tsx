@@ -1,21 +1,26 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Award,
   BookOpen,
   Calendar,
   CheckCircle2,
+  Edit3,
+  Eye,
   FileText,
   History,
+  ImageOff,
   Lightbulb,
   List,
   Mail,
   Palette,
   Plus,
   Printer,
+  Save,
   Search,
   Sparkles,
   ThumbsUp,
   Trash2,
+  X,
 } from 'lucide-react';
 import { apiRequest } from '../../lib/apiClient';
 import { isLeadershipTier } from '../../lib/security';
@@ -35,6 +40,7 @@ import type {
   NewsEvent,
   PortalSettings,
   RoleLabel,
+  SurveyResponse,
   WorkPlanItem,
 } from '../../types/cmj';
 import { MediaUploader, type UploadedFileInfo } from '../MediaUploader';
@@ -63,6 +69,21 @@ export function SurveysAndMessagesModule({
   const [desc, setDesc] = useState('');
   const [deadline, setDeadline] = useState('');
   const [optionsText, setOptionsText] = useState('Opción A\nOpción B');
+
+  // Edición de convocatoria / encuesta
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState('');
+  const [editKind, setEditKind] = useState<'convocatoria' | 'encuesta'>('encuesta');
+  const [editDesc, setEditDesc] = useState('');
+  const [editDeadline, setEditDeadline] = useState('');
+  const [editOptionsText, setEditOptionsText] = useState('');
+  const [editStatus, setEditStatus] = useState<'abierta' | 'cerrada'>('abierta');
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  // Visor de respuestas ciudadanas
+  const [viewingSurvey, setViewingSurvey] = useState<CallOrSurvey | null>(null);
+  const [surveyResponses, setSurveyResponses] = useState<SurveyResponse[]>([]);
+  const [loadingResponses, setLoadingResponses] = useState(false);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -95,6 +116,77 @@ export function SurveysAndMessagesModule({
       showToast('Publicación creada', 'success');
     } catch {
       showToast('No se pudo crear', 'error');
+    }
+  };
+
+  const startEditSurvey = (cs: CallOrSurvey) => {
+    setEditingId(cs.id);
+    setEditTitle(cs.title);
+    setEditKind(cs.kind);
+    setEditDesc(cs.description);
+    setEditDeadline(cs.deadline || '');
+    setEditOptionsText((cs.options || []).join('\n'));
+    setEditStatus(cs.status);
+  };
+
+  const handleSaveEditSurvey = async (cs: CallOrSurvey) => {
+    if (!editTitle.trim() || !editDesc.trim()) return;
+    setSavingEdit(true);
+    try {
+      const opts = editOptionsText
+        .split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      await apiRequest(`/api/calls-surveys/${encodeURIComponent(cs.id)}`, {
+        method: 'PATCH',
+        body: {
+          title: editTitle.trim(),
+          kind: editKind,
+          description: editDesc.trim(),
+          deadline: editDeadline,
+          options: opts,
+          status: editStatus,
+        },
+      });
+      await recordAudit({
+        uid,
+        actorName,
+        actorRoleLabel,
+        action: `Editó ${editKind}`,
+        module: 'Convocatorias y Encuestas',
+        targetTitle: editTitle.trim(),
+      });
+      setEditingId(null);
+      showToast('Convocatoria/encuesta actualizada', 'success');
+    } catch {
+      showToast('No se pudo actualizar la publicación', 'error');
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const handleOpenResponses = async (cs: CallOrSurvey) => {
+    setViewingSurvey(cs);
+    setLoadingResponses(true);
+    try {
+      const res = await apiRequest<{ responses: SurveyResponse[] }>('/api/survey-responses');
+      setSurveyResponses((res.responses || []).filter((r) => r.surveyId === cs.id));
+    } catch {
+      setSurveyResponses([]);
+      showToast('No se pudieron cargar las respuestas', 'error');
+    } finally {
+      setLoadingResponses(false);
+    }
+  };
+
+  const handleDeleteContactMessage = async (m: ContactMessage) => {
+    try {
+      await apiRequest(`/api/contact-messages/${encodeURIComponent(m.id)}`, {
+        method: 'DELETE',
+      });
+      showToast('Mensaje eliminado', 'info');
+    } catch {
+      showToast('No se pudo eliminar el mensaje', 'error');
     }
   };
 
@@ -160,10 +252,80 @@ export function SurveysAndMessagesModule({
         </form>
       )}
 
+      {viewingSurvey && (
+        <div className="rounded-3xl border border-blue-200 dark:border-cyan-900/60 bg-blue-50/40 dark:bg-slate-900 p-6 space-y-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-bold uppercase text-blue-600 dark:text-cyan-400">
+                Respuestas ciudadanas · {viewingSurvey.kind}
+              </p>
+              <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                {viewingSurvey.title}
+              </h3>
+            </div>
+            <button
+              type="button"
+              onClick={() => setViewingSurvey(null)}
+              className="rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-1.5 text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
+            >
+              <X className="h-3.5 w-3.5" /> Cerrar visor
+            </button>
+          </div>
+          {loadingResponses ? (
+            <p className="text-xs text-slate-500">Cargando respuestas...</p>
+          ) : surveyResponses.length === 0 ? (
+            <p className="text-xs text-slate-500 py-4 text-center">
+              Aún no se han recibido respuestas ciudadanas en esta consulta.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {(viewingSurvey.options || []).length > 0 && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                  {(viewingSurvey.options || []).map((opt) => {
+                    const count = surveyResponses.filter((r) => r.selectedOption === opt).length;
+                    return (
+                      <div
+                        key={opt}
+                        className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 px-3 py-2 flex items-center justify-between text-xs"
+                      >
+                        <span className="font-semibold truncate">{opt}</span>
+                        <span className="font-mono-num font-bold text-blue-600 dark:text-cyan-400">
+                          {count}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              <div className="divide-y divide-slate-200 dark:divide-slate-800 max-h-64 overflow-y-auto rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 px-4">
+                {surveyResponses.map((r) => (
+                  <div key={r.id} className="py-2.5 text-xs space-y-0.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-bold text-slate-900 dark:text-white">
+                        {r.respondentName}{' '}
+                        {r.respondentEmail && (
+                          <span className="font-normal text-slate-500">({r.respondentEmail})</span>
+                        )}
+                      </span>
+                      <span className="rounded-lg bg-blue-50 dark:bg-blue-950/60 px-2 py-0.5 text-[11px] font-semibold text-blue-700 dark:text-cyan-300">
+                        {r.selectedOption}
+                      </span>
+                    </div>
+                    {r.comment && (
+                      <p className="text-slate-600 dark:text-slate-300">{r.comment}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 space-y-3">
           <h3 className="text-base font-bold text-slate-900 dark:text-white">
-            Consultas Activas ({callsSurveys.length})
+            Consultas y Convocatorias ({callsSurveys.length})
           </h3>
           {callsSurveys.length === 0 ? (
             <p className="text-xs text-slate-500 py-6 text-center">Sin registros aún.</p>
@@ -171,44 +333,137 @@ export function SurveysAndMessagesModule({
             callsSurveys.map((cs) => (
               <div
                 key={cs.id}
-                className="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 flex items-center justify-between gap-3"
+                className="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 space-y-3"
               >
-                <div className="min-w-0">
-                  <p className="text-[11px] font-semibold uppercase text-blue-600 dark:text-cyan-400">
-                    {cs.kind} · {cs.status} · Cierra {cs.deadline}
-                  </p>
-                  <p className="text-sm font-bold truncate">{cs.title}</p>
-                  <p className="text-xs text-slate-500 font-mono-num">
-                    {cs.responseCount} respuestas
-                  </p>
-                </div>
-                {isLeader && (
-                  <div className="flex gap-1.5 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        apiRequest(`/api/calls-surveys/${encodeURIComponent(cs.id)}`, {
-                          method: 'PATCH',
-                          body: {
-                            status: cs.status === 'abierta' ? 'cerrada' : 'abierta',
-                          },
-                        }).catch(() => showToast('No se pudo actualizar', 'error'))
-                      }
-                      className="rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1 text-xs font-semibold cursor-pointer"
-                    >
-                      {cs.status === 'abierta' ? 'Cerrar' : 'Reabrir'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        apiRequest(`/api/calls-surveys/${encodeURIComponent(cs.id)}`, {
-                          method: 'DELETE',
-                        }).catch(() => showToast('No se pudo eliminar', 'error'))
-                      }
-                      className="rounded-lg p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
+                {editingId === cs.id ? (
+                  <div className="space-y-2.5">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <input
+                        type="text"
+                        value={editTitle}
+                        onChange={(e) => setEditTitle(e.target.value)}
+                        placeholder="Título"
+                        className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-1.5 text-xs"
+                      />
+                      <div className="flex gap-2">
+                        <select
+                          value={editKind}
+                          onChange={(e) => setEditKind(e.target.value as 'convocatoria' | 'encuesta')}
+                          className="flex-1 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-2.5 py-1.5 text-xs"
+                        >
+                          <option value="encuesta">Encuesta</option>
+                          <option value="convocatoria">Convocatoria</option>
+                        </select>
+                        <select
+                          value={editStatus}
+                          onChange={(e) => setEditStatus(e.target.value as 'abierta' | 'cerrada')}
+                          className="flex-1 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-2.5 py-1.5 text-xs"
+                        >
+                          <option value="abierta">Abierta</option>
+                          <option value="cerrada">Cerrada</option>
+                        </select>
+                      </div>
+                    </div>
+                    <textarea
+                      rows={2}
+                      value={editDesc}
+                      onChange={(e) => setEditDesc(e.target.value)}
+                      placeholder="Descripción"
+                      className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-1.5 text-xs"
+                    />
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <textarea
+                        rows={2}
+                        value={editOptionsText}
+                        onChange={(e) => setEditOptionsText(e.target.value)}
+                        placeholder="Opciones (una por línea)"
+                        className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-1.5 text-xs"
+                      />
+                      <div className="flex flex-col justify-between gap-2">
+                        <input
+                          type="date"
+                          value={editDeadline}
+                          onChange={(e) => setEditDeadline(e.target.value)}
+                          className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-2.5 py-1.5 text-xs"
+                        />
+                        <div className="flex justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setEditingId(null)}
+                            className="rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1 text-xs font-semibold cursor-pointer"
+                          >
+                            Cancelar
+                          </button>
+                          <button
+                            type="button"
+                            disabled={savingEdit}
+                            onClick={() => handleSaveEditSurvey(cs)}
+                            className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-1 text-xs font-semibold text-white cursor-pointer disabled:opacity-60"
+                          >
+                            <Save className="h-3.5 w-3.5" /> Guardar
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-[11px] font-semibold uppercase text-blue-600 dark:text-cyan-400">
+                        {cs.kind} · {cs.status} · Cierra {cs.deadline}
+                      </p>
+                      <p className="text-sm font-bold truncate">{cs.title}</p>
+                      <p className="text-xs text-slate-500 font-mono-num">
+                        {cs.responseCount} respuestas
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => handleOpenResponses(cs)}
+                        title="Ver respuestas ciudadanas"
+                        className="inline-flex items-center gap-1 rounded-lg border border-slate-200 dark:border-slate-700 px-2 py-1 text-xs font-semibold cursor-pointer hover:border-blue-500"
+                      >
+                        <Eye className="h-3.5 w-3.5" /> Respuestas
+                      </button>
+                      {isLeader && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => startEditSurvey(cs)}
+                            title="Editar"
+                            className="rounded-lg border border-slate-200 dark:border-slate-700 p-1.5 hover:border-blue-500 cursor-pointer"
+                          >
+                            <Edit3 className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              apiRequest(`/api/calls-surveys/${encodeURIComponent(cs.id)}`, {
+                                method: 'PATCH',
+                                body: {
+                                  status: cs.status === 'abierta' ? 'cerrada' : 'abierta',
+                                },
+                              }).catch(() => showToast('No se pudo actualizar', 'error'))
+                            }
+                            className="rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1 text-xs font-semibold cursor-pointer"
+                          >
+                            {cs.status === 'abierta' ? 'Cerrar' : 'Reabrir'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              apiRequest(`/api/calls-surveys/${encodeURIComponent(cs.id)}`, {
+                                method: 'DELETE',
+                              }).catch(() => showToast('No se pudo eliminar', 'error'))
+                            }
+                            className="rounded-lg p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -240,20 +495,30 @@ export function SurveysAndMessagesModule({
                         {m.senderName} ({m.senderEmail}) · {m.category || 'General'}
                       </p>
                     </div>
-                    <select
-                      value={m.status}
-                      onChange={(e) =>
-                        apiRequest(`/api/contact-messages/${encodeURIComponent(m.id)}`, {
-                          method: 'PATCH',
-                          body: { status: e.target.value },
-                        }).catch(() => showToast('No se pudo actualizar el mensaje', 'error'))
-                      }
-                      className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2 py-1 text-[11px]"
-                    >
-                      <option value="nuevo">Nuevo</option>
-                      <option value="en_proceso">En proceso</option>
-                      <option value="respondido">Respondido</option>
-                    </select>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <select
+                        value={m.status}
+                        onChange={(e) =>
+                          apiRequest(`/api/contact-messages/${encodeURIComponent(m.id)}`, {
+                            method: 'PATCH',
+                            body: { status: e.target.value },
+                          }).catch(() => showToast('No se pudo actualizar el mensaje', 'error'))
+                        }
+                        className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2 py-1 text-[11px]"
+                      >
+                        <option value="nuevo">Nuevo</option>
+                        <option value="en_proceso">En proceso</option>
+                        <option value="respondido">Respondido</option>
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteContactMessage(m)}
+                        title="Eliminar mensaje"
+                        className="rounded-lg p-1 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   </div>
                   <p className="text-xs text-slate-600 dark:text-slate-300">{m.message}</p>
                 </div>
@@ -426,7 +691,14 @@ export function IdeasBankModule({
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState('Participación');
-  const [commissionId, setCommissionId] = useState(commissions[0]?.id || 'comision-1');
+  const [commissionId, setCommissionId] = useState('');
+
+  // Edición de idea
+  const [editingIdeaId, setEditingIdeaId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+  const [editCategory, setEditCategory] = useState('');
+  const [editCommissionId, setEditCommissionId] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -454,6 +726,33 @@ export function IdeasBankModule({
       showToast('Iniciativa publicada', 'success');
     } catch {
       showToast('No se pudo publicar la idea', 'error');
+    }
+  };
+
+  const startEditIdea = (idea: IdeaItem) => {
+    setEditingIdeaId(idea.id);
+    setEditTitle(idea.title);
+    setEditDescription(idea.description);
+    setEditCategory(idea.category || 'Participación');
+    setEditCommissionId(idea.commissionId || '');
+  };
+
+  const handleSaveEditIdea = async (idea: IdeaItem) => {
+    if (!editTitle.trim() || !editDescription.trim()) return;
+    try {
+      await apiRequest(`/api/ideas/${encodeURIComponent(idea.id)}`, {
+        method: 'PATCH',
+        body: {
+          title: editTitle.trim(),
+          description: editDescription.trim(),
+          category: editCategory.trim() || 'Participación',
+          commissionId: editCommissionId,
+        },
+      });
+      setEditingIdeaId(null);
+      showToast('Iniciativa actualizada', 'success');
+    } catch {
+      showToast('No se pudo actualizar la idea', 'error');
     }
   };
 
@@ -490,6 +789,7 @@ export function IdeasBankModule({
             onChange={(e) => setCommissionId(e.target.value)}
             className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2.5 text-sm"
           >
+            <option value="">General / Sin comisión</option>
             {commissions.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
@@ -530,67 +830,137 @@ export function IdeasBankModule({
         ) : (
           ideas.map((idea) => {
             const upvoted = idea.upvoterUids.includes(uid);
+            const canEdit = isLeader || idea.authorUid === uid;
+            const commName =
+              commissions.find((c) => c.id === idea.commissionId)?.name || 'General';
             return (
               <div
                 key={idea.id}
                 className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 space-y-3"
               >
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <span className="text-[11px] font-bold uppercase text-blue-600 dark:text-cyan-400">
-                      {idea.category} · {idea.status.replace('_', ' ')}
-                    </span>
-                    <h3 className="text-base font-bold text-slate-900 dark:text-white mt-0.5">
-                      {idea.title}
-                    </h3>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => handleToggleVote(idea)}
-                    className={`inline-flex items-center gap-1 rounded-xl px-3 py-1.5 text-xs font-semibold cursor-pointer ${
-                      upvoted
-                        ? 'bg-blue-600 text-white'
-                        : 'border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
-                    }`}
-                  >
-                    <ThumbsUp className="h-3.5 w-3.5" /> {idea.upvoterUids.length}
-                  </button>
-                </div>
-                <p className="text-xs text-slate-600 dark:text-slate-300">{idea.description}</p>
-                <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800 text-[11px] text-slate-500">
-                  <span>Por {idea.authorName}</span>
-                  <div className="flex items-center gap-2">
-                    {isLeader && (
+                {editingIdeaId === idea.id ? (
+                  <div className="space-y-2.5">
+                    <input
+                      type="text"
+                      value={editTitle}
+                      onChange={(e) => setEditTitle(e.target.value)}
+                      placeholder="Título"
+                      className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-1.5 text-xs font-semibold"
+                    />
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="text"
+                        value={editCategory}
+                        onChange={(e) => setEditCategory(e.target.value)}
+                        placeholder="Categoría"
+                        className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-1.5 text-xs"
+                      />
                       <select
-                        value={idea.status}
-                        onChange={(e) =>
-                          apiRequest(`/api/ideas/${encodeURIComponent(idea.id)}`, {
-                            method: 'PATCH',
-                            body: { status: e.target.value },
-                          }).catch(() => showToast('No se pudo actualizar el estado', 'error'))
-                        }
-                        className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2 py-1 text-[11px]"
+                        value={editCommissionId}
+                        onChange={(e) => setEditCommissionId(e.target.value)}
+                        className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-2.5 py-1.5 text-xs"
                       >
-                        <option value="nueva">Nueva</option>
-                        <option value="en_revision">En revisión</option>
-                        <option value="aprobada">Aprobada</option>
+                        <option value="">General / Sin comisión</option>
+                        {commissions.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}
+                          </option>
+                        ))}
                       </select>
-                    )}
-                    {(isLeader || idea.authorUid === uid) && (
+                    </div>
+                    <textarea
+                      rows={2}
+                      value={editDescription}
+                      onChange={(e) => setEditDescription(e.target.value)}
+                      className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-1.5 text-xs"
+                    />
+                    <div className="flex justify-end gap-2">
                       <button
                         type="button"
-                        onClick={() =>
-                          apiRequest(`/api/ideas/${encodeURIComponent(idea.id)}`, {
-                            method: 'DELETE',
-                          }).catch(() => showToast('No se pudo eliminar', 'error'))
-                        }
-                        className="text-rose-500 cursor-pointer"
+                        onClick={() => setEditingIdeaId(null)}
+                        className="rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1 text-xs font-semibold cursor-pointer"
                       >
-                        <Trash2 className="h-3.5 w-3.5" />
+                        Cancelar
                       </button>
-                    )}
+                      <button
+                        type="button"
+                        onClick={() => handleSaveEditIdea(idea)}
+                        className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-1 text-xs font-semibold text-white cursor-pointer"
+                      >
+                        <Save className="h-3.5 w-3.5" /> Guardar
+                      </button>
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <>
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <span className="text-[11px] font-bold uppercase text-blue-600 dark:text-cyan-400">
+                          {idea.category} · {commName} · {idea.status.replace('_', ' ')}
+                        </span>
+                        <h3 className="text-base font-bold text-slate-900 dark:text-white mt-0.5">
+                          {idea.title}
+                        </h3>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleToggleVote(idea)}
+                        className={`inline-flex items-center gap-1 rounded-xl px-3 py-1.5 text-xs font-semibold cursor-pointer ${
+                          upvoted
+                            ? 'bg-blue-600 text-white'
+                            : 'border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
+                        }`}
+                      >
+                        <ThumbsUp className="h-3.5 w-3.5" /> {idea.upvoterUids.length}
+                      </button>
+                    </div>
+                    <p className="text-xs text-slate-600 dark:text-slate-300">{idea.description}</p>
+                    <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800 text-[11px] text-slate-500">
+                      <span>Por {idea.authorName}</span>
+                      <div className="flex items-center gap-2">
+                        {isLeader && (
+                          <select
+                            value={idea.status}
+                            onChange={(e) =>
+                              apiRequest(`/api/ideas/${encodeURIComponent(idea.id)}`, {
+                                method: 'PATCH',
+                                body: { status: e.target.value },
+                              }).catch(() => showToast('No se pudo actualizar el estado', 'error'))
+                            }
+                            className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2 py-1 text-[11px]"
+                          >
+                            <option value="nueva">Nueva</option>
+                            <option value="en_revision">En revisión</option>
+                            <option value="aprobada">Aprobada</option>
+                          </select>
+                        )}
+                        {canEdit && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => startEditIdea(idea)}
+                              title="Editar idea"
+                              className="text-slate-600 dark:text-slate-300 hover:text-blue-600 cursor-pointer"
+                            >
+                              <Edit3 className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                apiRequest(`/api/ideas/${encodeURIComponent(idea.id)}`, {
+                                  method: 'DELETE',
+                                }).catch(() => showToast('No se pudo eliminar', 'error'))
+                              }
+                              className="text-rose-500 cursor-pointer"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             );
           })
@@ -622,6 +992,14 @@ export function LetterTemplatesModule({
     'Flandes, Tolima, {{fecha}}\n\nSeñor(a) {{destinatario}}\nAsunto: {{asunto}}\n\nCordial saludo.\n\n{{contenido}}\n\nAtentamente,\n{{firmante}}'
   );
 
+  // Edición de plantilla existente
+  const [editingTplId, setEditingTplId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState('');
+  const [editCategory, setEditCategory] = useState('');
+  const [editHeaderText, setEditHeaderText] = useState('');
+  const [editBody, setEditBody] = useState('');
+  const [editSignatoryRole, setEditSignatoryRole] = useState('');
+
   const [destinatario, setDestinatario] = useState('Secretaría de Gobierno / Alcaldía de Flandes');
   const [asunto, setAsunto] = useState('Gestión juvenil');
   const [contenido, setContenido] = useState('');
@@ -645,6 +1023,36 @@ export function LetterTemplatesModule({
       showToast('Plantilla guardada', 'success');
     } catch {
       showToast('No se pudo guardar la plantilla', 'error');
+    }
+  };
+
+  const startEditTemplate = (tpl: LetterTemplate) => {
+    setEditingTplId(tpl.id);
+    setEditTitle(tpl.title);
+    setEditCategory(tpl.category || 'Oficio');
+    setEditHeaderText(tpl.headerText || 'CONSEJO MUNICIPAL DE JUVENTUDES DE FLANDES – TOLIMA');
+    setEditBody(tpl.bodyTemplate);
+    setEditSignatoryRole(tpl.signatoryRole || 'Secretario');
+  };
+
+  const handleSaveEditTemplate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingTplId || !editTitle.trim() || !editBody.trim()) return;
+    try {
+      await apiRequest(`/api/templates/${encodeURIComponent(editingTplId)}`, {
+        method: 'PATCH',
+        body: {
+          title: editTitle.trim(),
+          category: editCategory.trim() || 'Oficio',
+          headerText: editHeaderText.trim(),
+          bodyTemplate: editBody,
+          signatoryRole: editSignatoryRole.trim() || 'Secretario',
+        },
+      });
+      setEditingTplId(null);
+      showToast('Plantilla actualizada', 'success');
+    } catch {
+      showToast('No se pudo actualizar la plantilla', 'error');
     }
   };
 
@@ -719,24 +1127,111 @@ export function LetterTemplatesModule({
                 <p className="text-[11px] text-slate-500">{t.category}</p>
               </div>
               {isLeader && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    apiRequest(`/api/templates/${encodeURIComponent(t.id)}`, {
-                      method: 'DELETE',
-                    }).catch(() => showToast('No se pudo eliminar', 'error'));
-                  }}
-                  className="text-rose-500 p-1 cursor-pointer"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedId(t.id);
+                      startEditTemplate(t);
+                    }}
+                    title="Editar plantilla"
+                    className="text-slate-600 dark:text-slate-300 hover:text-blue-600 p-1 cursor-pointer"
+                  >
+                    <Edit3 className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      apiRequest(`/api/templates/${encodeURIComponent(t.id)}`, {
+                        method: 'DELETE',
+                      }).catch(() => showToast('No se pudo eliminar', 'error'));
+                    }}
+                    className="text-rose-500 p-1 cursor-pointer"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
               )}
             </div>
           ))}
         </div>
 
         <div className="lg:col-span-8 space-y-4">
+          {isLeader && editingTplId && (
+            <form
+              onSubmit={handleSaveEditTemplate}
+              className="rounded-2xl border border-blue-200 dark:border-cyan-900/60 bg-blue-50/40 dark:bg-slate-900 p-5 space-y-3 no-print"
+            >
+              <div className="flex items-center justify-between">
+                <h4 className="text-sm font-bold text-slate-900 dark:text-white">
+                  Editando plantilla oficial
+                </h4>
+                <button
+                  type="button"
+                  onClick={() => setEditingTplId(null)}
+                  className="text-xs text-slate-500 hover:text-slate-800 cursor-pointer"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                <input
+                  type="text"
+                  required
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  placeholder="Título"
+                  className="sm:col-span-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-1.5 text-xs"
+                />
+                <input
+                  type="text"
+                  value={editCategory}
+                  onChange={(e) => setEditCategory(e.target.value)}
+                  placeholder="Categoría"
+                  className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-1.5 text-xs"
+                />
+                <input
+                  type="text"
+                  value={editHeaderText}
+                  onChange={(e) => setEditHeaderText(e.target.value)}
+                  placeholder="Encabezado institucional"
+                  className="sm:col-span-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-1.5 text-xs"
+                />
+                <input
+                  type="text"
+                  value={editSignatoryRole}
+                  onChange={(e) => setEditSignatoryRole(e.target.value)}
+                  placeholder="Cargo firmante"
+                  className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-1.5 text-xs"
+                />
+              </div>
+              <textarea
+                rows={5}
+                required
+                value={editBody}
+                onChange={(e) => setEditBody(e.target.value)}
+                className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-2 text-xs font-mono"
+              />
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingTplId(null)}
+                  className="rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-1.5 text-xs font-semibold cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="inline-flex items-center gap-1 rounded-xl bg-blue-600 px-3.5 py-1.5 text-xs font-semibold text-white cursor-pointer"
+                >
+                  <Save className="h-3.5 w-3.5" /> Guardar plantilla
+                </button>
+              </div>
+            </form>
+          )}
+
           {selected ? (
             <>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 no-print">
@@ -814,8 +1309,18 @@ export function WorkPlanAndCertsModule({
   const isLeader = isLeadershipTier(accessTier);
   const [title, setTitle] = useState('');
   const [axis, setAxis] = useState('Eje Estratégico Juvenil');
-  const [commissionId, setCommissionId] = useState(commissions[0]?.id || 'comision-1');
+  const [commissionId, setCommissionId] = useState('');
   const [quarter, setQuarter] = useState('2026-Q4');
+
+  // Edición de meta
+  const [editingWpId, setEditingWpId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState('');
+  const [editAxis, setEditAxis] = useState('');
+  const [editCommId, setEditCommId] = useState('');
+  const [editQuarter, setEditQuarter] = useState('');
+  const [editStatus, setEditStatus] = useState<'planeado' | 'ejecucion' | 'completado'>('planeado');
+  const [editProgress, setEditProgress] = useState(0);
+  const [editEvidenceCount, setEditEvidenceCount] = useState(0);
 
   const handleAddGoal = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -837,6 +1342,39 @@ export function WorkPlanAndCertsModule({
       showToast('Meta agregada al plan de trabajo', 'success');
     } catch {
       showToast('No se pudo agregar la meta', 'error');
+    }
+  };
+
+  const startEditWp = (wp: WorkPlanItem) => {
+    setEditingWpId(wp.id);
+    setEditTitle(wp.title);
+    setEditAxis(wp.axis);
+    setEditCommId(wp.commissionId || '');
+    setEditQuarter(wp.quarter || '2026-Q4');
+    setEditStatus(wp.status);
+    setEditProgress(wp.progress);
+    setEditEvidenceCount(wp.evidenceCount || 0);
+  };
+
+  const handleSaveEditWp = async (wp: WorkPlanItem) => {
+    if (!editTitle.trim() || !editAxis.trim()) return;
+    try {
+      await apiRequest(`/api/work-plans/${encodeURIComponent(wp.id)}`, {
+        method: 'PATCH',
+        body: {
+          title: editTitle.trim(),
+          axis: editAxis.trim(),
+          commissionId: editCommId,
+          quarter: editQuarter.trim() || '2026-Q4',
+          status: editStatus,
+          progress: Number(editProgress),
+          evidenceCount: Number(editEvidenceCount),
+        },
+      });
+      setEditingWpId(null);
+      showToast('Meta actualizada', 'success');
+    } catch {
+      showToast('No se pudo actualizar la meta', 'error');
     }
   };
 
@@ -881,6 +1419,7 @@ export function WorkPlanAndCertsModule({
               onChange={(e) => setCommissionId(e.target.value)}
               className="sm:col-span-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-2.5 py-2 text-xs"
             >
+              <option value="">Plenaria / Sin comisión</option>
               {commissions.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
@@ -921,51 +1460,150 @@ export function WorkPlanAndCertsModule({
           workPlans.map((wp) => (
             <div
               key={wp.id}
-              className="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+              className="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 space-y-3"
             >
-              <div>
-                <p className="text-[11px] font-semibold text-blue-600 dark:text-cyan-400">
-                  {wp.axis} · {wp.quarter} ·{' '}
-                  {commissions.find((c) => c.id === wp.commissionId)?.name || wp.commissionId}
-                </p>
-                <p className="text-sm font-bold text-slate-900 dark:text-white">{wp.title}</p>
-              </div>
-              <div className="flex items-center gap-3 shrink-0">
-                <input
-                  type="range"
-                  min={0}
-                  max={100}
-                  step={5}
-                  value={wp.progress}
-                  onChange={(e) => {
-                    const p = Number(e.target.value);
-                    apiRequest(`/api/work-plans/${encodeURIComponent(wp.id)}`, {
-                      method: 'PATCH',
-                      body: {
-                        progress: p,
-                        status: p === 100 ? 'completado' : p > 0 ? 'ejecucion' : 'planeado',
-                      },
-                    }).catch(() => showToast('No se pudo actualizar el avance', 'error'));
-                  }}
-                  className="w-28 accent-blue-600 cursor-pointer no-print"
-                />
-                <span className="font-mono-num text-xs font-extrabold w-10 text-right">
-                  {wp.progress}%
-                </span>
-                {isLeader && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      apiRequest(`/api/work-plans/${encodeURIComponent(wp.id)}`, {
-                        method: 'DELETE',
-                      }).catch(() => showToast('No se pudo eliminar', 'error'))
-                    }
-                    className="no-print text-rose-500 p-1 cursor-pointer"
+              {editingWpId === wp.id ? (
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 no-print">
+                  <input
+                    type="text"
+                    value={editTitle}
+                    onChange={(e) => setEditTitle(e.target.value)}
+                    placeholder="Meta u objetivo"
+                    className="sm:col-span-5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-1.5 text-xs"
+                  />
+                  <input
+                    type="text"
+                    value={editAxis}
+                    onChange={(e) => setEditAxis(e.target.value)}
+                    placeholder="Eje"
+                    className="sm:col-span-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-1.5 text-xs"
+                  />
+                  <select
+                    value={editCommId}
+                    onChange={(e) => setEditCommId(e.target.value)}
+                    className="sm:col-span-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-2 py-1.5 text-xs"
                   >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </div>
+                    <option value="">Plenaria / Sin comisión</option>
+                    {commissions.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="text"
+                    value={editQuarter}
+                    onChange={(e) => setEditQuarter(e.target.value)}
+                    placeholder="Periodo"
+                    className="sm:col-span-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-2.5 py-1.5 text-xs"
+                  />
+                  <select
+                    value={editStatus}
+                    onChange={(e) =>
+                      setEditStatus(e.target.value as 'planeado' | 'ejecucion' | 'completado')
+                    }
+                    className="sm:col-span-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-2.5 py-1.5 text-xs"
+                  >
+                    <option value="planeado">Planeado</option>
+                    <option value="ejecucion">En ejecución</option>
+                    <option value="completado">Completado</option>
+                  </select>
+                  <label className="sm:col-span-3 flex items-center gap-2 text-xs">
+                    <span>Avance:</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={editProgress}
+                      onChange={(e) => setEditProgress(Number(e.target.value))}
+                      className="w-16 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-2 py-1.5 text-xs"
+                    />
+                  </label>
+                  <label className="sm:col-span-3 flex items-center gap-2 text-xs">
+                    <span>Evidencias:</span>
+                    <input
+                      type="number"
+                      min={0}
+                      value={editEvidenceCount}
+                      onChange={(e) => setEditEvidenceCount(Number(e.target.value))}
+                      className="w-16 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-2 py-1.5 text-xs"
+                    />
+                  </label>
+                  <div className="sm:col-span-3 flex justify-end gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setEditingWpId(null)}
+                      className="rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1 text-xs font-semibold cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSaveEditWp(wp)}
+                      className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-1 text-xs font-semibold text-white cursor-pointer"
+                    >
+                      <Save className="h-3.5 w-3.5" /> Guardar
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <p className="text-[11px] font-semibold text-blue-600 dark:text-cyan-400">
+                      {wp.axis} · {wp.quarter} ·{' '}
+                      {commissions.find((c) => c.id === wp.commissionId)?.name || 'Plenaria / General'} ·{' '}
+                      {wp.evidenceCount || 0} evidencias
+                    </p>
+                    <p className="text-sm font-bold text-slate-900 dark:text-white">{wp.title}</p>
+                  </div>
+                  <div className="flex items-center gap-2.5 shrink-0">
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      step={5}
+                      value={wp.progress}
+                      onChange={(e) => {
+                        const p = Number(e.target.value);
+                        apiRequest(`/api/work-plans/${encodeURIComponent(wp.id)}`, {
+                          method: 'PATCH',
+                          body: {
+                            progress: p,
+                            status: p === 100 ? 'completado' : p > 0 ? 'ejecucion' : 'planeado',
+                          },
+                        }).catch(() => showToast('No se pudo actualizar el avance', 'error'));
+                      }}
+                      className="w-28 accent-blue-600 cursor-pointer no-print"
+                    />
+                    <span className="font-mono-num text-xs font-extrabold w-10 text-right">
+                      {wp.progress}%
+                    </span>
+                    {isLeader && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => startEditWp(wp)}
+                          title="Editar meta"
+                          className="no-print text-slate-600 dark:text-slate-300 hover:text-blue-600 p-1 cursor-pointer"
+                        >
+                          <Edit3 className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            apiRequest(`/api/work-plans/${encodeURIComponent(wp.id)}`, {
+                              method: 'DELETE',
+                            }).catch(() => showToast('No se pudo eliminar', 'error'))
+                          }
+                          className="no-print text-rose-500 p-1 cursor-pointer"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           ))
         )}
@@ -1065,16 +1703,48 @@ export function PortalEditorModule({
   const [activeTheme, setActiveTheme] = useState<FestiveThemeId>(settings.activeTheme);
   const [savingSettings, setSavingSettings] = useState(false);
 
+  // Sincronizar campos si settings cambia desde el servidor
+  useEffect(() => {
+    setHeroTitle(settings.heroTitle);
+    setHeroSubtitle(settings.heroSubtitle);
+    setAboutText(settings.aboutText || '');
+    setMissionText(settings.missionText || '');
+    setVisionText(settings.visionText || '');
+    setContactEmail(settings.contactEmail || '');
+    setContactAddress(settings.contactAddress || '');
+    setActiveTheme(settings.activeTheme);
+  }, [settings]);
+
   // Nueva noticia / evento
   const [newsTitle, setNewsTitle] = useState('');
   const [newsType, setNewsType] = useState<'noticia' | 'evento'>('noticia');
   const [newsSummary, setNewsSummary] = useState('');
   const [newsContent, setNewsContent] = useState('');
-  const [newsComm, setNewsComm] = useState(commissions[0]?.id || 'comision-1');
+  const [newsComm, setNewsComm] = useState('');
   const [newsDate, setNewsDate] = useState('');
   const [newsLocation, setNewsLocation] = useState('');
   const [newsCoverUrl, setNewsCoverUrl] = useState('');
   const [newsStoragePath, setNewsStoragePath] = useState('');
+
+  // Edición de noticia / evento existente
+  const [editingNewsId, setEditingNewsId] = useState<string | null>(null);
+  const [editNewsTitle, setEditNewsTitle] = useState('');
+  const [editNewsType, setEditNewsType] = useState<'noticia' | 'evento'>('noticia');
+  const [editNewsSummary, setEditNewsSummary] = useState('');
+  const [editNewsContent, setEditNewsContent] = useState('');
+  const [editNewsComm, setEditNewsComm] = useState('');
+  const [editNewsDate, setEditNewsDate] = useState('');
+  const [editNewsLocation, setEditNewsLocation] = useState('');
+  const [editNewsStatus, setEditNewsStatus] = useState<'borrador' | 'pendiente' | 'publicado'>('publicado');
+  const [editNewsCoverUrl, setEditNewsCoverUrl] = useState('');
+  const [editNewsStoragePath, setEditNewsStoragePath] = useState('');
+
+  // Edición de elemento de galería
+  const [editingGalId, setEditingGalId] = useState<string | null>(null);
+  const [editGalTitle, setEditGalTitle] = useState('');
+  const [editGalDesc, setEditGalDesc] = useState('');
+  const [editGalComm, setEditGalComm] = useState('');
+  const [editGalStatus, setEditGalStatus] = useState<'publicado' | 'archivado'>('publicado');
 
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1131,6 +1801,24 @@ export function PortalEditorModule({
     }
   };
 
+  const handleRemoveHeroImage = async () => {
+    try {
+      if (settings.heroStoragePath || settings.heroImageUrl) {
+        await deleteStorageFile(settings.heroStoragePath, settings.heroImageUrl);
+      }
+      await apiRequest('/api/portal-settings', {
+        method: 'PUT',
+        body: {
+          heroImageUrl: '',
+          heroStoragePath: '',
+        },
+      });
+      showToast('Imagen de portada retirada', 'info');
+    } catch {
+      showToast('No se pudo retirar la portada', 'error');
+    }
+  };
+
   const handleCreateNews = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newsTitle.trim() || !newsSummary.trim() || !newsContent.trim()) return;
@@ -1161,6 +1849,8 @@ export function PortalEditorModule({
       setNewsTitle('');
       setNewsSummary('');
       setNewsContent('');
+      setNewsDate('');
+      setNewsLocation('');
       setNewsCoverUrl('');
       setNewsStoragePath('');
       showToast(
@@ -1169,6 +1859,53 @@ export function PortalEditorModule({
       );
     } catch {
       showToast('No se pudo crear la noticia/evento', 'error');
+    }
+  };
+
+  const startEditNews = (n: NewsEvent) => {
+    setEditingNewsId(n.id);
+    setEditNewsTitle(n.title);
+    setEditNewsType(n.type);
+    setEditNewsSummary(n.summary);
+    setEditNewsContent(n.content);
+    setEditNewsComm(n.commissionId || '');
+    setEditNewsDate(n.eventDate || '');
+    setEditNewsLocation(n.location || '');
+    setEditNewsStatus(n.status);
+    setEditNewsCoverUrl(n.coverUrl || '');
+    setEditNewsStoragePath(n.storagePath || '');
+  };
+
+  const handleSaveEditNews = async (n: NewsEvent) => {
+    if (!editNewsTitle.trim() || !editNewsSummary.trim() || !editNewsContent.trim()) return;
+    try {
+      await apiRequest(`/api/news/${encodeURIComponent(n.id)}`, {
+        method: 'PATCH',
+        body: {
+          title: editNewsTitle.trim(),
+          type: editNewsType,
+          summary: editNewsSummary.trim(),
+          content: editNewsContent.trim(),
+          commissionId: editNewsComm,
+          eventDate: editNewsDate,
+          location: editNewsLocation.trim(),
+          coverUrl: editNewsCoverUrl,
+          storagePath: editNewsStoragePath,
+          ...(isLeader ? { status: editNewsStatus } : {}),
+        },
+      });
+      await recordAudit({
+        uid,
+        actorName,
+        actorRoleLabel,
+        action: `Editó ${editNewsType}`,
+        module: 'Noticias y Eventos',
+        targetTitle: editNewsTitle.trim(),
+      });
+      setEditingNewsId(null);
+      showToast('Publicación actualizada', 'success');
+    } catch {
+      showToast('No se pudo actualizar la publicación', 'error');
     }
   };
 
@@ -1181,6 +1918,33 @@ export function PortalEditorModule({
       showToast('Publicación y archivo eliminados', 'info');
     } catch {
       showToast('Error al eliminar', 'error');
+    }
+  };
+
+  const startEditGallery = (g: GalleryItem) => {
+    setEditingGalId(g.id);
+    setEditGalTitle(g.title);
+    setEditGalDesc(g.description || '');
+    setEditGalComm(g.commissionId || '');
+    setEditGalStatus(g.status);
+  };
+
+  const handleSaveEditGallery = async (g: GalleryItem) => {
+    if (!editGalTitle.trim()) return;
+    try {
+      await apiRequest(`/api/gallery/${encodeURIComponent(g.id)}`, {
+        method: 'PATCH',
+        body: {
+          title: editGalTitle.trim(),
+          description: editGalDesc.trim(),
+          commissionId: editGalComm,
+          status: editGalStatus,
+        },
+      });
+      setEditingGalId(null);
+      showToast('Elemento de galería actualizado', 'success');
+    } catch {
+      showToast('No se pudo actualizar la galería', 'error');
     }
   };
 
@@ -1286,12 +2050,35 @@ export function PortalEditorModule({
             />
           </div>
 
-          <MediaUploader
-            storageFolder="public/hero"
-            imagePreset="cover"
-            label="Imagen de portada institucional (opcional)"
-            onUploaded={handleHeroUpload}
-          />
+          <div className="space-y-2">
+            {settings.heroImageUrl && (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 dark:border-slate-800 p-3 bg-slate-50 dark:bg-slate-950">
+                <div className="flex items-center gap-3">
+                  <img
+                    src={settings.heroImageUrl}
+                    alt="Portada actual"
+                    className="h-14 w-24 rounded-xl object-cover"
+                  />
+                  <span className="text-xs font-medium text-slate-600 dark:text-slate-300">
+                    Portada institucional actual
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleRemoveHeroImage}
+                  className="inline-flex items-center gap-1 rounded-xl border border-rose-200 dark:border-rose-900/50 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 cursor-pointer"
+                >
+                  <ImageOff className="h-3.5 w-3.5" /> Quitar imagen de portada
+                </button>
+              </div>
+            )}
+            <MediaUploader
+              storageFolder="public/hero"
+              imagePreset="cover"
+              label="Imagen de portada institucional (opcional)"
+              onUploaded={handleHeroUpload}
+            />
+          </div>
 
           <button
             type="submit"
@@ -1307,7 +2094,7 @@ export function PortalEditorModule({
       {/* Noticias y Eventos */}
       <div className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 space-y-4">
         <h3 className="text-base font-bold text-slate-900 dark:text-white">
-          Publicar Noticia o Evento
+          Publicar y Editar Noticias o Eventos
         </h3>
         <form onSubmit={handleCreateNews} className="space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -1334,6 +2121,7 @@ export function PortalEditorModule({
               onChange={(e) => setNewsComm(e.target.value)}
               className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs"
             >
+              <option value="">General / Sin comisión</option>
               {commissions.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
@@ -1391,41 +2179,167 @@ export function PortalEditorModule({
 
         {newsEvents.length > 0 && (
           <div className="divide-y divide-slate-100 dark:divide-slate-800 pt-4">
-            {newsEvents.map((n) => (
-              <div key={n.id} className="py-3 flex items-center justify-between gap-3 text-xs">
-                <div>
-                  <span className="font-bold uppercase text-blue-600 dark:text-cyan-400">
-                    {n.type} · {n.status}
-                  </span>
-                  <p className="text-sm font-bold text-slate-900 dark:text-white">{n.title}</p>
+            {newsEvents.map((n) => {
+              const canEdit = isLeader || n.authorUid === uid;
+              return (
+                <div key={n.id} className="py-3 space-y-3 text-xs">
+                  {editingNewsId === n.id ? (
+                    <div className="rounded-2xl border border-blue-200 dark:border-cyan-900/60 bg-blue-50/40 dark:bg-slate-950 p-4 space-y-2.5">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        <input
+                          type="text"
+                          value={editNewsTitle}
+                          onChange={(e) => setEditNewsTitle(e.target.value)}
+                          placeholder="Titular"
+                          className="sm:col-span-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs"
+                        />
+                        <select
+                          value={editNewsType}
+                          onChange={(e) =>
+                            setEditNewsType(e.target.value as 'noticia' | 'evento')
+                          }
+                          className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-xs"
+                        >
+                          <option value="noticia">Noticia</option>
+                          <option value="evento">Evento</option>
+                        </select>
+                        <select
+                          value={editNewsComm}
+                          onChange={(e) => setEditNewsComm(e.target.value)}
+                          className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-xs"
+                        >
+                          <option value="">General / Sin comisión</option>
+                          {commissions.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name}
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          type="date"
+                          value={editNewsDate}
+                          onChange={(e) => setEditNewsDate(e.target.value)}
+                          className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-xs"
+                        />
+                        <input
+                          type="text"
+                          value={editNewsLocation}
+                          onChange={(e) => setEditNewsLocation(e.target.value)}
+                          placeholder="Lugar"
+                          className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-xs"
+                        />
+                      </div>
+                      <input
+                        type="text"
+                        value={editNewsSummary}
+                        onChange={(e) => setEditNewsSummary(e.target.value)}
+                        placeholder="Resumen"
+                        className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs"
+                      />
+                      <textarea
+                        rows={3}
+                        value={editNewsContent}
+                        onChange={(e) => setEditNewsContent(e.target.value)}
+                        placeholder="Contenido completo"
+                        className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs"
+                      />
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          {isLeader && (
+                            <select
+                              value={editNewsStatus}
+                              onChange={(e) =>
+                                setEditNewsStatus(
+                                  e.target.value as 'borrador' | 'pendiente' | 'publicado'
+                                )
+                              }
+                              className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1 text-xs"
+                            >
+                              <option value="publicado">Publicado</option>
+                              <option value="pendiente">Pendiente</option>
+                              <option value="borrador">Borrador</option>
+                            </select>
+                          )}
+                          {editNewsCoverUrl && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditNewsCoverUrl('');
+                                setEditNewsStoragePath('');
+                              }}
+                              className="text-rose-500 hover:underline cursor-pointer"
+                            >
+                              Quitar foto
+                            </button>
+                          )}
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setEditingNewsId(null)}
+                            className="rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1 font-semibold cursor-pointer"
+                          >
+                            Cancelar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleSaveEditNews(n)}
+                            className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-1 font-semibold text-white cursor-pointer"
+                          >
+                            <Save className="h-3.5 w-3.5" /> Guardar cambios
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <span className="font-bold uppercase text-blue-600 dark:text-cyan-400">
+                          {n.type} · {n.status}
+                          {n.eventDate ? ` · ${n.eventDate}` : ''}
+                        </span>
+                        <p className="text-sm font-bold text-slate-900 dark:text-white">{n.title}</p>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {isLeader && n.status !== 'publicado' && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              apiRequest(`/api/news/${encodeURIComponent(n.id)}`, {
+                                method: 'PATCH',
+                                body: { status: 'publicado' },
+                              }).catch(() => showToast('No se pudo aprobar', 'error'))
+                            }
+                            className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-2.5 py-1 text-white font-semibold cursor-pointer"
+                          >
+                            <CheckCircle2 className="h-3.5 w-3.5" /> Aprobar
+                          </button>
+                        )}
+                        {canEdit && (
+                          <button
+                            type="button"
+                            onClick={() => startEditNews(n)}
+                            title="Editar publicación"
+                            className="rounded-lg border border-slate-200 dark:border-slate-700 p-1.5 hover:border-blue-500 cursor-pointer"
+                          >
+                            <Edit3 className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                        {isLeader && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteNews(n)}
+                            className="rounded-lg p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
-                {isLeader && (
-                  <div className="flex items-center gap-2 shrink-0">
-                    {n.status !== 'publicado' && (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          apiRequest(`/api/news/${encodeURIComponent(n.id)}`, {
-                            method: 'PATCH',
-                            body: { status: 'publicado' },
-                          }).catch(() => showToast('No se pudo aprobar', 'error'))
-                        }
-                        className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-2.5 py-1 text-white font-semibold cursor-pointer"
-                      >
-                        <CheckCircle2 className="h-3.5 w-3.5" /> Aprobar
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteNews(n)}
-                      className="rounded-lg p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -1438,17 +2352,85 @@ export function PortalEditorModule({
           </h3>
           <div className="divide-y divide-slate-100 dark:divide-slate-800 text-xs">
             {galleryItems.map((g) => (
-              <div key={g.id} className="py-2.5 flex items-center justify-between gap-3">
-                <span className="font-semibold truncate">
-                  [{g.mediaType}] {g.title}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => handleDeleteGallery(g)}
-                  className="text-rose-500 hover:underline inline-flex items-center gap-1 cursor-pointer shrink-0"
-                >
-                  <Trash2 className="h-3.5 w-3.5" /> Eliminar
-                </button>
+              <div key={g.id} className="py-2.5 space-y-2">
+                {editingGalId === g.id ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 rounded-2xl border border-blue-200 dark:border-cyan-900/60 bg-blue-50/40 dark:bg-slate-950 p-3">
+                    <input
+                      type="text"
+                      value={editGalTitle}
+                      onChange={(e) => setEditGalTitle(e.target.value)}
+                      placeholder="Título"
+                      className="sm:col-span-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-xs"
+                    />
+                    <input
+                      type="text"
+                      value={editGalDesc}
+                      onChange={(e) => setEditGalDesc(e.target.value)}
+                      placeholder="Descripción"
+                      className="sm:col-span-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-xs"
+                    />
+                    <select
+                      value={editGalComm}
+                      onChange={(e) => setEditGalComm(e.target.value)}
+                      className="sm:col-span-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1.5 text-xs"
+                    >
+                      <option value="">General / Sin comisión</option>
+                      {commissions.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={editGalStatus}
+                      onChange={(e) =>
+                        setEditGalStatus(e.target.value as 'publicado' | 'archivado')
+                      }
+                      className="sm:col-span-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 py-1.5 text-xs"
+                    >
+                      <option value="publicado">Publicado</option>
+                      <option value="archivado">Archivado</option>
+                    </select>
+                    <div className="sm:col-span-12 flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setEditingGalId(null)}
+                        className="rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1 text-xs font-semibold cursor-pointer"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSaveEditGallery(g)}
+                        className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-1 text-xs font-semibold text-white cursor-pointer"
+                      >
+                        <Save className="h-3.5 w-3.5" /> Guardar
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-semibold truncate">
+                      [{g.mediaType} · {g.status}] {g.title}
+                    </span>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => startEditGallery(g)}
+                        className="text-slate-600 dark:text-slate-300 hover:text-blue-600 inline-flex items-center gap-1 cursor-pointer"
+                      >
+                        <Edit3 className="h-3.5 w-3.5" /> Editar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteGallery(g)}
+                        className="text-rose-500 hover:underline inline-flex items-center gap-1 cursor-pointer"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" /> Eliminar
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>

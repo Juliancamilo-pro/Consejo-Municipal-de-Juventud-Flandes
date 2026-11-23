@@ -3,9 +3,12 @@ import {
   CalendarClock,
   CheckCircle2,
   ClipboardList,
+  Edit3,
+  ExternalLink,
   Plus,
   Printer,
   QrCode,
+  Save,
   ShieldCheck,
   Trash2,
   X,
@@ -19,6 +22,7 @@ import type {
   PublicCouncilor,
   RoleLabel,
 } from '../../types/cmj';
+import { MediaUploader, type UploadedFileInfo } from '../MediaUploader';
 import { useToast } from '../ToastProvider';
 import { recordAudit } from './auditHelper';
 
@@ -117,6 +121,16 @@ export function SessionsModule({
   const [selfCodeInput, setSelfCodeInput] = useState('');
   const [showPrintableActa, setShowPrintableActa] = useState(false);
 
+  // Edición de sesión seleccionada
+  const [editingSession, setEditingSession] = useState(false);
+  const [editTitle, setEditTitle] = useState('');
+  const [editType, setEditType] = useState('Ordinaria');
+  const [editDate, setEditDate] = useState('');
+  const [editTime, setEditTime] = useState('');
+  const [editLocation, setEditLocation] = useState('');
+  const [editQuorum, setEditQuorum] = useState(1);
+  const [editAgenda, setEditAgenda] = useState('');
+
   const defaultQuorum = Math.max(1, Math.floor(activeCouncilors.length / 2) + 1);
 
   const handleCreateSession = async (e: React.FormEvent) => {
@@ -211,6 +225,62 @@ export function SessionsModule({
       showToast(`Estado actualizado a ${nextStatus.replace('_', ' ')}`, 'success');
     } catch {
       showToast('No se pudo cambiar el estado', 'error');
+    }
+  };
+
+  const openEditSession = (sess: CouncilSession) => {
+    setEditTitle(sess.title);
+    setEditType(sess.sessionType);
+    setEditDate(sess.dateIso);
+    setEditTime(sess.timeRange || '');
+    setEditLocation(sess.location);
+    setEditQuorum(sess.quorumRequired || defaultQuorum);
+    setEditAgenda(sess.agenda || '');
+    setEditingSession(true);
+  };
+
+  const handleSaveSessionEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedSession || !editTitle.trim()) return;
+    try {
+      await apiRequest(`/api/sessions/${encodeURIComponent(selectedSession.id)}`, {
+        method: 'PATCH',
+        body: {
+          title: editTitle.trim(),
+          sessionType: editType,
+          dateIso: editDate,
+          timeRange: editTime.trim(),
+          location: editLocation.trim(),
+          quorumRequired: Math.max(1, Number(editQuorum) || 1),
+          agenda: editAgenda.trim(),
+        },
+      });
+      await recordAudit({
+        uid,
+        actorName,
+        actorRoleLabel,
+        action: 'Editó datos o agenda de sesión',
+        module: 'Sesiones y Actas',
+        targetTitle: editTitle.trim(),
+      });
+      setEditingSession(false);
+      showToast('Sesión actualizada', 'success');
+    } catch {
+      showToast('No se pudo actualizar la sesión', 'error');
+    }
+  };
+
+  const handleActaUploaded = async (files: UploadedFileInfo[]) => {
+    const first = files[0];
+    if (!first || !selectedSession) return;
+    try {
+      await apiRequest(`/api/sessions/${encodeURIComponent(selectedSession.id)}`, {
+        method: 'PATCH',
+        body: { actaUrl: first.url },
+      });
+      showToast('Acta adjuntada a la sesión', 'success');
+    } catch {
+      showToast('No se pudo adjuntar el acta', 'error');
     }
   };
 
@@ -380,17 +450,28 @@ export function SessionsModule({
 
                 <div className="flex flex-wrap items-center gap-2">
                   {isLeader && (
-                    <select
-                      value={selectedSession.status}
-                      onChange={(e) =>
-                        handleChangeStatus(selectedSession, e.target.value as CouncilSession['status'])
-                      }
-                      className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3 py-1.5 text-xs font-semibold"
-                    >
-                      <option value="programada">Programada</option>
-                      <option value="en_curso">En curso</option>
-                      <option value="finalizada">Finalizada</option>
-                    </select>
+                    <>
+                      <select
+                        value={selectedSession.status}
+                        onChange={(e) =>
+                          handleChangeStatus(selectedSession, e.target.value as CouncilSession['status'])
+                        }
+                        className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3 py-1.5 text-xs font-semibold"
+                      >
+                        <option value="programada">Programada</option>
+                        <option value="en_curso">En curso</option>
+                        <option value="finalizada">Finalizada</option>
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          editingSession ? setEditingSession(false) : openEditSession(selectedSession)
+                        }
+                        className="inline-flex items-center gap-1 rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-1.5 text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                      >
+                        <Edit3 className="h-3.5 w-3.5" /> Editar
+                      </button>
+                    </>
                   )}
                   <button
                     type="button"
@@ -411,6 +492,107 @@ export function SessionsModule({
                   )}
                 </div>
               </div>
+
+              {editingSession && isLeader && (
+                <form
+                  onSubmit={handleSaveSessionEdit}
+                  className="rounded-2xl border border-blue-200 dark:border-cyan-900/60 bg-blue-50/40 dark:bg-slate-950 p-4 space-y-3"
+                >
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                    <input
+                      type="text"
+                      required
+                      value={editTitle}
+                      onChange={(e) => setEditTitle(e.target.value)}
+                      placeholder="Título de la sesión"
+                      className="sm:col-span-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs"
+                    />
+                    <select
+                      value={editType}
+                      onChange={(e) => setEditType(e.target.value)}
+                      className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs"
+                    >
+                      <option value="Ordinaria">Ordinaria</option>
+                      <option value="Extraordinaria">Extraordinaria</option>
+                      <option value="Mesa Directiva">Mesa Directiva</option>
+                      <option value="Comisión">Comisión</option>
+                    </select>
+                    <input
+                      type="date"
+                      required
+                      value={editDate}
+                      onChange={(e) => setEditDate(e.target.value)}
+                      className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs"
+                    />
+                    <input
+                      type="text"
+                      value={editTime}
+                      onChange={(e) => setEditTime(e.target.value)}
+                      placeholder="Horario"
+                      className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs"
+                    />
+                    <input
+                      type="number"
+                      min={1}
+                      value={editQuorum}
+                      onChange={(e) => setEditQuorum(Number(e.target.value))}
+                      placeholder="Quórum"
+                      className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs"
+                    />
+                    <input
+                      type="text"
+                      required
+                      value={editLocation}
+                      onChange={(e) => setEditLocation(e.target.value)}
+                      placeholder="Lugar o enlace"
+                      className="sm:col-span-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs"
+                    />
+                  </div>
+                  <textarea
+                    rows={3}
+                    value={editAgenda}
+                    onChange={(e) => setEditAgenda(e.target.value)}
+                    placeholder="Orden del día"
+                    className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs"
+                  />
+                  <MediaUploader
+                    storageFolder={`actas/${selectedSession.id}`}
+                    label="Adjuntar archivo de Acta firmada (PDF / DOCX)"
+                    onUploaded={handleActaUploaded}
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      type="submit"
+                      className="inline-flex items-center gap-1 rounded-xl bg-blue-600 px-3.5 py-1.5 text-xs font-semibold text-white cursor-pointer"
+                    >
+                      <Save className="h-3.5 w-3.5" /> Guardar cambios
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditingSession(false)}
+                      className="rounded-xl bg-slate-200 dark:bg-slate-800 px-3.5 py-1.5 text-xs font-semibold cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {selectedSession.actaUrl && (
+                <div className="flex items-center justify-between gap-2 rounded-xl border border-emerald-200 dark:border-emerald-900/50 bg-emerald-50/50 dark:bg-emerald-950/20 px-3.5 py-2 text-xs">
+                  <span className="font-semibold text-emerald-700 dark:text-emerald-300">
+                    Acta oficial adjunta disponible
+                  </span>
+                  <a
+                    href={selectedSession.actaUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 font-bold text-blue-600 dark:text-cyan-400 hover:underline"
+                  >
+                    Abrir acta <ExternalLink className="h-3.5 w-3.5" />
+                  </a>
+                </div>
+              )}
 
               {/* Quórum y Código QR */}
               <div className="grid grid-cols-1 md:grid-cols-12 gap-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60 p-4">

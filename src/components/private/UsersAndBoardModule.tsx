@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { ApiRequestError, apiRequest } from '../../lib/apiClient';
 import type {
+  AffiliationType,
   Commission,
   CouncilorPrivate,
   PublicCouncilor,
@@ -46,16 +47,21 @@ export function UsersAndBoardModule({
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [roleLabel, setRoleLabel] = useState<RoleLabel>('Consejero');
-  const [commissionId, setCommissionId] = useState(commissions[0]?.id || 'comision-1');
+  const [commissionId, setCommissionId] = useState('');
+  const [affiliationType, setAffiliationType] = useState<AffiliationType>('');
+  const [affiliationName, setAffiliationName] = useState('');
   const [creating, setCreating] = useState(false);
 
   // Edición inline de consejero
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editRole, setEditRole] = useState<RoleLabel>('Consejero');
-  const [editComm, setEditComm] = useState('comision-1');
+  const [editComm, setEditComm] = useState('');
   const [editPhone, setEditPhone] = useState('');
+  const [editAffType, setEditAffType] = useState<AffiliationType>('');
+  const [editAffName, setEditAffName] = useState('');
   const [savingEdit, setSavingEdit] = useState(false);
+  const [confirmDeleteUid, setConfirmDeleteUid] = useState<string | null>(null);
 
   // Configuración institucional de seguridad (códigos / clave inicial)
   const [newInviteCode, setNewInviteCode] = useState('');
@@ -82,7 +88,9 @@ export function UsersAndBoardModule({
         return (
           pub.fullName.toLowerCase().includes(q) ||
           pub.roleLabel.toLowerCase().includes(q) ||
-          pub.commissionName.toLowerCase().includes(q) ||
+          (pub.commissionName || 'Sin comisión').toLowerCase().includes(q) ||
+          (pub.affiliationName || '').toLowerCase().includes(q) ||
+          (pub.affiliationType || '').toLowerCase().includes(q) ||
           (privateCouncilors.find((p) => p.uid === pub.uid)?.email || '').toLowerCase().includes(q)
         );
       })
@@ -107,6 +115,8 @@ export function UsersAndBoardModule({
           phone: phone.trim(),
           roleLabel,
           commissionId,
+          affiliationType,
+          affiliationName: affiliationName.trim(),
         },
       });
 
@@ -127,6 +137,8 @@ export function UsersAndBoardModule({
       setFullName('');
       setEmail('');
       setPhone('');
+      setAffiliationType('');
+      setAffiliationName('');
     } catch (err) {
       const msg =
         err instanceof ApiRequestError ? err.message : 'Error al guardar consejero';
@@ -140,8 +152,10 @@ export function UsersAndBoardModule({
     setEditingId(pub.id);
     setEditName(pub.fullName);
     setEditRole(pub.roleLabel);
-    setEditComm(pub.commissionId);
+    setEditComm(pub.commissionId || '');
     setEditPhone(priv?.phone || '');
+    setEditAffType(pub.affiliationType || '');
+    setEditAffName(pub.affiliationName || '');
   };
 
   const handleSaveEdit = async (pub: PublicCouncilor) => {
@@ -155,6 +169,8 @@ export function UsersAndBoardModule({
           roleLabel: editRole,
           commissionId: editComm,
           phone: editPhone.trim(),
+          affiliationType: editAffType,
+          affiliationName: editAffName.trim(),
         },
       });
 
@@ -175,6 +191,27 @@ export function UsersAndBoardModule({
       showToast(msg, 'error');
     } finally {
       setSavingEdit(false);
+    }
+  };
+
+  const handleDeleteCouncilor = async (pub: PublicCouncilor) => {
+    try {
+      await apiRequest(`/api/councilors/${encodeURIComponent(pub.uid)}`, {
+        method: 'DELETE',
+      });
+      await recordAudit({
+        uid,
+        actorName,
+        actorRoleLabel,
+        action: 'Eliminó consejero del directorio',
+        module: 'Usuarios y Mesa',
+        targetTitle: pub.fullName,
+      });
+      setConfirmDeleteUid(null);
+      showToast('Consejero eliminado', 'info');
+    } catch (err) {
+      const msg = err instanceof ApiRequestError ? err.message : 'No se pudo eliminar';
+      showToast(msg, 'error');
     }
   };
 
@@ -276,7 +313,7 @@ export function UsersAndBoardModule({
           Registra consejeros autorizados, asigna su cargo (Presidente, Vicepresidente, Secretario o Consejero) y su comisión.
         </p>
 
-        <form onSubmit={handleCreateCouncilor} className="mt-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+        <form onSubmit={handleCreateCouncilor} className="mt-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <input
             type="text"
             required
@@ -310,27 +347,43 @@ export function UsersAndBoardModule({
             <option value="Vicepresidente">Vicepresidente</option>
             <option value="Secretario">Secretario</option>
           </select>
-          <div className="flex gap-2">
-            <select
-              value={commissionId}
-              onChange={(e) => setCommissionId(e.target.value)}
-              className="flex-1 min-w-0 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2.5 text-sm"
-            >
-              {commissions.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-            <button
-              type="submit"
-              disabled={creating}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-60 cursor-pointer shrink-0"
-            >
-              <Plus className="h-4 w-4" />
-              Agregar
-            </button>
-          </div>
+          <select
+            value={commissionId}
+            onChange={(e) => setCommissionId(e.target.value)}
+            className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2.5 text-sm"
+          >
+            <option value="">Sin comisión asignada</option>
+            {commissions.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+          <select
+            value={affiliationType}
+            onChange={(e) => setAffiliationType(e.target.value as AffiliationType)}
+            className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2.5 text-sm"
+          >
+            <option value="">Filiación (opcional)</option>
+            <option value="partido">Partido político</option>
+            <option value="fundacion">Fundación / Organización</option>
+            <option value="independiente">Independiente</option>
+          </select>
+          <input
+            type="text"
+            value={affiliationName}
+            onChange={(e) => setAffiliationName(e.target.value)}
+            placeholder="Nombre de partido, fundación o lista"
+            className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3.5 py-2.5 text-sm"
+          />
+          <button
+            type="submit"
+            disabled={creating}
+            className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-60 cursor-pointer"
+          >
+            <Plus className="h-4 w-4" />
+            Agregar consejero
+          </button>
         </form>
       </div>
 
@@ -371,6 +424,7 @@ export function UsersAndBoardModule({
                 <th className="py-3 px-2 font-semibold">Correo / Teléfono</th>
                 <th className="py-3 px-2 font-semibold">Cargo</th>
                 <th className="py-3 px-2 font-semibold">Comisión</th>
+                <th className="py-3 px-2 font-semibold">Filiación</th>
                 <th className="py-3 px-2 font-semibold">Estado</th>
                 <th className="py-3 px-2 font-semibold text-right">Acciones</th>
               </tr>
@@ -429,8 +483,9 @@ export function UsersAndBoardModule({
                         <select
                           value={editComm}
                           onChange={(e) => setEditComm(e.target.value)}
-                          className="rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 py-1 text-xs"
+                          className="rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 py-1 text-xs max-w-[180px]"
                         >
+                          <option value="">Sin comisión asignada</option>
                           {commissions.map((c) => (
                             <option key={c.id} value={c.id}>
                               {c.name}
@@ -438,7 +493,47 @@ export function UsersAndBoardModule({
                           ))}
                         </select>
                       ) : (
-                        pub.commissionName
+                        pub.commissionName || 'Sin comisión'
+                      )}
+                    </td>
+                    <td className="py-3 px-2 text-slate-600 dark:text-slate-300">
+                      {isEditing ? (
+                        <div className="space-y-1 min-w-[150px]">
+                          <select
+                            value={editAffType}
+                            onChange={(e) => setEditAffType(e.target.value as AffiliationType)}
+                            className="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 py-1 text-xs"
+                          >
+                            <option value="">Sin especificar</option>
+                            <option value="partido">Partido político</option>
+                            <option value="fundacion">Fundación / Org.</option>
+                            <option value="independiente">Independiente</option>
+                          </select>
+                          <input
+                            type="text"
+                            value={editAffName}
+                            onChange={(e) => setEditAffName(e.target.value)}
+                            placeholder="Nombre partido/org."
+                            className="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 py-1 text-xs"
+                          />
+                        </div>
+                      ) : pub.affiliationType || pub.affiliationName ? (
+                        <div>
+                          <span className="font-semibold text-slate-800 dark:text-slate-200">
+                            {pub.affiliationType === 'partido'
+                              ? 'Partido político'
+                              : pub.affiliationType === 'fundacion'
+                              ? 'Fundación / Org.'
+                              : pub.affiliationType === 'independiente'
+                              ? 'Independiente'
+                              : 'Filiación'}
+                          </span>
+                          {pub.affiliationName && (
+                            <div className="text-[11px] text-slate-400">{pub.affiliationName}</div>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-slate-400">—</span>
                       )}
                     </td>
                     <td className="py-3 px-2">
@@ -485,22 +580,51 @@ export function UsersAndBoardModule({
                               <Edit3 className="h-3.5 w-3.5" />
                             </button>
                             {pub.uid !== uid && (
-                              <button
-                                type="button"
-                                onClick={() => handleToggleActive(pub)}
-                                title={pub.active ? 'Desactivar acceso' : 'Reactivar acceso'}
-                                className={`rounded-lg p-1.5 cursor-pointer ${
-                                  pub.active
-                                    ? 'text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40'
-                                    : 'text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40'
-                                }`}
-                              >
-                                {pub.active ? (
-                                  <UserX className="h-3.5 w-3.5" />
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleActive(pub)}
+                                  title={pub.active ? 'Desactivar acceso' : 'Reactivar acceso'}
+                                  className={`rounded-lg p-1.5 cursor-pointer ${
+                                    pub.active
+                                      ? 'text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/40'
+                                      : 'text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40'
+                                  }`}
+                                >
+                                  {pub.active ? (
+                                    <UserX className="h-3.5 w-3.5" />
+                                  ) : (
+                                    <UserCheck className="h-3.5 w-3.5" />
+                                  )}
+                                </button>
+                                {confirmDeleteUid === pub.uid ? (
+                                  <div className="inline-flex items-center gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteCouncilor(pub)}
+                                      className="rounded-lg bg-rose-600 px-2 py-1 text-[10px] font-bold text-white cursor-pointer"
+                                    >
+                                      Confirmar
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setConfirmDeleteUid(null)}
+                                      className="rounded-lg bg-slate-200 dark:bg-slate-800 px-1.5 py-1 text-[10px] cursor-pointer"
+                                    >
+                                      No
+                                    </button>
+                                  </div>
                                 ) : (
-                                  <UserCheck className="h-3.5 w-3.5" />
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmDeleteUid(pub.uid)}
+                                    title="Eliminar consejero"
+                                    className="rounded-lg p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </button>
                                 )}
-                              </button>
+                              </>
                             )}
                           </>
                         )}
@@ -511,7 +635,7 @@ export function UsersAndBoardModule({
               })}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="py-8 text-center text-slate-500">
+                  <td colSpan={7} className="py-8 text-center text-slate-500">
                     No hay consejeros que coincidan con la búsqueda.
                   </td>
                 </tr>

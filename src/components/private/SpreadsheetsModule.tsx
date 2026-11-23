@@ -12,6 +12,7 @@ import { apiRequest } from '../../lib/apiClient';
 import { isLeadershipTier } from '../../lib/security';
 import type {
   AccessTier,
+  AffiliationType,
   Commission,
   CommissionTask,
   Commitment,
@@ -31,6 +32,8 @@ interface ImportedRowPreview {
   email: string;
   roleLabel: RoleLabel;
   commissionId: string;
+  affiliationType: AffiliationType;
+  affiliationName: string;
   phone: string;
   valid: boolean;
   reason?: string;
@@ -68,7 +71,17 @@ export function SpreadsheetsModule({
 
   // Edición inline del directorio tipo hoja de cálculo
   const [draftEdits, setDraftEdits] = useState<
-    Record<string, { fullName: string; roleLabel: RoleLabel; commissionId: string; phone: string }>
+    Record<
+      string,
+      {
+        fullName: string;
+        roleLabel: RoleLabel;
+        commissionId: string;
+        affiliationType: AffiliationType;
+        affiliationName: string;
+        phone: string;
+      }
+    >
   >({});
   const [savingRowId, setSavingRowId] = useState<string | null>(null);
 
@@ -81,7 +94,11 @@ export function SpreadsheetsModule({
     () =>
       publicCouncilors
         .filter((c) => c.active)
-        .filter((c) => commFilter === 'todas' || c.commissionId === commFilter)
+        .filter((c) => {
+          if (commFilter === 'todas') return true;
+          if (commFilter === 'sin_comision') return !c.commissionId;
+          return c.commissionId === commFilter;
+        })
         .sort((a, b) => (a.displayOrder ?? 50) - (b.displayOrder ?? 50)),
     [publicCouncilors, commFilter]
   );
@@ -105,7 +122,7 @@ export function SpreadsheetsModule({
         const obj: Record<string, string | number> = {
           Consejero: row.councilor.fullName,
           Cargo: row.councilor.roleLabel,
-          Comision: row.councilor.commissionName,
+          Comision: row.councilor.commissionName || 'Sin comisión',
         };
         sessions.forEach((s, i) => {
           obj[`${s.dateIso} ${s.title.slice(0, 18)}`] = row.cells[i];
@@ -134,7 +151,9 @@ export function SpreadsheetsModule({
           Origen: 'Compromiso Plenaria',
           Titulo: c.title,
           Responsable: c.responsibleName,
-          Comision: commissions.find((cm) => cm.id === c.commissionId)?.name || c.commissionId,
+          Comision:
+            commissions.find((cm) => cm.id === c.commissionId)?.name ||
+            (c.commissionId || 'Plenaria / Sin comisión'),
           Limite: c.dueDate || 'Sin fecha',
           Estado: c.status,
           Avance: `${c.progress}%`,
@@ -158,7 +177,16 @@ export function SpreadsheetsModule({
         Correo: priv?.email || '',
         Telefono: priv?.phone || '',
         Cargo: c.roleLabel,
-        Comision: c.commissionName,
+        Comision: c.commissionName || 'Sin comisión',
+        Filiacion:
+          c.affiliationType === 'partido'
+            ? 'Partido político'
+            : c.affiliationType === 'fundacion'
+            ? 'Fundación / Org.'
+            : c.affiliationType === 'independiente'
+            ? 'Independiente'
+            : '',
+        Organizacion: c.affiliationName || '',
       };
     });
   };
@@ -187,7 +215,9 @@ export function SpreadsheetsModule({
     return {
       fullName: c.fullName,
       roleLabel: c.roleLabel,
-      commissionId: c.commissionId,
+      commissionId: c.commissionId || '',
+      affiliationType: (c.affiliationType || '') as AffiliationType,
+      affiliationName: c.affiliationName || '',
       phone: priv?.phone || '',
     };
   };
@@ -202,6 +232,8 @@ export function SpreadsheetsModule({
           fullName: draft.fullName.trim() || c.fullName,
           roleLabel: draft.roleLabel,
           commissionId: draft.commissionId,
+          affiliationType: draft.affiliationType,
+          affiliationName: draft.affiliationName.trim(),
           phone: draft.phone.trim(),
         },
       });
@@ -240,11 +272,29 @@ export function SpreadsheetsModule({
           rawRole === 'Secretario'
             ? rawRole
             : 'Consejero';
-        const rawComm = String(r.Comision || r.comision || 'comision-1').trim().toLowerCase();
+        const rawComm = String(r.Comision || r.comision || '').trim().toLowerCase();
         const matchedComm =
-          commissions.find(
-            (c) => c.id === rawComm || c.name.toLowerCase().includes(rawComm) || rawComm.includes(String(c.number))
-          )?.id || 'comision-1';
+          !rawComm || rawComm.includes('sin comisi') || rawComm === 'ninguna'
+            ? ''
+            : commissions.find(
+                (c) =>
+                  c.id === rawComm ||
+                  c.name.toLowerCase().includes(rawComm) ||
+                  rawComm.includes(String(c.number))
+              )?.id || '';
+        const rawAff = String(r.Filiacion || r.filiacion || r.Tipo || r.tipo || '')
+          .trim()
+          .toLowerCase();
+        const affiliationType: AffiliationType = rawAff.includes('partido')
+          ? 'partido'
+          : rawAff.includes('fundac') || rawAff.includes('org')
+          ? 'fundacion'
+          : rawAff.includes('independ')
+          ? 'independiente'
+          : '';
+        const affiliationName = String(
+          r.Organizacion || r.organizacion || r.Partido || r.partido || r.Fundacion || ''
+        ).trim();
         const phone = String(r.Telefono || r.telefono || r.Celular || '').trim();
 
         const validEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -254,6 +304,8 @@ export function SpreadsheetsModule({
           email,
           roleLabel: role,
           commissionId: matchedComm,
+          affiliationType,
+          affiliationName,
           phone,
           valid,
           reason: !name ? 'Falta nombre' : !validEmail ? 'Correo inválido' : undefined,
@@ -385,6 +437,7 @@ export function SpreadsheetsModule({
             className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-1.5 text-xs"
           >
             <option value="todas">Todas las comisiones</option>
+            <option value="sin_comision">Sin comisión asignada</option>
             {commissions.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
@@ -403,7 +456,7 @@ export function SpreadsheetsModule({
                   {importPreview.length})
                 </h3>
                 <p className="text-[11px] text-slate-500">
-                  Columnas soportadas: Nombre, Correo, Cargo, Comision, Telefono.
+                  Columnas soportadas: Nombre, Correo, Cargo, Comision, Filiacion, Organizacion, Telefono.
                 </p>
               </div>
               <div className="flex gap-2">
@@ -432,6 +485,7 @@ export function SpreadsheetsModule({
                     <th className="p-2">Correo</th>
                     <th className="p-2">Cargo</th>
                     <th className="p-2">Comisión</th>
+                    <th className="p-2">Filiación</th>
                     <th className="p-2">Validación</th>
                   </tr>
                 </thead>
@@ -441,7 +495,10 @@ export function SpreadsheetsModule({
                       <td className="p-2">{r.fullName}</td>
                       <td className="p-2">{r.email || '—'}</td>
                       <td className="p-2">{r.roleLabel}</td>
-                      <td className="p-2">{r.commissionId}</td>
+                      <td className="p-2">{r.commissionId || 'Sin comisión'}</td>
+                      <td className="p-2">
+                        {r.affiliationType || '—'} {r.affiliationName ? `(${r.affiliationName})` : ''}
+                      </td>
                       <td className="p-2">
                         {r.valid ? (
                           <span className="text-emerald-600 font-semibold">Lista</span>
@@ -670,6 +727,7 @@ export function SpreadsheetsModule({
                   <th className="p-2 border border-slate-200 dark:border-slate-700">Teléfono</th>
                   <th className="p-2 border border-slate-200 dark:border-slate-700">Cargo</th>
                   <th className="p-2 border border-slate-200 dark:border-slate-700">Comisión</th>
+                  <th className="p-2 border border-slate-200 dark:border-slate-700">Filiación</th>
                   {isLeader && (
                     <th className="p-2 border border-slate-200 dark:border-slate-700 text-right no-print">
                       Guardar
@@ -745,12 +803,49 @@ export function SpreadsheetsModule({
                           }
                           className="rounded px-2 py-1 bg-transparent max-w-[180px]"
                         >
+                          <option value="">Sin comisión asignada</option>
                           {commissions.map((cm) => (
                             <option key={cm.id} value={cm.id}>
                               {cm.name}
                             </option>
                           ))}
                         </select>
+                      </td>
+                      <td className="p-1.5 border border-slate-200 dark:border-slate-800">
+                        <div className="flex gap-1">
+                          <select
+                            disabled={!isLeader}
+                            value={draft.affiliationType}
+                            onChange={(e) =>
+                              setDraftEdits((prev) => ({
+                                ...prev,
+                                [c.id]: {
+                                  ...draft,
+                                  affiliationType: e.target.value as AffiliationType,
+                                },
+                              }))
+                            }
+                            className="rounded px-1.5 py-1 bg-transparent"
+                          >
+                            <option value="">—</option>
+                            <option value="partido">Partido</option>
+                            <option value="fundacion">Fundación</option>
+                            <option value="independiente">Indep.</option>
+                          </select>
+                          <input
+                            type="text"
+                            disabled={!isLeader}
+                            value={draft.affiliationName}
+                            onChange={(e) =>
+                              setDraftEdits((prev) => ({
+                                ...prev,
+                                [c.id]: { ...draft, affiliationName: e.target.value },
+                              }))
+                            }
+                            placeholder="Nombre partido/org."
+                            className="w-32 rounded px-1.5 py-1 bg-transparent border border-transparent focus:border-blue-500"
+                          />
+                        </div>
                       </td>
                       {isLeader && (
                         <td className="p-1.5 border border-slate-200 dark:border-slate-800 text-right no-print">

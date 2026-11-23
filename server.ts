@@ -109,6 +109,15 @@ function isSafeUrl(url: unknown): boolean {
   );
 }
 
+type AffiliationType = '' | 'partido' | 'fundacion' | 'independiente';
+
+function normalizeAffiliationType(value: unknown): AffiliationType {
+  if (value === 'partido' || value === 'fundacion' || value === 'independiente') {
+    return value;
+  }
+  return '';
+}
+
 function newId(prefix = 'id'): string {
   return `${prefix}_${crypto.randomBytes(8).toString('hex')}`;
 }
@@ -490,7 +499,9 @@ async function startServer() {
         const accessTier = isBootstrap
           ? 'tier_3_sec'
           : allowRow?.accessTier || roleLabelToAccessTier(roleLabel);
-        const commissionId = isBootstrap ? 'comision-5' : allowRow?.commissionId || 'comision-1';
+        const commissionId = isBootstrap ? '' : (allowRow?.commissionId ?? '');
+        const affiliationType = normalizeAffiliationType(allowRow?.affiliationType);
+        const affiliationName = String(allowRow?.affiliationName || '').trim().slice(0, 120);
         const uid = isBootstrap ? 'uid_secretario_bootstrap' : newId('uid');
 
         const [inserted] = await db
@@ -518,6 +529,8 @@ async function startServer() {
             accessTier,
             roleLabel,
             commissionId,
+            affiliationType,
+            affiliationName,
             accountProvisioned: true,
             mustChangePassword: !isBootstrap,
           })
@@ -526,11 +539,13 @@ async function startServer() {
             set: { accountProvisioned: true, updatedAt: new Date() },
           });
 
-        const [comm] = await db
-          .select()
-          .from(commissions)
-          .where(eq(commissions.id, commissionId))
-          .limit(1);
+        const [comm] = commissionId
+          ? await db
+              .select()
+              .from(commissions)
+              .where(eq(commissions.id, commissionId))
+              .limit(1)
+          : [];
 
         const pendingId = `pending_${emailH.slice(0, 16)}`;
         const [pendingPub] = await db
@@ -559,7 +574,9 @@ async function startServer() {
             fullName: defaultName,
             roleLabel,
             commissionId,
-            commissionName: comm?.name || commissionId,
+            commissionName: commissionId ? comm?.name || commissionId : 'Sin comisión',
+            affiliationType,
+            affiliationName,
             bio: isBootstrap
               ? 'Secretario del Consejo Municipal de Juventudes de Flandes, Tolima.'
               : pendingPub?.bio || '',
@@ -671,7 +688,9 @@ async function startServer() {
         const accessTier = isBootstrap
           ? 'tier_3_sec'
           : allowRow?.accessTier || roleLabelToAccessTier(roleLabel);
-        const commissionId = isBootstrap ? 'comision-5' : allowRow?.commissionId || 'comision-1';
+        const commissionId = isBootstrap ? '' : (allowRow?.commissionId ?? '');
+        const affiliationType = normalizeAffiliationType(allowRow?.affiliationType);
+        const affiliationName = String(allowRow?.affiliationName || '').trim().slice(0, 120);
         const uid = isBootstrap ? 'uid_secretario_bootstrap' : newId('uid');
 
         const [inserted] = await db
@@ -690,11 +709,13 @@ async function startServer() {
           .returning();
         finalUser = inserted;
 
-        const [comm] = await db
-          .select()
-          .from(commissions)
-          .where(eq(commissions.id, commissionId))
-          .limit(1);
+        const [comm] = commissionId
+          ? await db
+              .select()
+              .from(commissions)
+              .where(eq(commissions.id, commissionId))
+              .limit(1)
+          : [];
 
         const pendingId = `pending_${emailH.slice(0, 16)}`;
         const [pendingPub] = await db
@@ -723,7 +744,9 @@ async function startServer() {
             fullName: defaultName,
             roleLabel,
             commissionId,
-            commissionName: comm?.name || commissionId,
+            commissionName: commissionId ? comm?.name || commissionId : 'Sin comisión',
+            affiliationType,
+            affiliationName,
             bio: isBootstrap
               ? 'Secretario del Consejo Municipal de Juventudes de Flandes, Tolima.'
               : pendingPub?.bio || '',
@@ -744,6 +767,8 @@ async function startServer() {
           accessTier: finalUser.accessTier,
           roleLabel: finalUser.roleLabel,
           commissionId: finalUser.commissionId,
+          affiliationType: normalizeAffiliationType(allowRow?.affiliationType),
+          affiliationName: String(allowRow?.affiliationName || '').trim().slice(0, 120),
           accountProvisioned: true,
           mustChangePassword: false,
         })
@@ -1017,7 +1042,15 @@ async function startServer() {
   // ==========================================
   app.post('/api/councilors', requireAuth, requireLeader, async (req: AuthedRequest, res) => {
     try {
-      const { fullName, email, phone, roleLabel, commissionId } = req.body || {};
+      const {
+        fullName,
+        email,
+        phone,
+        roleLabel,
+        commissionId,
+        affiliationType,
+        affiliationName,
+      } = req.body || {};
       const cleanEmail = String(email || '').trim().toLowerCase();
       const cleanName = String(fullName || '').trim();
       if (!cleanEmail || !cleanName) {
@@ -1031,11 +1064,19 @@ async function startServer() {
         ? roleLabel
         : 'Consejero';
       const accessTier = roleLabelToAccessTier(validRole);
-      const commId = String(commissionId || 'comision-1');
+      const commId = typeof commissionId === 'string' ? commissionId.trim() : '';
+      const safeAffType = normalizeAffiliationType(affiliationType);
+      const safeAffName =
+        safeAffType === 'independiente' && !String(affiliationName || '').trim()
+          ? 'Lista Independiente'
+          : String(affiliationName || '').trim().slice(0, 120);
       const emailH = hashEmail(cleanEmail);
       const sec = await getSecurityRecord();
 
-      const [comm] = await db.select().from(commissions).where(eq(commissions.id, commId)).limit(1);
+      const [comm] = commId
+        ? await db.select().from(commissions).where(eq(commissions.id, commId)).limit(1)
+        : [];
+      const commName = commId ? comm?.name || commId : 'Sin comisión';
       const [existingUser] = await db.select().from(users).where(eq(users.email, cleanEmail)).limit(1);
 
       const uid = existingUser?.uid || newId('uid');
@@ -1049,6 +1090,8 @@ async function startServer() {
           accessTier,
           roleLabel: validRole,
           commissionId: commId,
+          affiliationType: safeAffType,
+          affiliationName: safeAffName,
           accountProvisioned: true,
           mustChangePassword: true,
         })
@@ -1059,6 +1102,8 @@ async function startServer() {
             accessTier,
             roleLabel: validRole,
             commissionId: commId,
+            affiliationType: safeAffType,
+            affiliationName: safeAffName,
             accountProvisioned: true,
             updatedAt: new Date(),
           },
@@ -1098,7 +1143,9 @@ async function startServer() {
           fullName: cleanName,
           roleLabel: validRole,
           commissionId: commId,
-          commissionName: comm?.name || commId,
+          commissionName: commName,
+          affiliationType: safeAffType,
+          affiliationName: safeAffName,
           bio: '',
           photoUrl: '',
           storagePath: '',
@@ -1111,7 +1158,9 @@ async function startServer() {
             fullName: cleanName,
             roleLabel: validRole,
             commissionId: commId,
-            commissionName: comm?.name || commId,
+            commissionName: commName,
+            affiliationType: safeAffType,
+            affiliationName: safeAffName,
             active: true,
             updatedAt: new Date(),
           },
@@ -1147,8 +1196,12 @@ async function startServer() {
           ? row.roleLabel
           : 'Consejero';
         const accessTier = roleLabelToAccessTier(validRole);
-        const commId = String(row.commissionId || 'comision-1');
-        const commName = allComms.find((c) => c.id === commId)?.name || commId;
+        const commId = typeof row.commissionId === 'string' ? row.commissionId.trim() : '';
+        const commName = commId
+          ? allComms.find((c) => c.id === commId)?.name || commId
+          : 'Sin comisión';
+        const safeAffType = normalizeAffiliationType(row.affiliationType);
+        const safeAffName = String(row.affiliationName || '').trim().slice(0, 120);
         const emailH = hashEmail(cleanEmail);
 
         const [existingUser] = await db
@@ -1167,6 +1220,8 @@ async function startServer() {
             accessTier,
             roleLabel: validRole,
             commissionId: commId,
+            affiliationType: safeAffType,
+            affiliationName: safeAffName,
             accountProvisioned: true,
             mustChangePassword: true,
           })
@@ -1177,6 +1232,8 @@ async function startServer() {
               accessTier,
               roleLabel: validRole,
               commissionId: commId,
+              affiliationType: safeAffType,
+              affiliationName: safeAffName,
               accountProvisioned: true,
               updatedAt: new Date(),
             },
@@ -1194,6 +1251,18 @@ async function startServer() {
             active: true,
             mustChangePassword: true,
           });
+        } else {
+          await db
+            .update(users)
+            .set({
+              phone: String(row.phone || existingUser.phone).trim(),
+              accessTier,
+              roleLabel: validRole,
+              commissionId: commId,
+              active: true,
+              updatedAt: new Date(),
+            })
+            .where(eq(users.uid, uid));
         }
 
         await db
@@ -1205,6 +1274,8 @@ async function startServer() {
             roleLabel: validRole,
             commissionId: commId,
             commissionName: commName,
+            affiliationType: safeAffType,
+            affiliationName: safeAffName,
             bio: '',
             photoUrl: '',
             storagePath: '',
@@ -1218,6 +1289,8 @@ async function startServer() {
               roleLabel: validRole,
               commissionId: commId,
               commissionName: commName,
+              affiliationType: safeAffType,
+              affiliationName: safeAffName,
               active: true,
               updatedAt: new Date(),
             },
@@ -1253,6 +1326,8 @@ async function startServer() {
 
       const pubPatch: Record<string, unknown> = { updatedAt: new Date() };
       const userPatch: Record<string, unknown> = { updatedAt: new Date() };
+      const allowPatch: Record<string, unknown> = { updatedAt: new Date() };
+      let shouldUpdateAllow = false;
 
       if (typeof body.fullName === 'string' && body.fullName.trim()) {
         pubPatch.fullName = body.fullName.trim().slice(0, 120);
@@ -1266,6 +1341,19 @@ async function startServer() {
       if (typeof body.storagePath === 'string') pubPatch.storagePath = body.storagePath.slice(0, 512);
       if (typeof body.phone === 'string') userPatch.phone = body.phone.trim().slice(0, 40);
 
+      if (typeof body.affiliationType === 'string') {
+        const safeAff = normalizeAffiliationType(body.affiliationType);
+        pubPatch.affiliationType = safeAff;
+        allowPatch.affiliationType = safeAff;
+        shouldUpdateAllow = true;
+      }
+      if (typeof body.affiliationName === 'string') {
+        const cleanAffName = body.affiliationName.trim().slice(0, 120);
+        pubPatch.affiliationName = cleanAffName;
+        allowPatch.affiliationName = cleanAffName;
+        shouldUpdateAllow = true;
+      }
+
       if (isLeader) {
         if (
           typeof body.roleLabel === 'string' &&
@@ -1276,20 +1364,30 @@ async function startServer() {
           pubPatch.roleLabel = validRole;
           userPatch.roleLabel = validRole;
           userPatch.accessTier = tier;
+          allowPatch.roleLabel = validRole;
+          allowPatch.accessTier = tier;
+          shouldUpdateAllow = true;
         }
-        if (typeof body.commissionId === 'string' && body.commissionId) {
-          const [comm] = await db
-            .select()
-            .from(commissions)
-            .where(eq(commissions.id, body.commissionId))
-            .limit(1);
-          pubPatch.commissionId = body.commissionId;
-          pubPatch.commissionName = comm?.name || body.commissionId;
-          userPatch.commissionId = body.commissionId;
+        if (typeof body.commissionId === 'string') {
+          const cleanCommId = body.commissionId.trim();
+          const [comm] = cleanCommId
+            ? await db
+                .select()
+                .from(commissions)
+                .where(eq(commissions.id, cleanCommId))
+                .limit(1)
+            : [];
+          pubPatch.commissionId = cleanCommId;
+          pubPatch.commissionName = cleanCommId ? comm?.name || cleanCommId : 'Sin comisión';
+          userPatch.commissionId = cleanCommId;
+          allowPatch.commissionId = cleanCommId;
+          shouldUpdateAllow = true;
         }
         if (typeof body.active === 'boolean') {
           pubPatch.active = body.active;
           userPatch.active = body.active;
+          allowPatch.active = body.active;
+          shouldUpdateAllow = true;
         }
       }
 
@@ -1307,16 +1405,10 @@ async function startServer() {
         .limit(1);
       if (existingUser) {
         await db.update(users).set(userPatch).where(eq(users.uid, targetUid));
-        if (isLeader && (typeof body.active === 'boolean' || body.roleLabel || body.commissionId)) {
+        if (shouldUpdateAllow) {
           await db
             .update(allowedAccounts)
-            .set({
-              active: typeof body.active === 'boolean' ? body.active : existingUser.active,
-              roleLabel: (userPatch.roleLabel as string) || existingUser.roleLabel,
-              accessTier: (userPatch.accessTier as string) || existingUser.accessTier,
-              commissionId: (userPatch.commissionId as string) || existingUser.commissionId,
-              updatedAt: new Date(),
-            })
+            .set(allowPatch)
             .where(eq(allowedAccounts.emailHash, hashEmail(existingUser.email)));
         }
       }
@@ -1477,10 +1569,30 @@ async function startServer() {
       if (isLeader) {
         if (typeof body.name === 'string' && body.name.trim()) patch.name = body.name.trim().slice(0, 120);
         if (typeof body.coordinatorName === 'string') {
-          patch.coordinatorName = body.coordinatorName.trim().slice(0, 120);
+          patch.coordinatorName = body.coordinatorName.trim().slice(0, 120) || 'Por asignar';
         }
         if (typeof body.coordinatorUid === 'string') {
           patch.coordinatorUid = body.coordinatorUid.trim().slice(0, 128);
+        }
+        if (typeof body.accentColor === 'string' && /^#[0-9a-fA-F]{6}$/.test(body.accentColor.trim())) {
+          patch.accentColor = body.accentColor.trim();
+        }
+        if (
+          typeof body.iconName === 'string' &&
+          [
+            'BookOpen',
+            'Briefcase',
+            'HeartPulse',
+            'Leaf',
+            'Scale',
+            'Users',
+            'Sparkles',
+            'Shield',
+            'Megaphone',
+            'Globe',
+          ].includes(body.iconName)
+        ) {
+          patch.iconName = body.iconName;
         }
       }
 
@@ -1519,13 +1631,26 @@ async function startServer() {
   app.patch('/api/commission-tasks/:id', requireAuth, async (req: AuthedRequest, res) => {
     try {
       const id = String(req.params.id);
+      const [task] = await db
+        .select()
+        .from(commissionTasks)
+        .where(eq(commissionTasks.id, id))
+        .limit(1);
+      if (!task) {
+        res.status(404).json({ error: 'Tarea no encontrada.' });
+        return;
+      }
       const body = req.body || {};
       const patch: Record<string, unknown> = { updatedAt: new Date() };
       if (['pendiente', 'en_curso', 'hecha'].includes(body.status)) patch.status = body.status;
-      if (typeof body.assignedName === 'string') patch.assignedName = body.assignedName.slice(0, 120);
-      if (typeof body.dueDate === 'string') patch.dueDate = body.dueDate.slice(0, 40);
-      if (isLeadershipTier(req.authUser!.accessTier) && typeof body.title === 'string') {
-        patch.title = body.title.slice(0, 180);
+      if (typeof body.assignedName === 'string') patch.assignedName = body.assignedName.trim().slice(0, 120);
+      if (typeof body.dueDate === 'string') patch.dueDate = body.dueDate.trim().slice(0, 40);
+      if (
+        (isLeadershipTier(req.authUser!.accessTier) || task.createdByUid === req.authUser!.uid) &&
+        typeof body.title === 'string' &&
+        body.title.trim()
+      ) {
+        patch.title = body.title.trim().slice(0, 180);
       }
       await db.update(commissionTasks).set(patch).where(eq(commissionTasks.id, id));
       res.json({ ok: true });
@@ -1618,11 +1743,15 @@ async function startServer() {
       }
       const body = req.body || {};
       const patch: Record<string, unknown> = { updatedAt: new Date() };
-      if (typeof body.title === 'string') patch.title = body.title.slice(0, 180);
-      if (typeof body.summary === 'string') patch.summary = body.summary.slice(0, 400);
-      if (typeof body.content === 'string') patch.content = body.content.slice(0, 5000);
+      if (typeof body.title === 'string' && body.title.trim()) {
+        patch.title = body.title.trim().slice(0, 180);
+      }
+      if (body.type === 'noticia' || body.type === 'evento') patch.type = body.type;
+      if (typeof body.summary === 'string') patch.summary = body.summary.trim().slice(0, 400);
+      if (typeof body.content === 'string') patch.content = body.content.trim().slice(0, 5000);
       if (typeof body.coverUrl === 'string' && isSafeUrl(body.coverUrl)) patch.coverUrl = body.coverUrl;
       if (typeof body.storagePath === 'string') patch.storagePath = body.storagePath.slice(0, 512);
+      if (typeof body.commissionId === 'string') patch.commissionId = body.commissionId.trim();
       if (typeof body.eventDate === 'string') patch.eventDate = body.eventDate.slice(0, 40);
       if (typeof body.location === 'string') patch.location = body.location.slice(0, 160);
       if (typeof body.status === 'string' && ['borrador', 'pendiente', 'publicado'].includes(body.status)) {
@@ -1675,7 +1804,7 @@ async function startServer() {
         thumbnailUrl: isSafeUrl(thumbnailUrl) ? String(thumbnailUrl || '') : '',
         storagePath: String(storagePath || '').slice(0, 512),
         thumbnailStoragePath: String(thumbnailStoragePath || '').slice(0, 512),
-        commissionId: String(commissionId || 'comision-1'),
+        commissionId: typeof commissionId === 'string' ? commissionId.trim() : '',
         authorUid: req.authUser!.uid,
         authorName: req.authUser!.fullName,
         status: status === 'archivado' ? 'archivado' : 'publicado',
@@ -1701,7 +1830,24 @@ async function startServer() {
       }
       const body = req.body || {};
       const patch: Record<string, unknown> = {};
-      if (typeof body.title === 'string') patch.title = body.title.slice(0, 160);
+      if (typeof body.title === 'string' && body.title.trim()) {
+        patch.title = body.title.trim().slice(0, 160);
+      }
+      if (typeof body.description === 'string') {
+        patch.description = body.description.trim().slice(0, 400);
+      }
+      if (typeof body.commissionId === 'string') {
+        patch.commissionId = body.commissionId.trim();
+      }
+      if (typeof body.url === 'string' && body.url.trim() && isSafeUrl(body.url)) {
+        patch.url = body.url.trim();
+      }
+      if (body.mediaType === 'image' || body.mediaType === 'video') {
+        patch.mediaType = body.mediaType;
+      }
+      if (['upload', 'youtube', 'vimeo'].includes(body.videoSource)) {
+        patch.videoSource = body.videoSource;
+      }
       if (typeof body.status === 'string' && ['publicado', 'archivado'].includes(body.status)) {
         patch.status = body.status;
       }
@@ -1766,7 +1912,7 @@ async function startServer() {
         mimeType: String(mimeType || 'application/octet-stream').slice(0, 120),
         fileSize: Number(fileSize || 0),
         visibility: isLeader && visibility === 'publico' ? 'publico' : 'privado',
-        commissionId: String(commissionId || 'comision-1'),
+        commissionId: typeof commissionId === 'string' ? commissionId.trim() : '',
         uploadedByUid: req.authUser!.uid,
         uploadedByName: req.authUser!.fullName,
         approvedByPresidente: isLeader && req.authUser!.roleLabel === 'Presidente',
@@ -1789,8 +1935,21 @@ async function startServer() {
       if (body.visibility === 'publico' || body.visibility === 'privado') {
         patch.visibility = body.visibility;
       }
-      if (typeof body.title === 'string') patch.title = body.title.slice(0, 180);
-      if (typeof body.version === 'string') patch.version = body.version.slice(0, 24);
+      if (typeof body.title === 'string' && body.title.trim()) {
+        patch.title = body.title.trim().slice(0, 180);
+      }
+      if (typeof body.folder === 'string' && body.folder.trim()) {
+        patch.folder = body.folder.trim().slice(0, 80);
+      }
+      if (typeof body.category === 'string' && body.category.trim()) {
+        patch.category = body.category.trim().slice(0, 60);
+      }
+      if (typeof body.version === 'string' && body.version.trim()) {
+        patch.version = body.version.trim().slice(0, 24);
+      }
+      if (typeof body.commissionId === 'string') {
+        patch.commissionId = body.commissionId.trim();
+      }
       await db.update(documents).set(patch).where(eq(documents.id, id));
       res.json({ ok: true });
     } catch (error) {
@@ -1841,8 +2000,26 @@ async function startServer() {
   app.patch('/api/calls-surveys/:id', requireAuth, requireLeader, async (req, res) => {
     try {
       const id = String(req.params.id);
-      const status = req.body?.status === 'cerrada' ? 'cerrada' : 'abierta';
-      await db.update(callsSurveys).set({ status, updatedAt: new Date() }).where(eq(callsSurveys.id, id));
+      const body = req.body || {};
+      const patch: Record<string, unknown> = { updatedAt: new Date() };
+      if (body.status === 'cerrada' || body.status === 'abierta') patch.status = body.status;
+      if (typeof body.title === 'string' && body.title.trim()) {
+        patch.title = body.title.trim().slice(0, 180);
+      }
+      if (body.kind === 'convocatoria' || body.kind === 'encuesta') patch.kind = body.kind;
+      if (typeof body.description === 'string') {
+        patch.description = body.description.trim().slice(0, 1200);
+      }
+      if (typeof body.deadline === 'string' && body.deadline.trim()) {
+        patch.deadline = body.deadline.trim().slice(0, 40);
+      }
+      if (Array.isArray(body.options)) {
+        patch.options = body.options
+          .map((o: unknown) => String(o).trim())
+          .filter(Boolean)
+          .slice(0, 10);
+      }
+      await db.update(callsSurveys).set(patch).where(eq(callsSurveys.id, id));
       res.json({ ok: true });
     } catch (error) {
       console.error('Call/survey update failed:', error);
@@ -1937,6 +2114,23 @@ async function startServer() {
       const body = req.body || {};
       const patch: Record<string, unknown> = { updatedAt: new Date() };
       if (['programada', 'en_curso', 'finalizada'].includes(body.status)) patch.status = body.status;
+      if (typeof body.title === 'string' && body.title.trim()) {
+        patch.title = body.title.trim().slice(0, 180);
+      }
+      if (typeof body.sessionType === 'string' && body.sessionType.trim()) {
+        patch.sessionType = body.sessionType.trim().slice(0, 64);
+      }
+      if (typeof body.dateIso === 'string' && body.dateIso.trim()) {
+        patch.dateIso = body.dateIso.trim().slice(0, 40);
+      }
+      if (typeof body.timeRange === 'string') patch.timeRange = body.timeRange.trim().slice(0, 64);
+      if (typeof body.location === 'string' && body.location.trim()) {
+        patch.location = body.location.trim().slice(0, 160);
+      }
+      if (typeof body.quorumRequired === 'number' || typeof body.quorumRequired === 'string') {
+        const q = Number(body.quorumRequired);
+        if (!Number.isNaN(q) && q >= 1) patch.quorumRequired = Math.round(q);
+      }
       if (typeof body.actaUrl === 'string' && isSafeUrl(body.actaUrl)) patch.actaUrl = body.actaUrl;
       if (typeof body.agenda === 'string') patch.agenda = body.agenda.slice(0, 2000);
       await db.update(sessions).set(patch).where(eq(sessions.id, id));
@@ -2090,8 +2284,43 @@ async function startServer() {
   app.patch('/api/votes/:id', requireAuth, requireLeader, async (req, res) => {
     try {
       const id = String(req.params.id);
-      const status = req.body?.status === 'cerrada' ? 'cerrada' : 'abierta';
-      await db.update(votes).set({ status, updatedAt: new Date() }).where(eq(votes.id, id));
+      const [existing] = await db.select().from(votes).where(eq(votes.id, id)).limit(1);
+      if (!existing) {
+        res.status(404).json({ error: 'Votación no encontrada.' });
+        return;
+      }
+      const body = req.body || {};
+      const patch: Record<string, unknown> = { updatedAt: new Date() };
+      if (body.status === 'cerrada' || body.status === 'abierta') patch.status = body.status;
+      if (typeof body.title === 'string' && body.title.trim()) {
+        patch.title = body.title.trim().slice(0, 180);
+      }
+      if (typeof body.description === 'string') {
+        patch.description = body.description.trim().slice(0, 1000);
+      }
+      if (body.voteMode === 'nominal' || body.voteMode === 'secreto') {
+        if (existing.voterUids.length === 0) {
+          patch.voteMode = body.voteMode;
+        }
+      }
+      if (typeof body.quorumRequired === 'number' || typeof body.quorumRequired === 'string') {
+        const q = Number(body.quorumRequired);
+        if (!Number.isNaN(q) && q >= 1) patch.quorumRequired = Math.round(q);
+      }
+      if (typeof body.deadline === 'string') patch.deadline = body.deadline.slice(0, 40);
+      if (Array.isArray(body.options) && existing.voterUids.length === 0) {
+        const cleanOpts = body.options
+          .map((o: unknown) => String(o).trim())
+          .filter(Boolean)
+          .slice(0, 8);
+        if (cleanOpts.length >= 2) {
+          const tallies: Record<string, number> = {};
+          for (const opt of cleanOpts) tallies[opt] = 0;
+          patch.options = cleanOpts;
+          patch.tallies = tallies;
+        }
+      }
+      await db.update(votes).set(patch).where(eq(votes.id, id));
       res.json({ ok: true });
     } catch (error) {
       console.error('Vote status update failed:', error);
@@ -2124,7 +2353,7 @@ async function startServer() {
         description: String(description || '').slice(0, 800),
         responsibleUid: String(responsibleUid),
         responsibleName: String(responsibleName).slice(0, 120),
-        commissionId: String(commissionId || 'comision-1'),
+        commissionId: typeof commissionId === 'string' ? commissionId.trim() : '',
         dueDate: String(dueDate || '').slice(0, 40),
         status: 'pendiente',
         progress: 0,
@@ -2155,6 +2384,26 @@ async function startServer() {
       if (['pendiente', 'en_progreso', 'cumplido'].includes(body.status)) patch.status = body.status;
       if (typeof body.progress === 'number') {
         patch.progress = Math.max(0, Math.min(100, Math.round(body.progress)));
+      }
+      if (isLeader) {
+        if (typeof body.title === 'string' && body.title.trim()) {
+          patch.title = body.title.trim().slice(0, 180);
+        }
+        if (typeof body.description === 'string') {
+          patch.description = body.description.trim().slice(0, 800);
+        }
+        if (typeof body.responsibleUid === 'string' && body.responsibleUid.trim()) {
+          patch.responsibleUid = body.responsibleUid.trim();
+        }
+        if (typeof body.responsibleName === 'string' && body.responsibleName.trim()) {
+          patch.responsibleName = body.responsibleName.trim().slice(0, 120);
+        }
+        if (typeof body.commissionId === 'string') {
+          patch.commissionId = body.commissionId.trim();
+        }
+        if (typeof body.dueDate === 'string') {
+          patch.dueDate = body.dueDate.trim().slice(0, 40);
+        }
       }
       await db.update(commitments).set(patch).where(eq(commitments.id, id));
       res.json({ ok: true });
@@ -2190,7 +2439,8 @@ async function startServer() {
         title: String(title).trim().slice(0, 160),
         description: String(description).trim().slice(0, 1500),
         category: String(category || 'Iniciativa').slice(0, 64),
-        commissionId: String(commissionId || req.authUser!.commissionId || 'comision-1'),
+        commissionId:
+          typeof commissionId === 'string' ? commissionId.trim() : (req.authUser!.commissionId ?? ''),
         authorUid: req.authUser!.uid,
         authorName: req.authUser!.fullName,
         status: 'nueva',
@@ -2226,13 +2476,37 @@ async function startServer() {
     }
   });
 
-  app.patch('/api/ideas/:id', requireAuth, requireLeader, async (req, res) => {
+  app.patch('/api/ideas/:id', requireAuth, async (req: AuthedRequest, res) => {
     try {
       const id = String(req.params.id);
-      const status = ['nueva', 'en_revision', 'aprobada'].includes(req.body?.status)
-        ? req.body.status
-        : 'nueva';
-      await db.update(ideasInbox).set({ status, updatedAt: new Date() }).where(eq(ideasInbox.id, id));
+      const [idea] = await db.select().from(ideasInbox).where(eq(ideasInbox.id, id)).limit(1);
+      if (!idea) {
+        res.status(404).json({ error: 'Propuesta no encontrada.' });
+        return;
+      }
+      const isLeader = isLeadershipTier(req.authUser!.accessTier);
+      if (!isLeader && idea.authorUid !== req.authUser!.uid) {
+        res.status(403).json({ error: 'Sin permisos para editar esta propuesta.' });
+        return;
+      }
+      const body = req.body || {};
+      const patch: Record<string, unknown> = { updatedAt: new Date() };
+      if (typeof body.title === 'string' && body.title.trim()) {
+        patch.title = body.title.trim().slice(0, 160);
+      }
+      if (typeof body.description === 'string' && body.description.trim()) {
+        patch.description = body.description.trim().slice(0, 1500);
+      }
+      if (typeof body.category === 'string' && body.category.trim()) {
+        patch.category = body.category.trim().slice(0, 64);
+      }
+      if (typeof body.commissionId === 'string') {
+        patch.commissionId = body.commissionId.trim();
+      }
+      if (isLeader && ['nueva', 'en_revision', 'aprobada'].includes(body.status)) {
+        patch.status = body.status;
+      }
+      await db.update(ideasInbox).set(patch).where(eq(ideasInbox.id, id));
       res.json({ ok: true });
     } catch (error) {
       console.error('Idea update failed:', error);
@@ -2284,6 +2558,37 @@ async function startServer() {
     }
   });
 
+  app.patch('/api/templates/:id', requireAuth, requireLeader, async (req: AuthedRequest, res) => {
+    try {
+      const id = String(req.params.id);
+      const body = req.body || {};
+      const patch: Record<string, unknown> = {
+        updatedByUid: req.authUser!.uid,
+        updatedAt: new Date(),
+      };
+      if (typeof body.title === 'string' && body.title.trim()) {
+        patch.title = body.title.trim().slice(0, 160);
+      }
+      if (typeof body.category === 'string' && body.category.trim()) {
+        patch.category = body.category.trim().slice(0, 64);
+      }
+      if (typeof body.headerText === 'string') {
+        patch.headerText = body.headerText.slice(0, 500);
+      }
+      if (typeof body.bodyTemplate === 'string' && body.bodyTemplate.trim()) {
+        patch.bodyTemplate = body.bodyTemplate.slice(0, 5000);
+      }
+      if (typeof body.signatoryRole === 'string' && body.signatoryRole.trim()) {
+        patch.signatoryRole = body.signatoryRole.trim().slice(0, 64);
+      }
+      await db.update(letterTemplates).set(patch).where(eq(letterTemplates.id, id));
+      res.json({ ok: true });
+    } catch (error) {
+      console.error('Template update failed:', error);
+      res.status(500).json({ error: 'No fue posible actualizar la plantilla.' });
+    }
+  });
+
   app.delete('/api/templates/:id', requireAuth, requireLeader, async (req, res) => {
     try {
       await db.delete(letterTemplates).where(eq(letterTemplates.id, String(req.params.id)));
@@ -2297,8 +2602,8 @@ async function startServer() {
   app.post('/api/work-plans', requireAuth, requireLeader, async (req: AuthedRequest, res) => {
     try {
       const { title, axis, commissionId, quarter, status, progress, evidenceCount } = req.body || {};
-      if (!title || !axis || !commissionId) {
-        res.status(400).json({ error: 'Completa título, eje y comisión.' });
+      if (!title || !axis) {
+        res.status(400).json({ error: 'Completa título y eje.' });
         return;
       }
       const id = newId('plan');
@@ -2306,7 +2611,7 @@ async function startServer() {
         id,
         title: String(title).trim().slice(0, 180),
         axis: String(axis).trim().slice(0, 100),
-        commissionId: String(commissionId),
+        commissionId: typeof commissionId === 'string' ? commissionId.trim() : '',
         quarter: String(quarter || 'Q1-2026').slice(0, 24),
         status: ['planeado', 'ejecucion', 'completado'].includes(status) ? status : 'planeado',
         progress: Math.max(0, Math.min(100, Number(progress || 0))),
@@ -2334,11 +2639,22 @@ async function startServer() {
       if (typeof body.evidenceCount === 'number') {
         patch.evidenceCount = Math.max(0, Math.round(body.evidenceCount));
       }
-      if (
-        isLeadershipTier(req.authUser!.accessTier) &&
-        ['planeado', 'ejecucion', 'completado'].includes(body.status)
-      ) {
-        patch.status = body.status;
+      if (isLeadershipTier(req.authUser!.accessTier)) {
+        if (['planeado', 'ejecucion', 'completado'].includes(body.status)) {
+          patch.status = body.status;
+        }
+        if (typeof body.title === 'string' && body.title.trim()) {
+          patch.title = body.title.trim().slice(0, 180);
+        }
+        if (typeof body.axis === 'string' && body.axis.trim()) {
+          patch.axis = body.axis.trim().slice(0, 100);
+        }
+        if (typeof body.commissionId === 'string') {
+          patch.commissionId = body.commissionId.trim();
+        }
+        if (typeof body.quarter === 'string' && body.quarter.trim()) {
+          patch.quarter = body.quarter.trim().slice(0, 24);
+        }
       }
       await db.update(workPlans).set(patch).where(eq(workPlans.id, id));
       res.json({ ok: true });

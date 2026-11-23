@@ -1,14 +1,17 @@
 import React, { useMemo, useState } from 'react';
 import {
+  Check,
   CheckCircle2,
   Circle,
   Clock,
+  Edit3,
   FileText,
   FolderKanban,
   Plus,
   Save,
   Trash2,
   Users,
+  X,
 } from 'lucide-react';
 import { apiRequest } from '../../lib/apiClient';
 import { isLeadershipTier } from '../../lib/security';
@@ -69,6 +72,8 @@ export function CommissionsModule({
   const [editDesc, setEditDesc] = useState('');
   const [editWorkPlan, setEditWorkPlan] = useState('');
   const [editCoordUid, setEditCoordUid] = useState('');
+  const [editAccentColor, setEditAccentColor] = useState('#2563EB');
+  const [editIconName, setEditIconName] = useState('BookOpen');
   const [editingComm, setEditingComm] = useState(false);
 
   // Tareas de comisión
@@ -76,6 +81,13 @@ export function CommissionsModule({
   const [taskAssigned, setTaskAssigned] = useState('');
   const [taskDue, setTaskDue] = useState('');
   const [addingTask, setAddingTask] = useState(false);
+
+  // Edición de tarea
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [editTaskTitle, setEditTaskTitle] = useState('');
+  const [editTaskAssigned, setEditTaskAssigned] = useState('');
+  const [editTaskDue, setEditTaskDue] = useState('');
+  const [editTaskStatus, setEditTaskStatus] = useState<TaskStatus>('pendiente');
 
   // Galería y vista previa
   const [evidTitle, setEvidTitle] = useState('');
@@ -105,6 +117,8 @@ export function CommissionsModule({
     setEditDesc(currentComm.description);
     setEditWorkPlan(currentComm.workPlanSummary || '');
     setEditCoordUid(currentComm.coordinatorUid || '');
+    setEditAccentColor(currentComm.accentColor || '#2563EB');
+    setEditIconName(currentComm.iconName || 'BookOpen');
     setEditingComm(true);
   };
 
@@ -118,9 +132,14 @@ export function CommissionsModule({
       };
       if (isLeader) {
         payload.name = editName.trim() || currentComm.name;
+        payload.accentColor = editAccentColor;
+        payload.iconName = editIconName;
         if (coord) {
           payload.coordinatorUid = coord.uid;
           payload.coordinatorName = coord.fullName;
+        } else {
+          payload.coordinatorUid = '';
+          payload.coordinatorName = 'Por asignar';
         }
       }
       await apiRequest(`/api/commissions/${encodeURIComponent(currentComm.id)}`, {
@@ -159,6 +178,24 @@ export function CommissionsModule({
       showToast('Portada de comisión actualizada', 'success');
     } catch {
       showToast('Error al guardar la portada', 'error');
+    }
+  };
+
+  const handleRemoveCover = async () => {
+    try {
+      if (currentComm.storagePath) {
+        await deleteStorageFile(currentComm.storagePath, currentComm.coverUrl);
+      }
+      await apiRequest(`/api/commissions/${encodeURIComponent(currentComm.id)}`, {
+        method: 'PATCH',
+        body: {
+          coverUrl: '',
+          storagePath: '',
+        },
+      });
+      showToast('Portada eliminada', 'info');
+    } catch {
+      showToast('No se pudo quitar la portada', 'error');
     }
   };
 
@@ -205,6 +242,33 @@ export function CommissionsModule({
     }
   };
 
+  const startEditTask = (task: CommissionTask) => {
+    setEditingTaskId(task.id);
+    setEditTaskTitle(task.title);
+    setEditTaskAssigned(task.assignedName || '');
+    setEditTaskDue(task.dueDate || '');
+    setEditTaskStatus(task.status);
+  };
+
+  const handleSaveEditTask = async (task: CommissionTask) => {
+    if (!editTaskTitle.trim()) return;
+    try {
+      await apiRequest(`/api/commission-tasks/${encodeURIComponent(task.id)}`, {
+        method: 'PATCH',
+        body: {
+          title: editTaskTitle.trim(),
+          assignedName: editTaskAssigned.trim(),
+          dueDate: editTaskDue,
+          status: editTaskStatus,
+        },
+      });
+      setEditingTaskId(null);
+      showToast('Tarea actualizada', 'success');
+    } catch {
+      showToast('No se pudo actualizar la tarea', 'error');
+    }
+  };
+
   const handleDeleteTask = async (task: CommissionTask) => {
     try {
       await apiRequest(`/api/commission-tasks/${encodeURIComponent(task.id)}`, {
@@ -217,32 +281,37 @@ export function CommissionsModule({
   };
 
   const handleEvidenceUploaded = async (files: UploadedFileInfo[]) => {
-    for (const file of files) {
-      await apiRequest('/api/gallery', {
-        method: 'POST',
-        body: {
-          title: evidTitle.trim() || file.fileName.replace(/\.[^.]+$/, ''),
-          description: `Evidencia de ${currentComm.name}`,
-          mediaType: file.category === 'video' ? 'video' : 'image',
-          videoSource: file.videoSource || 'upload',
-          url: file.url,
-          thumbnailUrl: file.thumbnailUrl || '',
-          storagePath: file.storagePath || '',
-          thumbnailStoragePath: file.thumbnailStoragePath || '',
-          commissionId: currentComm.id,
-          status: 'publicado',
-        },
+    try {
+      for (const file of files) {
+        await apiRequest('/api/gallery', {
+          method: 'POST',
+          body: {
+            title: evidTitle.trim() || file.fileName.replace(/\.[^.]+$/, ''),
+            description: `Evidencia de ${currentComm.name}`,
+            mediaType: file.category === 'video' ? 'video' : 'image',
+            videoSource: file.videoSource || 'upload',
+            url: file.url,
+            thumbnailUrl: file.thumbnailUrl || '',
+            storagePath: file.storagePath || '',
+            thumbnailStoragePath: file.thumbnailStoragePath || '',
+            commissionId: currentComm.id,
+            status: 'publicado',
+          },
+        });
+      }
+      setEvidTitle('');
+      await recordAudit({
+        uid,
+        actorName,
+        actorRoleLabel,
+        action: 'Subió evidencia multimedia de comisión',
+        module: 'Comisiones',
+        targetTitle: currentComm.name,
       });
+      showToast('Evidencia guardada en la galería', 'success');
+    } catch {
+      showToast('No se pudo registrar la evidencia en el servidor', 'error');
     }
-    setEvidTitle('');
-    await recordAudit({
-      uid,
-      actorName,
-      actorRoleLabel,
-      action: 'Subió evidencia multimedia de comisión',
-      module: 'Comisiones',
-      targetTitle: currentComm.name,
-    });
   };
 
   const handleDeleteGalleryItem = async (item: GalleryItem) => {
@@ -386,6 +455,34 @@ export function CommissionsModule({
                           ))}
                       </select>
                     </div>
+                    <div>
+                      <label className="block text-xs font-semibold mb-1">Ícono institucional</label>
+                      <select
+                        value={editIconName}
+                        onChange={(e) => setEditIconName(e.target.value)}
+                        className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm"
+                      >
+                        <option value="BookOpen">Educación / Libro</option>
+                        <option value="Briefcase">Empleo / Emprendimiento</option>
+                        <option value="HeartPulse">Salud y Bienestar</option>
+                        <option value="Leaf">Ambiente y Territorio</option>
+                        <option value="Scale">Derechos y Control Social</option>
+                        <option value="Users">Juventudes y Comunidad</option>
+                        <option value="Sparkles">Cultura y Creatividad</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold mb-1">Color distintivo</label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="color"
+                          value={editAccentColor}
+                          onChange={(e) => setEditAccentColor(e.target.value)}
+                          className="h-9 w-12 rounded-lg border border-slate-200 dark:border-slate-700 cursor-pointer"
+                        />
+                        <span className="font-mono-num text-xs text-slate-500">{editAccentColor}</span>
+                      </div>
+                    </div>
                   </>
                 )}
               </div>
@@ -411,12 +508,23 @@ export function CommissionsModule({
                 />
               </div>
 
-              <MediaUploader
-                storageFolder={`commissions/${currentComm.id}`}
-                imagePreset="cover"
-                label="Cambiar portada de la comisión"
-                onUploaded={handleCoverUploaded}
-              />
+              <div className="space-y-2">
+                <MediaUploader
+                  storageFolder={`commissions/${currentComm.id}`}
+                  imagePreset="cover"
+                  label="Cambiar portada de la comisión"
+                  onUploaded={handleCoverUploaded}
+                />
+                {currentComm.coverUrl && (
+                  <button
+                    type="button"
+                    onClick={handleRemoveCover}
+                    className="inline-flex items-center gap-1 rounded-xl border border-rose-300 dark:border-rose-800 px-3 py-1.5 text-xs font-semibold text-rose-600 cursor-pointer"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" /> Quitar imagen de portada
+                  </button>
+                )}
+              </div>
 
               <div className="flex gap-2">
                 <button
@@ -482,11 +590,54 @@ export function CommissionsModule({
             </p>
           ) : (
             <div className="space-y-2">
-              {tasks.map((task) => (
+              {tasks.map((task) => {
+                const isEditingTask = editingTaskId === task.id;
+                const canEditTask = isLeader || task.createdByUid === uid;
+                return (
                 <div
                   key={task.id}
-                  className="rounded-2xl border border-slate-200 dark:border-slate-800 p-3 flex items-center justify-between gap-3"
+                  className="rounded-2xl border border-slate-200 dark:border-slate-800 p-3 space-y-2"
                 >
+                  {isEditingTask ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center">
+                      <input
+                        type="text"
+                        value={editTaskTitle}
+                        onChange={(e) => setEditTaskTitle(e.target.value)}
+                        className="sm:col-span-5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2.5 py-1.5 text-xs"
+                      />
+                      <input
+                        type="text"
+                        value={editTaskAssigned}
+                        onChange={(e) => setEditTaskAssigned(e.target.value)}
+                        placeholder="Responsable"
+                        className="sm:col-span-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2.5 py-1.5 text-xs"
+                      />
+                      <input
+                        type="date"
+                        value={editTaskDue}
+                        onChange={(e) => setEditTaskDue(e.target.value)}
+                        className="sm:col-span-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 py-1.5 text-xs"
+                      />
+                      <div className="sm:col-span-2 flex justify-end gap-1">
+                        <button
+                          type="button"
+                          onClick={() => handleSaveEditTask(task)}
+                          className="rounded-lg bg-emerald-600 p-1.5 text-white cursor-pointer"
+                        >
+                          <Check className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditingTaskId(null)}
+                          className="rounded-lg bg-slate-200 dark:bg-slate-800 p-1.5 cursor-pointer"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                  <div className="flex items-center justify-between gap-3">
                   <button
                     type="button"
                     onClick={() => cycleTaskStatus(task)}
@@ -516,7 +667,7 @@ export function CommissionsModule({
                     </div>
                   </button>
 
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex items-center gap-1.5 shrink-0">
                     <span
                       className={`rounded-md px-2 py-0.5 text-[11px] font-semibold ${
                         task.status === 'hecha'
@@ -532,18 +683,31 @@ export function CommissionsModule({
                         ? 'En curso'
                         : 'Pendiente'}
                     </span>
-                    {(isLeader || task.createdByUid === uid) && (
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteTask(task)}
-                        className="rounded-lg p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
+                    {canEditTask && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => startEditTask(task)}
+                          title="Editar tarea"
+                          className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-blue-600 cursor-pointer"
+                        >
+                          <Edit3 className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteTask(task)}
+                          className="rounded-lg p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </>
                     )}
                   </div>
+                  </div>
+                  )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

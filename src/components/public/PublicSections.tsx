@@ -2,18 +2,23 @@ import React, { useMemo, useState } from 'react';
 import {
   ArrowUpRight,
   Award,
+  BookOpen,
   Briefcase,
   ChevronRight,
   Compass,
   ExternalLink,
+  Globe,
   GraduationCap,
+  HeartPulse,
   Layers,
   Leaf,
   MapPin,
+  Megaphone,
   Music,
   Scale,
   Search,
   Shield,
+  Sparkles,
   Users,
 } from 'lucide-react';
 import type { Commission, PortalSettings, PublicCouncilor, PublicSection } from '../../types/cmj';
@@ -24,6 +29,10 @@ export function CommissionIcon({ name }: { name?: string }) {
   switch (name) {
     case 'GraduationCap':
       return <GraduationCap className="h-5 w-5" />;
+    case 'BookOpen':
+      return <BookOpen className="h-5 w-5" />;
+    case 'HeartPulse':
+      return <HeartPulse className="h-5 w-5" />;
     case 'Leaf':
       return <Leaf className="h-5 w-5" />;
     case 'Music':
@@ -32,6 +41,16 @@ export function CommissionIcon({ name }: { name?: string }) {
       return <Briefcase className="h-5 w-5" />;
     case 'Scale':
       return <Scale className="h-5 w-5" />;
+    case 'Users':
+      return <Users className="h-5 w-5" />;
+    case 'Sparkles':
+      return <Sparkles className="h-5 w-5" />;
+    case 'Shield':
+      return <Shield className="h-5 w-5" />;
+    case 'Megaphone':
+      return <Megaphone className="h-5 w-5" />;
+    case 'Globe':
+      return <Globe className="h-5 w-5" />;
     default:
       return <Layers className="h-5 w-5" />;
   }
@@ -198,21 +217,38 @@ export function IdentityAndDirectorySection({
 }) {
   const [searchText, setSearchText] = useState('');
   const [commissionFilter, setCommissionFilter] = useState('todas');
+  const [affiliationFilter, setAffiliationFilter] = useState('todas');
+
+  const affiliationLabel = (type?: string) => {
+    if (type === 'partido') return 'Partido político';
+    if (type === 'fundacion') return 'Fundación / Org.';
+    if (type === 'independiente') return 'Independiente';
+    return '';
+  };
 
   const filteredCouncilors = useMemo(() => {
     const q = searchText.trim().toLowerCase();
     return councilors
       .filter((c) => {
-        if (commissionFilter !== 'todas' && c.commissionId !== commissionFilter) return false;
+        if (commissionFilter === 'sin_comision') {
+          if (c.commissionId) return false;
+        } else if (commissionFilter !== 'todas' && c.commissionId !== commissionFilter) {
+          return false;
+        }
+        if (affiliationFilter !== 'todas' && (c.affiliationType || '') !== affiliationFilter) {
+          return false;
+        }
         if (!q) return true;
         return (
           c.fullName.toLowerCase().includes(q) ||
           c.roleLabel.toLowerCase().includes(q) ||
-          c.commissionName.toLowerCase().includes(q)
+          (c.commissionName || 'Sin comisión').toLowerCase().includes(q) ||
+          (c.affiliationName || '').toLowerCase().includes(q) ||
+          affiliationLabel(c.affiliationType).toLowerCase().includes(q)
         );
       })
       .sort((a, b) => (a.displayOrder ?? 99) - (b.displayOrder ?? 99));
-  }, [councilors, searchText, commissionFilter]);
+  }, [councilors, searchText, commissionFilter, affiliationFilter]);
 
   return (
     <>
@@ -291,11 +327,22 @@ export function IdentityAndDirectorySection({
                 className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs text-slate-800 dark:text-slate-100"
               >
                 <option value="todas">Todas las comisiones</option>
+                <option value="sin_comision">Sin comisión asignada</option>
                 {commissions.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
                   </option>
                 ))}
+              </select>
+              <select
+                value={affiliationFilter}
+                onChange={(e) => setAffiliationFilter(e.target.value)}
+                className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs text-slate-800 dark:text-slate-100"
+              >
+                <option value="todas">Todas las filiaciones</option>
+                <option value="partido">Partido político</option>
+                <option value="fundacion">Fundación / Organización</option>
+                <option value="independiente">Independiente</option>
               </select>
             </div>
           </div>
@@ -309,7 +356,9 @@ export function IdentityAndDirectorySection({
             />
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-              {filteredCouncilors.map((c) => (
+              {filteredCouncilors.map((c) => {
+                const affLabel = affiliationLabel(c.affiliationType);
+                return (
                 <article
                   key={c.id}
                   className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 flex flex-col gap-4 hover:border-blue-300 dark:hover:border-cyan-700 transition-colors"
@@ -324,10 +373,18 @@ export function IdentityAndDirectorySection({
                         {c.fullName}
                       </h3>
                       <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
-                        {c.commissionName}
+                        {c.commissionName || 'Sin comisión'}
                       </p>
                     </div>
                   </div>
+                  {(affLabel || c.affiliationName) && (
+                    <div className="rounded-xl border border-slate-200/80 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60 px-3 py-1.5 text-[11px] text-slate-700 dark:text-slate-300">
+                      <span className="font-semibold text-slate-900 dark:text-white">
+                        {affLabel || 'Filiación'}
+                      </span>
+                      {c.affiliationName ? ` · ${c.affiliationName}` : ''}
+                    </div>
+                  )}
                   {c.bio && (
                     <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed line-clamp-3">
                       {c.bio}
@@ -348,7 +405,8 @@ export function IdentityAndDirectorySection({
                     </div>
                   )}
                 </article>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

@@ -28,6 +28,7 @@ import { useToast } from '../ToastProvider';
 import { isLeadershipTier } from '../../lib/security';
 import type {
   AccessTier,
+  AffiliationType,
   Commission,
   CommissionTask,
   Commitment,
@@ -175,6 +176,8 @@ export function CustomizableDashboard({
   roleLabel,
   accessTier,
   commissionId,
+  affiliationType,
+  affiliationName,
   mustChangePassword,
   commissions,
   commissionTasks,
@@ -194,6 +197,8 @@ export function CustomizableDashboard({
   roleLabel: RoleLabel;
   accessTier: AccessTier;
   commissionId: string;
+  affiliationType?: AffiliationType;
+  affiliationName?: string;
   mustChangePassword: boolean;
   commissions: Commission[];
   commissionTasks: CommissionTask[];
@@ -264,6 +269,7 @@ export function CustomizableDashboard({
     const mine = commitments.filter((c) => c.responsibleUid === uid);
     if (mine.length > 0) return mine;
     if (isLeader) return commitments.slice(0, 5);
+    if (!commissionId) return [];
     return commitments.filter((c) => c.commissionId === commissionId).slice(0, 5);
   }, [commitments, uid, isLeader, commissionId]);
 
@@ -399,7 +405,18 @@ export function CustomizableDashboard({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6">
         <div>
           <p className="text-xs font-semibold text-blue-600 dark:text-cyan-400">
-            {roleLabel} · {myCommission ? myCommission.name : 'CMJ Flandes'}
+            {roleLabel} · {myCommission ? myCommission.name : 'Sin comisión asignada'}
+            {affiliationType && (
+              <>
+                {' · '}
+                {affiliationType === 'partido'
+                  ? 'Partido político'
+                  : affiliationType === 'fundacion'
+                  ? 'Fundación / Org.'
+                  : 'Independiente'}
+                {affiliationName ? ` (${affiliationName})` : ''}
+              </>
+            )}
           </p>
           <h1 className="mt-1 text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white">
             Hola, {fullName}

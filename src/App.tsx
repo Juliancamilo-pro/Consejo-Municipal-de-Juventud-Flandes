@@ -230,7 +230,7 @@ function PortalOrchestrator() {
           phone: authUser.phone,
           accessTier: authUser.accessTier,
           roleLabel: authUser.roleLabel,
-          commissionId: currentProfile?.commissionId || authUser.commissionId || 'comision-1',
+          commissionId: currentProfile?.commissionId ?? authUser.commissionId ?? '',
           active: authUser.active,
           mustChangePassword: authUser.mustChangePassword,
         }
