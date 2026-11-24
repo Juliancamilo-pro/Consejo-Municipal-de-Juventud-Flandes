@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import {
   AlertTriangle,
+  Camera,
   Check,
   Edit3,
   KeyRound,
@@ -13,6 +14,7 @@ import {
   X,
 } from 'lucide-react';
 import { ApiRequestError, apiRequest } from '../../lib/apiClient';
+import { deleteStorageFile } from '../../lib/storageUtils';
 import type {
   AffiliationType,
   Commission,
@@ -20,6 +22,8 @@ import type {
   PublicCouncilor,
   RoleLabel,
 } from '../../types/cmj';
+import { MediaUploader, type UploadedFileInfo } from '../MediaUploader';
+import { AvatarBadge } from '../public/AvatarBadge';
 import { useToast } from '../ToastProvider';
 import { recordAudit } from './auditHelper';
 
@@ -55,6 +59,7 @@ export function UsersAndBoardModule({
   // Edición inline de consejero
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
+  const [editEmail, setEditEmail] = useState('');
   const [editRole, setEditRole] = useState<RoleLabel>('Consejero');
   const [editComm, setEditComm] = useState('');
   const [editPhone, setEditPhone] = useState('');
@@ -62,6 +67,7 @@ export function UsersAndBoardModule({
   const [editAffName, setEditAffName] = useState('');
   const [savingEdit, setSavingEdit] = useState(false);
   const [confirmDeleteUid, setConfirmDeleteUid] = useState<string | null>(null);
+  const [photoTarget, setPhotoTarget] = useState<PublicCouncilor | null>(null);
 
   // Configuración institucional de seguridad (códigos / clave inicial)
   const [newInviteCode, setNewInviteCode] = useState('');
@@ -81,17 +87,20 @@ export function UsersAndBoardModule({
         const priv = privateCouncilors.find((p) => p.uid === pub.uid);
         return { pub, priv };
       })
-      .filter(({ pub }) => {
+      .filter(({ pub, priv }) => {
         if (statusFilter === 'active' && !pub.active) return false;
         if (statusFilter === 'inactive' && pub.active) return false;
         if (!q) return true;
+        const resolvedEmail = (priv?.email || pub.email || '').toLowerCase();
+        const resolvedPhone = (priv?.phone || pub.phone || '').toLowerCase();
         return (
           pub.fullName.toLowerCase().includes(q) ||
           pub.roleLabel.toLowerCase().includes(q) ||
           (pub.commissionName || 'Sin comisión').toLowerCase().includes(q) ||
           (pub.affiliationName || '').toLowerCase().includes(q) ||
           (pub.affiliationType || '').toLowerCase().includes(q) ||
-          (privateCouncilors.find((p) => p.uid === pub.uid)?.email || '').toLowerCase().includes(q)
+          resolvedEmail.includes(q) ||
+          resolvedPhone.includes(q)
         );
       })
       .sort((a, b) => (a.pub.displayOrder ?? 50) - (b.pub.displayOrder ?? 50));
@@ -151,9 +160,10 @@ export function UsersAndBoardModule({
   const startEdit = (pub: PublicCouncilor, priv?: CouncilorPrivate) => {
     setEditingId(pub.id);
     setEditName(pub.fullName);
+    setEditEmail(priv?.email || pub.email || '');
     setEditRole(pub.roleLabel);
     setEditComm(pub.commissionId || '');
-    setEditPhone(priv?.phone || '');
+    setEditPhone(priv?.phone || pub.phone || '');
     setEditAffType(pub.affiliationType || '');
     setEditAffName(pub.affiliationName || '');
   };
@@ -166,6 +176,7 @@ export function UsersAndBoardModule({
         method: 'PATCH',
         body: {
           fullName: editName.trim(),
+          email: editEmail.trim().toLowerCase(),
           roleLabel: editRole,
           commissionId: editComm,
           phone: editPhone.trim(),
@@ -235,6 +246,61 @@ export function UsersAndBoardModule({
       showToast(nextActive ? 'Consejero activado' : 'Consejero desactivado', 'info');
     } catch {
       showToast('No se pudo cambiar el estado', 'error');
+    }
+  };
+
+  const handleUploadCouncilorPhoto = async (target: PublicCouncilor, files: UploadedFileInfo[]) => {
+    const first = files[0];
+    if (!first) return;
+    try {
+      if (target.storagePath) {
+        await deleteStorageFile(target.storagePath, target.photoUrl);
+      }
+      await apiRequest(`/api/councilors/${encodeURIComponent(target.uid)}`, {
+        method: 'PATCH',
+        body: {
+          photoUrl: first.url,
+          photoThumbUrl: first.thumbUrl || first.thumbnailUrl || first.url,
+          photoMediumUrl: first.mediumUrl || first.url,
+          storagePath: first.storagePath || '',
+        },
+      });
+      await recordAudit({
+        uid,
+        actorName,
+        actorRoleLabel,
+        action: 'Actualizó foto de perfil de consejero',
+        module: 'Usuarios y Mesa',
+        targetTitle: target.fullName,
+      });
+      setPhotoTarget(null);
+      showToast(`Foto de ${target.fullName} actualizada`, 'success');
+    } catch (err) {
+      showToast(err instanceof ApiRequestError ? err.message : 'No se pudo guardar la foto', 'error');
+    }
+  };
+
+  const handleRemoveCouncilorPhoto = async (target: PublicCouncilor) => {
+    try {
+      if (target.storagePath) {
+        await deleteStorageFile(target.storagePath, target.photoUrl);
+      }
+      await apiRequest(`/api/councilors/${encodeURIComponent(target.uid)}`, {
+        method: 'PATCH',
+        body: { photoUrl: '', photoThumbUrl: '', photoMediumUrl: '', storagePath: '' },
+      });
+      await recordAudit({
+        uid,
+        actorName,
+        actorRoleLabel,
+        action: 'Eliminó foto de perfil de consejero',
+        module: 'Usuarios y Mesa',
+        targetTitle: target.fullName,
+      });
+      setPhotoTarget(null);
+      showToast(`Foto de ${target.fullName} eliminada`, 'info');
+    } catch (err) {
+      showToast(err instanceof ApiRequestError ? err.message : 'No se pudo quitar la foto', 'error');
     }
   };
 
@@ -443,21 +509,47 @@ export function UsersAndBoardModule({
                           className="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2.5 py-1 text-xs"
                         />
                       ) : (
-                        pub.fullName
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <AvatarBadge
+                            name={pub.fullName}
+                            photoUrl={pub.photoUrl}
+                            thumbUrl={pub.photoThumbUrl}
+                            mediumUrl={pub.photoMediumUrl}
+                            accentColor={commissions.find((c) => c.id === pub.commissionId)?.accentColor}
+                            statusIndicator={pub.active ? 'active' : 'inactive'}
+                            size="sm"
+                          />
+                          <span className="truncate">{pub.fullName}</span>
+                        </div>
                       )}
                     </td>
                     <td className="py-3 px-2 text-slate-600 dark:text-slate-300">
-                      <div>{priv?.email || 'Activación pendiente'}</div>
                       {isEditing ? (
-                        <input
-                          type="text"
-                          value={editPhone}
-                          onChange={(e) => setEditPhone(e.target.value)}
-                          placeholder="Teléfono"
-                          className="mt-1 w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 py-1 text-xs"
-                        />
+                        <div className="space-y-1 min-w-[170px]">
+                          <input
+                            type="email"
+                            value={editEmail}
+                            onChange={(e) => setEditEmail(e.target.value)}
+                            placeholder="Correo electrónico"
+                            className="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 py-1 text-xs"
+                          />
+                          <input
+                            type="text"
+                            value={editPhone}
+                            onChange={(e) => setEditPhone(e.target.value)}
+                            placeholder="Teléfono / WhatsApp"
+                            className="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 py-1 text-xs"
+                          />
+                        </div>
                       ) : (
-                        priv?.phone && <div className="text-[11px] text-slate-400">{priv.phone}</div>
+                        <>
+                          <div>{priv?.email || pub.email || 'Activación pendiente'}</div>
+                          {(priv?.phone || pub.phone) && (
+                            <div className="text-[11px] font-mono-num text-slate-400">
+                              {priv?.phone || pub.phone}
+                            </div>
+                          )}
+                        </>
                       )}
                     </td>
                     <td className="py-3 px-2">
@@ -571,6 +663,14 @@ export function UsersAndBoardModule({
                           </>
                         ) : (
                           <>
+                            <button
+                              type="button"
+                              onClick={() => setPhotoTarget(pub)}
+                              title="Subir o ajustar foto de perfil"
+                              className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-emerald-600 cursor-pointer"
+                            >
+                              <Camera className="h-3.5 w-3.5" />
+                            </button>
                             <button
                               type="button"
                               onClick={() => startEdit(pub, priv)}
@@ -775,6 +875,65 @@ export function UsersAndBoardModule({
           </div>
         )}
       </div>
+
+      {/* Modal foto de perfil de consejero */}
+      {photoTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-sm p-4"
+          onClick={() => setPhotoTarget(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-lg rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 space-y-4 shadow-2xl"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <AvatarBadge
+                  name={photoTarget.fullName}
+                  photoUrl={photoTarget.photoUrl}
+                  thumbUrl={photoTarget.photoThumbUrl}
+                  mediumUrl={photoTarget.photoMediumUrl}
+                  accentColor={commissions.find((c) => c.id === photoTarget.commissionId)?.accentColor}
+                  size="md"
+                />
+                <div className="min-w-0">
+                  <h4 className="text-base font-bold text-slate-900 dark:text-white truncate">
+                    Foto de perfil · {photoTarget.fullName}
+                  </h4>
+                  <p className="text-xs text-slate-500">{photoTarget.roleLabel}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPhotoTarget(null)}
+                className="rounded-xl p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <MediaUploader
+              storageFolder={`profiles/${photoTarget.uid}`}
+              imagePreset="profile"
+              label="Subir foto institucional (ajuste facial y tamaños 96/256/512 px)"
+              onUploaded={(files) => handleUploadCouncilorPhoto(photoTarget, files)}
+            />
+
+            {photoTarget.photoUrl && (
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => handleRemoveCouncilorPhoto(photoTarget)}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-rose-200 dark:border-rose-900/60 bg-rose-50 dark:bg-rose-950/30 px-3.5 py-2 text-xs font-semibold text-rose-600 cursor-pointer"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Eliminar foto actual
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

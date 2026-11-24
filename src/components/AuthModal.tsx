@@ -18,6 +18,7 @@ import {
   setAuthTokenInMemory,
   type SessionUser,
 } from '../lib/apiClient';
+import { BrandLogo } from './BrandLogo';
 import { useToast } from './ToastProvider';
 
 type AuthTab = 'login' | 'activate' | 'help';
@@ -183,19 +184,22 @@ export function AuthModal({
             className="w-full max-w-md rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 sm:p-7 shadow-2xl my-auto"
           >
             <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-xs font-semibold text-blue-600 dark:text-cyan-400">
-                  Portal Privado · CMJ Flandes
-                </p>
-                <h2 className="mt-1 text-xl font-bold text-slate-900 dark:text-white">
-                  {tab === 'login'
-                    ? 'Iniciar sesión'
-                    : tab === 'activate'
-                    ? currentUser
-                      ? 'Cambiar mi contraseña'
-                      : 'Activar / Cambiar clave'
-                    : 'Recuperar acceso'}
-                </h2>
+              <div className="flex items-center gap-3">
+                <BrandLogo size="md" />
+                <div>
+                  <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">
+                    Portal Privado · CMJ Flandes
+                  </p>
+                  <h2 className="mt-0.5 text-xl font-bold text-slate-900 dark:text-white">
+                    {tab === 'login'
+                      ? 'Iniciar sesión'
+                      : tab === 'activate'
+                      ? currentUser
+                        ? 'Cambiar mi contraseña'
+                        : 'Activar / Cambiar clave'
+                      : 'Recuperar acceso'}
+                  </h2>
+                </div>
               </div>
               <button
                 type="button"

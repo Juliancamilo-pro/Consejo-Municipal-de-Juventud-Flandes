@@ -186,8 +186,12 @@ export async function ensureDatabaseTables(): Promise<void> {
           commission_name TEXT NOT NULL DEFAULT 'Sin comisión',
           affiliation_type TEXT NOT NULL DEFAULT '',
           affiliation_name TEXT NOT NULL DEFAULT '',
+          email TEXT NOT NULL DEFAULT '',
+          phone TEXT NOT NULL DEFAULT '',
           bio TEXT NOT NULL DEFAULT '',
           photo_url TEXT NOT NULL DEFAULT '',
+          photo_thumb_url TEXT NOT NULL DEFAULT '',
+          photo_medium_url TEXT NOT NULL DEFAULT '',
           storage_path TEXT NOT NULL DEFAULT '',
           instagram TEXT NOT NULL DEFAULT '',
           facebook TEXT NOT NULL DEFAULT '',
@@ -248,6 +252,22 @@ export async function ensureDatabaseTables(): Promise<void> {
         )`,
       ],
       [
+        'gallery_albums',
+        `CREATE TABLE IF NOT EXISTS gallery_albums (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          description TEXT NOT NULL DEFAULT '',
+          commission_id TEXT NOT NULL DEFAULT '',
+          event_date TEXT NOT NULL DEFAULT '',
+          cover_url TEXT NOT NULL DEFAULT '',
+          author_uid TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'publicado',
+          sort_order INTEGER NOT NULL DEFAULT 0,
+          created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )`,
+      ],
+      [
         'gallery_items',
         `CREATE TABLE IF NOT EXISTS gallery_items (
           id TEXT PRIMARY KEY,
@@ -260,6 +280,10 @@ export async function ensureDatabaseTables(): Promise<void> {
           storage_path TEXT NOT NULL DEFAULT '',
           thumbnail_storage_path TEXT NOT NULL DEFAULT '',
           commission_id TEXT NOT NULL,
+          album_id TEXT NOT NULL DEFAULT '',
+          sort_order INTEGER NOT NULL DEFAULT 0,
+          event_date TEXT NOT NULL DEFAULT '',
+          mime_type TEXT NOT NULL DEFAULT '',
           author_uid TEXT NOT NULL,
           author_name TEXT NOT NULL,
           status TEXT NOT NULL DEFAULT 'publicado',
@@ -274,6 +298,7 @@ export async function ensureDatabaseTables(): Promise<void> {
           folder TEXT NOT NULL DEFAULT 'General',
           category TEXT NOT NULL,
           version TEXT NOT NULL DEFAULT '1.0',
+          version_history JSONB NOT NULL DEFAULT '[]'::jsonb,
           file_url TEXT NOT NULL,
           storage_path TEXT NOT NULL DEFAULT '',
           file_name TEXT NOT NULL,
@@ -342,9 +367,42 @@ export async function ensureDatabaseTables(): Promise<void> {
           status TEXT NOT NULL DEFAULT 'programada',
           acta_url TEXT NOT NULL DEFAULT '',
           attendance JSONB NOT NULL DEFAULT '{}'::jsonb,
+          excuses JSONB NOT NULL DEFAULT '{}'::jsonb,
           check_in_code TEXT NOT NULL DEFAULT '',
+          check_in_expires_at TEXT NOT NULL DEFAULT '',
+          qr_rotated_at TEXT NOT NULL DEFAULT '',
           quorum_required INTEGER NOT NULL DEFAULT 1,
           created_by_uid TEXT NOT NULL,
+          created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )`,
+      ],
+      [
+        'actas',
+        `CREATE TABLE IF NOT EXISTS actas (
+          id TEXT PRIMARY KEY,
+          consecutive TEXT NOT NULL,
+          year INTEGER NOT NULL,
+          title TEXT NOT NULL,
+          session_id TEXT NOT NULL DEFAULT '',
+          commission_id TEXT NOT NULL DEFAULT '',
+          location TEXT NOT NULL DEFAULT '',
+          meeting_date TEXT NOT NULL DEFAULT '',
+          time_range TEXT NOT NULL DEFAULT '',
+          quorum_count INTEGER NOT NULL DEFAULT 0,
+          quorum_required INTEGER NOT NULL DEFAULT 1,
+          agenda TEXT NOT NULL DEFAULT '',
+          development TEXT NOT NULL DEFAULT '',
+          propositions TEXT NOT NULL DEFAULT '',
+          commitments_summary TEXT NOT NULL DEFAULT '',
+          linked_vote_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+          status TEXT NOT NULL DEFAULT 'borrador',
+          author_uid TEXT NOT NULL,
+          author_name TEXT NOT NULL,
+          signatures JSONB NOT NULL DEFAULT '[]'::jsonb,
+          comments JSONB NOT NULL DEFAULT '[]'::jsonb,
+          history JSONB NOT NULL DEFAULT '[]'::jsonb,
+          verification_hash TEXT NOT NULL DEFAULT '',
           created_at TIMESTAMP NOT NULL DEFAULT NOW(),
           updated_at TIMESTAMP NOT NULL DEFAULT NOW()
         )`,
@@ -356,7 +414,9 @@ export async function ensureDatabaseTables(): Promise<void> {
           title TEXT NOT NULL,
           description TEXT NOT NULL,
           commission_id TEXT NOT NULL DEFAULT '',
+          session_id TEXT NOT NULL DEFAULT '',
           vote_mode TEXT NOT NULL DEFAULT 'nominal',
+          majority_type TEXT NOT NULL DEFAULT 'simple',
           options JSONB NOT NULL DEFAULT '[]'::jsonb,
           tallies JSONB NOT NULL DEFAULT '{}'::jsonb,
           nominal_ballots JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -365,6 +425,7 @@ export async function ensureDatabaseTables(): Promise<void> {
           opens_at TEXT NOT NULL DEFAULT '',
           closes_at TEXT NOT NULL DEFAULT '',
           status TEXT NOT NULL DEFAULT 'abierta',
+          result_summary TEXT NOT NULL DEFAULT '',
           deadline TEXT NOT NULL DEFAULT '',
           created_by_uid TEXT NOT NULL,
           created_at TIMESTAMP NOT NULL DEFAULT NOW(),
@@ -474,8 +535,7 @@ export async function ensureDatabaseTables(): Promise<void> {
       const colRes = await pool.query<{ table_name: string; column_name: string }>(
         `SELECT table_name, column_name
          FROM information_schema.columns
-         WHERE table_schema = current_schema()
-           AND table_name IN ('allowed_accounts', 'public_councilors')`
+         WHERE table_schema = current_schema()`
       );
       const existingCols = new Set(colRes.rows.map((r) => `${r.table_name}.${r.column_name}`));
 
@@ -484,6 +544,21 @@ export async function ensureDatabaseTables(): Promise<void> {
         ['allowed_accounts.affiliation_name', `ALTER TABLE allowed_accounts ADD COLUMN IF NOT EXISTS affiliation_name TEXT NOT NULL DEFAULT ''`],
         ['public_councilors.affiliation_type', `ALTER TABLE public_councilors ADD COLUMN IF NOT EXISTS affiliation_type TEXT NOT NULL DEFAULT ''`],
         ['public_councilors.affiliation_name', `ALTER TABLE public_councilors ADD COLUMN IF NOT EXISTS affiliation_name TEXT NOT NULL DEFAULT ''`],
+        ['public_councilors.email', `ALTER TABLE public_councilors ADD COLUMN IF NOT EXISTS email TEXT NOT NULL DEFAULT ''`],
+        ['public_councilors.phone', `ALTER TABLE public_councilors ADD COLUMN IF NOT EXISTS phone TEXT NOT NULL DEFAULT ''`],
+        ['public_councilors.photo_thumb_url', `ALTER TABLE public_councilors ADD COLUMN IF NOT EXISTS photo_thumb_url TEXT NOT NULL DEFAULT ''`],
+        ['public_councilors.photo_medium_url', `ALTER TABLE public_councilors ADD COLUMN IF NOT EXISTS photo_medium_url TEXT NOT NULL DEFAULT ''`],
+        ['sessions.excuses', `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS excuses JSONB NOT NULL DEFAULT '{}'::jsonb`],
+        ['sessions.check_in_expires_at', `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS check_in_expires_at TEXT NOT NULL DEFAULT ''`],
+        ['sessions.qr_rotated_at', `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS qr_rotated_at TEXT NOT NULL DEFAULT ''`],
+        ['votes.session_id', `ALTER TABLE votes ADD COLUMN IF NOT EXISTS session_id TEXT NOT NULL DEFAULT ''`],
+        ['votes.majority_type', `ALTER TABLE votes ADD COLUMN IF NOT EXISTS majority_type TEXT NOT NULL DEFAULT 'simple'`],
+        ['votes.result_summary', `ALTER TABLE votes ADD COLUMN IF NOT EXISTS result_summary TEXT NOT NULL DEFAULT ''`],
+        ['documents.version_history', `ALTER TABLE documents ADD COLUMN IF NOT EXISTS version_history JSONB NOT NULL DEFAULT '[]'::jsonb`],
+        ['gallery_items.album_id', `ALTER TABLE gallery_items ADD COLUMN IF NOT EXISTS album_id TEXT NOT NULL DEFAULT ''`],
+        ['gallery_items.sort_order', `ALTER TABLE gallery_items ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0`],
+        ['gallery_items.event_date', `ALTER TABLE gallery_items ADD COLUMN IF NOT EXISTS event_date TEXT NOT NULL DEFAULT ''`],
+        ['gallery_items.mime_type', `ALTER TABLE gallery_items ADD COLUMN IF NOT EXISTS mime_type TEXT NOT NULL DEFAULT ''`],
       ];
 
       for (const [key, alterSql] of columnPatches) {

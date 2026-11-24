@@ -24,10 +24,12 @@ import type {
   CouncilSession,
   CouncilVote,
   CouncilorPrivate,
+  GalleryAlbum,
   GalleryItem,
   IdeaItem,
   LetterTemplate,
   NewsEvent,
+  PortalActa,
   PortalDocument,
   PortalSettings,
   PublicCouncilor,
@@ -46,7 +48,9 @@ interface PublicStateResponse {
   publicCouncilors: PublicCouncilor[];
   newsEvents: NewsEvent[];
   galleryItems: GalleryItem[];
+  galleryAlbums?: GalleryAlbum[];
   documents: PortalDocument[];
+  actas?: PortalActa[];
   callsSurveys: CallOrSurvey[];
 }
 
@@ -106,7 +110,9 @@ function PortalOrchestrator() {
   const [privateCouncilors, setPrivateCouncilors] = useState<CouncilorPrivate[]>([]);
   const [newsEvents, setNewsEvents] = useState<NewsEvent[]>([]);
   const [galleryItems, setGalleryItems] = useState<GalleryItem[]>([]);
+  const [galleryAlbums, setGalleryAlbums] = useState<GalleryAlbum[]>([]);
   const [documents, setDocuments] = useState<PortalDocument[]>([]);
+  const [actas, setActas] = useState<PortalActa[]>([]);
   const [callsSurveys, setCallsSurveys] = useState<CallOrSurvey[]>([]);
   const [contactMessages, setContactMessages] = useState<ContactMessage[]>([]);
   const [sessions, setSessions] = useState<CouncilSession[]>([]);
@@ -140,7 +146,9 @@ function PortalOrchestrator() {
       setPublicCouncilors(data.publicCouncilors || []);
       setNewsEvents(data.newsEvents || []);
       setGalleryItems(data.galleryItems || []);
+      setGalleryAlbums(data.galleryAlbums || []);
       setDocuments(data.documents || []);
+      setActas(data.actas || []);
       setCallsSurveys(data.callsSurveys || []);
     } catch {
       // Silencioso en carga inicial pública
@@ -207,7 +215,9 @@ function PortalOrchestrator() {
       setPrivateCouncilors(data.privateCouncilors || []);
       setNewsEvents(data.newsEvents || []);
       setGalleryItems(data.galleryItems || []);
+      setGalleryAlbums(data.galleryAlbums || []);
       setDocuments(data.documents || []);
+      setActas(data.actas || []);
       setCallsSurveys(data.callsSurveys || []);
       setContactMessages(data.contactMessages || []);
       setSessions(data.sessions || []);
@@ -403,7 +413,9 @@ function PortalOrchestrator() {
           privateCouncilors={privateCouncilors}
           newsEvents={newsEvents}
           galleryItems={galleryItems}
+          galleryAlbums={galleryAlbums}
           documents={documents}
+          actas={actas}
           callsSurveys={callsSurveys}
           contactMessages={contactMessages}
           sessions={sessions}
@@ -430,7 +442,9 @@ function PortalOrchestrator() {
           councilors={publicCouncilors.filter((c) => c.active)}
           newsEvents={newsEvents}
           galleryItems={galleryItems}
+          galleryAlbums={galleryAlbums}
           documents={documents}
+          actas={actas}
           callsSurveys={callsSurveys}
           isAuthenticated={Boolean(authUser)}
           darkMode={darkMode}

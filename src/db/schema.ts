@@ -74,8 +74,12 @@ export const publicCouncilors = pgTable('public_councilors', {
   commissionName: text('commission_name').notNull().default('Sin comisión'),
   affiliationType: text('affiliation_type').notNull().default(''),
   affiliationName: text('affiliation_name').notNull().default(''),
+  email: text('email').notNull().default(''),
+  phone: text('phone').notNull().default(''),
   bio: text('bio').notNull().default(''),
   photoUrl: text('photo_url').notNull().default(''),
+  photoThumbUrl: text('photo_thumb_url').notNull().default(''),
+  photoMediumUrl: text('photo_medium_url').notNull().default(''),
   storagePath: text('storage_path').notNull().default(''),
   instagram: text('instagram').notNull().default(''),
   facebook: text('facebook').notNull().default(''),
@@ -130,6 +134,20 @@ export const newsEvents = pgTable('news_events', {
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
 
+export const galleryAlbums = pgTable('gallery_albums', {
+  id: text('id').primaryKey(),
+  title: text('title').notNull(),
+  description: text('description').notNull().default(''),
+  commissionId: text('commission_id').notNull().default(''),
+  eventDate: text('event_date').notNull().default(''),
+  coverUrl: text('cover_url').notNull().default(''),
+  authorUid: text('author_uid').notNull(),
+  status: text('status').notNull().default('publicado'),
+  sortOrder: integer('sort_order').notNull().default(0),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
 export const galleryItems = pgTable('gallery_items', {
   id: text('id').primaryKey(),
   title: text('title').notNull(),
@@ -141,6 +159,10 @@ export const galleryItems = pgTable('gallery_items', {
   storagePath: text('storage_path').notNull().default(''),
   thumbnailStoragePath: text('thumbnail_storage_path').notNull().default(''),
   commissionId: text('commission_id').notNull(),
+  albumId: text('album_id').notNull().default(''),
+  sortOrder: integer('sort_order').notNull().default(0),
+  eventDate: text('event_date').notNull().default(''),
+  mimeType: text('mime_type').notNull().default(''),
   authorUid: text('author_uid').notNull(),
   authorName: text('author_name').notNull(),
   status: text('status').notNull().default('publicado'),
@@ -153,6 +175,23 @@ export const documents = pgTable('documents', {
   folder: text('folder').notNull().default('General'),
   category: text('category').notNull(),
   version: text('version').notNull().default('1.0'),
+  versionHistory: jsonb('version_history')
+    .$type<
+      Array<{
+        version: string;
+        fileUrl: string;
+        storagePath?: string;
+        fileName: string;
+        mimeType: string;
+        fileSize?: number;
+        uploadedByUid: string;
+        uploadedByName: string;
+        uploadedAt: string;
+        notes?: string;
+      }>
+    >()
+    .notNull()
+    .default([]),
   fileUrl: text('file_url').notNull(),
   storagePath: text('storage_path').notNull().default(''),
   fileName: text('file_name').notNull(),
@@ -213,9 +252,79 @@ export const sessions = pgTable('sessions', {
   status: text('status').notNull().default('programada'),
   actaUrl: text('acta_url').notNull().default(''),
   attendance: jsonb('attendance').$type<Record<string, string>>().notNull().default({}),
+  excuses: jsonb('excuses')
+    .$type<
+      Record<
+        string,
+        {
+          reason: string;
+          attachmentUrl?: string;
+          attachmentName?: string;
+          submittedAt: string;
+        }
+      >
+    >()
+    .notNull()
+    .default({}),
   checkInCode: text('check_in_code').notNull().default(''),
+  checkInExpiresAt: text('check_in_expires_at').notNull().default(''),
+  qrRotatedAt: text('qr_rotated_at').notNull().default(''),
   quorumRequired: integer('quorum_required').notNull().default(1),
   createdByUid: text('created_by_uid').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+export const actas = pgTable('actas', {
+  id: text('id').primaryKey(),
+  consecutive: text('consecutive').notNull(),
+  year: integer('year').notNull(),
+  title: text('title').notNull(),
+  sessionId: text('session_id').notNull().default(''),
+  commissionId: text('commission_id').notNull().default(''),
+  location: text('location').notNull().default(''),
+  meetingDate: text('meeting_date').notNull().default(''),
+  timeRange: text('time_range').notNull().default(''),
+  quorumCount: integer('quorum_count').notNull().default(0),
+  quorumRequired: integer('quorum_required').notNull().default(1),
+  agenda: text('agenda').notNull().default(''),
+  development: text('development').notNull().default(''),
+  propositions: text('propositions').notNull().default(''),
+  commitmentsSummary: text('commitments_summary').notNull().default(''),
+  linkedVoteIds: jsonb('linked_vote_ids').$type<string[]>().notNull().default([]),
+  status: text('status').notNull().default('borrador'),
+  authorUid: text('author_uid').notNull(),
+  authorName: text('author_name').notNull(),
+  signatures: jsonb('signatures')
+    .$type<
+      Array<{
+        uid: string;
+        name: string;
+        roleLabel: string;
+        signedAt: string;
+        hash: string;
+      }>
+    >()
+    .notNull()
+    .default([]),
+  comments: jsonb('comments')
+    .$type<
+      Array<{
+        id: string;
+        authorUid: string;
+        authorName: string;
+        authorRoleLabel: string;
+        body: string;
+        createdAt: string;
+      }>
+    >()
+    .notNull()
+    .default([]),
+  history: jsonb('history')
+    .$type<Array<{ at: string; actorName: string; action: string }>>()
+    .notNull()
+    .default([]),
+  verificationHash: text('verification_hash').notNull().default(''),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
@@ -225,7 +334,9 @@ export const votes = pgTable('votes', {
   title: text('title').notNull(),
   description: text('description').notNull(),
   commissionId: text('commission_id').notNull().default(''),
+  sessionId: text('session_id').notNull().default(''),
   voteMode: text('vote_mode').notNull().default('nominal'),
+  majorityType: text('majority_type').notNull().default('simple'),
   options: jsonb('options').$type<string[]>().notNull().default([]),
   tallies: jsonb('tallies').$type<Record<string, number>>().notNull().default({}),
   nominalBallots: jsonb('nominal_ballots').$type<Record<string, string>>().notNull().default({}),
@@ -234,6 +345,7 @@ export const votes = pgTable('votes', {
   opensAt: text('opens_at').notNull().default(''),
   closesAt: text('closes_at').notNull().default(''),
   status: text('status').notNull().default('abierta'),
+  resultSummary: text('result_summary').notNull().default(''),
   deadline: text('deadline').notNull().default(''),
   createdByUid: text('created_by_uid').notNull(),
   createdAt: timestamp('created_at').defaultNow().notNull(),

@@ -6,6 +6,16 @@ export interface CropTransform {
   zoom: number;
   offsetX: number; // -1 to 1 normalized pan
   offsetY: number; // -1 to 1 normalized pan
+  autoEnhance?: boolean;
+}
+
+export interface ProfileVariantBlob {
+  blob: Blob;
+  mimeType: string;
+  fileName: string;
+  width: number;
+  height: number;
+  previewUrl: string;
 }
 
 export interface ProcessedMediaResult {
@@ -13,10 +23,13 @@ export interface ProcessedMediaResult {
   previewUrl: string;
   thumbnailBlob?: Blob;
   thumbnailPreviewUrl?: string;
+  profileThumb?: ProfileVariantBlob;
+  profileMedium?: ProfileVariantBlob;
   mimeType: string;
   fileName: string;
   width?: number;
   height?: number;
+  faceDetected?: boolean;
 }
 
 export type MediaCategory =
@@ -28,7 +41,110 @@ export type MediaCategory =
   | 'excel'
   | 'powerpoint'
   | 'zip'
+  | 'text'
   | 'other';
+
+const DANGEROUS_EXTENSIONS = new Set([
+  'exe',
+  'bat',
+  'cmd',
+  'sh',
+  'bash',
+  'zsh',
+  'ps1',
+  'vbs',
+  'vbe',
+  'js',
+  'mjs',
+  'cjs',
+  'jse',
+  'msi',
+  'msp',
+  'scr',
+  'com',
+  'pif',
+  'dll',
+  'sys',
+  'drv',
+  'jar',
+  'war',
+  'php',
+  'phtml',
+  'asp',
+  'aspx',
+  'jsp',
+  'cgi',
+  'pl',
+  'py',
+  'rb',
+  'html',
+  'htm',
+  'xhtml',
+  'hta',
+  'cpl',
+  'lnk',
+  'reg',
+]);
+
+export function getFileExtension(fileName: string): string {
+  const parts = fileName.toLowerCase().trim().split('.');
+  return parts.length > 1 ? parts[parts.length - 1] : '';
+}
+
+export function isDangerousFile(file: File): boolean {
+  const ext = getFileExtension(file.name);
+  if (DANGEROUS_EXTENSIONS.has(ext)) return true;
+  const mime = (file.type || '').toLowerCase();
+  if (
+    mime === 'application/x-msdownload' ||
+    mime === 'application/x-executable' ||
+    mime === 'application/x-sh' ||
+    mime === 'text/javascript' ||
+    mime === 'application/javascript' ||
+    mime === 'text/html'
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/** Inspect leading magic bytes in browser before enqueueing */
+export async function validateFileMagicBytes(file: File): Promise<{ valid: boolean; reason?: string }> {
+  if (isDangerousFile(file)) {
+    return {
+      valid: false,
+      reason: `Por seguridad institucional no se permiten archivos ejecutables o scripts (${file.name}).`,
+    };
+  }
+  try {
+    const headerBuf = await file.slice(0, 64).arrayBuffer();
+    const bytes = new Uint8Array(headerBuf);
+    // Block MZ (PE/EXE/DLL), ELF, Mach-O, Shebang #!
+    if (bytes.length >= 2 && bytes[0] === 0x4d && bytes[1] === 0x5a) {
+      return { valid: false, reason: 'El archivo contiene firma de ejecutable Windows (MZ).' };
+    }
+    if (
+      bytes.length >= 4 &&
+      bytes[0] === 0x7f &&
+      bytes[1] === 0x45 &&
+      bytes[2] === 0x4c &&
+      bytes[3] === 0x46
+    ) {
+      return { valid: false, reason: 'El archivo contiene firma de binario ejecutable (ELF).' };
+    }
+    if (bytes.length >= 2 && bytes[0] === 0x23 && bytes[1] === 0x21) {
+      return { valid: false, reason: 'No se permiten scripts con cabecera shebang (#!).' };
+    }
+    // Check leading text for HTML/script injection disguised as non-HTML
+    const snippet = new TextDecoder('utf-8', { fatal: false }).decode(bytes).trim().toLowerCase();
+    if (snippet.startsWith('<!doctype html') || snippet.startsWith('<html') || snippet.startsWith('<script')) {
+      return { valid: false, reason: 'No se permiten documentos HTML ni scripts embebidos.' };
+    }
+  } catch {
+    // Allow if slice read fails cleanly
+  }
+  return { valid: true };
+}
 
 export function classifyFile(file: File): MediaCategory {
   const name = file.name.toLowerCase();
@@ -36,20 +152,14 @@ export function classifyFile(file: File): MediaCategory {
 
   if (
     type.startsWith('image/') ||
-    name.endsWith('.heic') ||
-    name.endsWith('.heif') ||
-    name.endsWith('.webp') ||
-    name.endsWith('.png') ||
-    name.endsWith('.jpg') ||
-    name.endsWith('.jpeg') ||
-    name.endsWith('.svg')
+    /\.(heic|heif|webp|png|jpg|jpeg|gif|svg|bmp|tiff|tif|ico|avif|dng|raw|cr2|nef|arw)$/i.test(name)
   ) {
     return 'image';
   }
-  if (type.startsWith('video/') || /\.(mp4|webm|mov|m4v|avi)$/i.test(name)) {
+  if (type.startsWith('video/') || /\.(mp4|webm|mov|m4v|avi|mkv|ogv)$/i.test(name)) {
     return 'video';
   }
-  if (type.startsWith('audio/') || /\.(mp3|wav|ogg|m4a|aac)$/i.test(name)) {
+  if (type.startsWith('audio/') || /\.(mp3|wav|ogg|m4a|aac|flac|opus)$/i.test(name)) {
     return 'audio';
   }
   if (type === 'application/pdf' || name.endsWith('.pdf')) {
@@ -79,9 +189,14 @@ export function classifyFile(file: File): MediaCategory {
   if (
     type.includes('zip') ||
     type.includes('compressed') ||
+    type.includes('rar') ||
+    type.includes('7z') ||
     /\.(zip|rar|7z|tar|gz)$/i.test(name)
   ) {
     return 'zip';
+  }
+  if (type.startsWith('text/') || /\.(txt|md|markdown|json|log)$/i.test(name)) {
+    return 'text';
   }
   return 'other';
 }
@@ -169,7 +284,7 @@ function loadImageFromBlob(blob: Blob): Promise<HTMLImageElement> {
 }
 
 // Returns an EXIF-oriented canvas
-async function getOrientedCanvas(file: File): Promise<HTMLCanvasElement> {
+export async function getOrientedCanvas(file: File): Promise<HTMLCanvasElement> {
   const rawBlob = await normalizeHeicIfNeeded(file);
   const orientation = await readExifOrientation(rawBlob);
   const img = await loadImageFromBlob(rawBlob);
@@ -221,6 +336,137 @@ async function getOrientedCanvas(file: File): Promise<HTMLCanvasElement> {
   return canvas;
 }
 
+interface DetectedFaceBox {
+  boundingBox: DOMRectReadOnly;
+}
+interface BrowserFaceDetector {
+  detect(image: ImageBitmapSource): Promise<DetectedFaceBox[]>;
+}
+interface WindowWithFaceDetector extends Window {
+  FaceDetector?: new (opts?: { maxDetectedFaces?: number; fastMode?: boolean }) => BrowserFaceDetector;
+}
+
+/**
+ * Detecta la cara en el canvas si el navegador soporta FaceDetector API.
+ * Si no está disponible o no hay rostro claro, retorna un encuadre superior-centrado ideal para retratos.
+ */
+export async function detectFaceCropCenter(
+  source: HTMLCanvasElement
+): Promise<{ crop: CropTransform; faceDetected: boolean }> {
+  const sw = source.width || 1;
+  const sh = source.height || 1;
+  const fallbackOffsetY = sh > sw ? -0.24 : -0.1;
+
+  try {
+    const DetectorCtor = (window as WindowWithFaceDetector).FaceDetector;
+    if (!DetectorCtor) {
+      return {
+        crop: { zoom: 1, offsetX: 0, offsetY: fallbackOffsetY },
+        faceDetected: false,
+      };
+    }
+    const detector = new DetectorCtor({ maxDetectedFaces: 1, fastMode: true });
+    const faces = await detector.detect(source);
+    if (!faces || faces.length === 0) {
+      return {
+        crop: { zoom: 1, offsetX: 0, offsetY: fallbackOffsetY },
+        faceDetected: false,
+      };
+    }
+
+    const box = faces[0].boundingBox;
+    const faceCx = box.x + box.width / 2;
+    const faceCy = box.y + box.height / 2;
+    const minDim = Math.min(sw, sh);
+    const faceRatio = Math.max(box.width, box.height) / Math.max(1, minDim);
+    // Zoom suave si el rostro ocupa menos del 38% del encuadre base
+    const desiredZoom = faceRatio < 0.32 ? Math.min(1.65, Math.max(1.1, 0.42 / Math.max(0.15, faceRatio))) : 1.05;
+
+    const baseSquare = minDim / desiredZoom;
+    const maxOffsetX = Math.max(1, (sw - baseSquare) / 2);
+    const maxOffsetY = Math.max(1, (sh - baseSquare) / 2);
+
+    const normX = Math.max(-1, Math.min(1, (faceCx - sw / 2) / maxOffsetX));
+    const normY = Math.max(-1, Math.min(1, (faceCy - sh / 2) / maxOffsetY));
+
+    return {
+      crop: {
+        zoom: Number(desiredZoom.toFixed(2)),
+        offsetX: Number(normX.toFixed(3)),
+        offsetY: Number(normY.toFixed(3)),
+      },
+      faceDetected: true,
+    };
+  } catch {
+    return {
+      crop: { zoom: 1, offsetX: 0, offsetY: fallbackOffsetY },
+      faceDetected: false,
+    };
+  }
+}
+
+export async function autoDetectProfileCropForFile(
+  file: File
+): Promise<{ crop: CropTransform; faceDetected: boolean; previewDataUrl: string }> {
+  const oriented = await getOrientedCanvas(file);
+  const detected = await detectFaceCropCenter(oriented);
+  return {
+    ...detected,
+    previewDataUrl: oriented.toDataURL('image/jpeg', 0.85),
+  };
+}
+
+/** Aplica mejora sutil de brillo, contraste, saturación y nitidez sin distorsionar colores */
+function applySubtleEnhancement(canvas: HTMLCanvasElement): void {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  const w = canvas.width;
+  const h = canvas.height;
+  if (w < 4 || h < 4) return;
+
+  // Paso 1: leve ajuste tonal (brillo +4%, contraste +7%, saturación +6%)
+  const temp = document.createElement('canvas');
+  temp.width = w;
+  temp.height = h;
+  const tCtx = temp.getContext('2d');
+  if (!tCtx) return;
+  tCtx.filter = 'brightness(1.04) contrast(1.07) saturate(1.06)';
+  tCtx.drawImage(canvas, 0, 0);
+  tCtx.filter = 'none';
+
+  // Paso 2: nitidez suave (unsharp kernel 3x3 peso bajo = 0.18)
+  const srcData = tCtx.getImageData(0, 0, w, h);
+  const dstData = ctx.createImageData(w, h);
+  const src = srcData.data;
+  const dst = dstData.data;
+  const amount = 0.18;
+
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const idx = (y * w + x) * 4;
+      if (x === 0 || y === 0 || x === w - 1 || y === h - 1) {
+        dst[idx] = src[idx];
+        dst[idx + 1] = src[idx + 1];
+        dst[idx + 2] = src[idx + 2];
+        dst[idx + 3] = src[idx + 3];
+        continue;
+      }
+      const up = ((y - 1) * w + x) * 4;
+      const dn = ((y + 1) * w + x) * 4;
+      const lf = (y * w + (x - 1)) * 4;
+      const rt = (y * w + (x + 1)) * 4;
+      for (let c = 0; c < 3; c++) {
+        const center = src[idx + c];
+        const blur = (src[up + c] + src[dn + c] + src[lf + c] + src[rt + c]) * 0.25;
+        const sharpened = center + (center - blur) * (1 + amount * 3);
+        dst[idx + c] = Math.max(0, Math.min(255, Math.round(sharpened)));
+      }
+      dst[idx + 3] = src[idx + 3];
+    }
+  }
+  ctx.putImageData(dstData, 0, 0);
+}
+
 function canvasToBlob(canvas: HTMLCanvasElement, mimeType: string, quality: number): Promise<Blob> {
   return new Promise((resolve, reject) => {
     canvas.toBlob(
@@ -266,14 +512,76 @@ async function encodeCanvasWithFallback(
   return { blob: pngBlob, mimeType: 'image/png', ext: 'png' };
 }
 
+function renderCroppedCanvas(
+  source: HTMLCanvasElement,
+  targetW: number,
+  targetH: number,
+  preset: ImageUsePreset,
+  crop: CropTransform
+): HTMLCanvasElement {
+  const sw = source.width;
+  const sh = source.height;
+  const out = document.createElement('canvas');
+  out.width = targetW;
+  out.height = targetH;
+  const ctx = out.getContext('2d');
+  if (!ctx) throw new Error('Error de contexto gráfico.');
+
+  if (preset !== 'logo') {
+    ctx.clearRect(0, 0, targetW, targetH);
+  }
+
+  const targetRatio = targetW / targetH;
+  const sourceRatio = sw / sh;
+
+  let cropW = sw;
+  let cropH = sh;
+  if (preset === 'profile' || preset === 'cover') {
+    if (sourceRatio > targetRatio) {
+      cropW = sh * targetRatio;
+      cropH = sh;
+    } else {
+      cropW = sw;
+      cropH = sw / targetRatio;
+    }
+  }
+
+  const zoom = Math.max(1, Math.min(3, crop.zoom || 1));
+  cropW = cropW / zoom;
+  cropH = cropH / zoom;
+
+  const maxOffsetX = Math.max(0, (sw - cropW) / 2);
+  const maxOffsetY = Math.max(0, (sh - cropH) / 2);
+  const sx = Math.max(0, Math.min(sw - cropW, (sw - cropW) / 2 + crop.offsetX * maxOffsetX));
+  const sy = Math.max(0, Math.min(sh - cropH, (sh - cropH) / 2 + crop.offsetY * maxOffsetY));
+
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(source, sx, sy, cropW, cropH, 0, 0, targetW, targetH);
+
+  if (crop.autoEnhance) {
+    applySubtleEnhancement(out);
+  }
+  return out;
+}
+
 export async function processImageWithPreset(
   file: File,
   preset: ImageUsePreset,
-  crop: CropTransform = { zoom: 1, offsetX: 0, offsetY: 0 }
+  crop?: CropTransform
 ): Promise<ProcessedMediaResult> {
   const source = await getOrientedCanvas(file);
   const sw = source.width;
   const sh = source.height;
+
+  let effectiveCrop: CropTransform = crop || { zoom: 1, offsetX: 0, offsetY: 0 };
+  let faceDetected = false;
+
+  if (preset === 'profile' && !crop) {
+    const detected = await detectFaceCropCenter(source);
+    effectiveCrop = { ...detected.crop, autoEnhance: false };
+    faceDetected = detected.faceDetected;
+  }
 
   let targetW = sw;
   let targetH = sh;
@@ -304,53 +612,42 @@ export async function processImageWithPreset(
     }
   }
 
-  const out = document.createElement('canvas');
-  out.width = targetW;
-  out.height = targetH;
-  const ctx = out.getContext('2d');
-  if (!ctx) throw new Error('Error de contexto gráfico.');
-
-  if (preset !== 'logo') {
-    ctx.clearRect(0, 0, targetW, targetH);
-  }
-
-  const targetRatio = targetW / targetH;
-  const sourceRatio = sw / sh;
-
-  // Base cover crop dimensions before zoom
-  let cropW = sw;
-  let cropH = sh;
-  if (preset === 'profile' || preset === 'cover') {
-    if (sourceRatio > targetRatio) {
-      cropW = sh * targetRatio;
-      cropH = sh;
-    } else {
-      cropW = sw;
-      cropH = sw / targetRatio;
-    }
-  }
-
-  const zoom = Math.max(1, Math.min(3, crop.zoom || 1));
-  cropW = cropW / zoom;
-  cropH = cropH / zoom;
-
-  const maxOffsetX = Math.max(0, (sw - cropW) / 2);
-  const maxOffsetY = Math.max(0, (sh - cropH) / 2);
-  const sx = Math.max(0, Math.min(sw - cropW, (sw - cropW) / 2 + crop.offsetX * maxOffsetX));
-  const sy = Math.max(0, Math.min(sh - cropH, (sh - cropH) / 2 + crop.offsetY * maxOffsetY));
-
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(source, sx, sy, cropW, cropH, 0, 0, targetW, targetH);
-
-  // WebP con respaldo automático JPEG/PNG para navegadores antiguos (p. ej. Safari clásico)
-  const quality = preset === 'logo' ? 0.92 : 0.84;
+  const out = renderCroppedCanvas(source, targetW, targetH, preset, effectiveCrop);
+  const quality = preset === 'logo' ? 0.92 : 0.85;
   const mainEncoded = await encodeCanvasWithFallback(out, quality, preset === 'logo');
+  const baseName = file.name.replace(/\.[^.]+$/, '') || 'imagen';
 
-  // Generate 480px thumbnail for gallery/cover
   let thumbBlob: Blob | undefined;
   let thumbPreviewUrl: string | undefined;
-  if (preset === 'gallery' || preset === 'cover') {
+  let profileThumb: ProfileVariantBlob | undefined;
+  let profileMedium: ProfileVariantBlob | undefined;
+
+  if (preset === 'profile') {
+    // Generar variantes 96px y 256px automáticamente en WebP (con fallback JPEG)
+    const buildVariant = async (dim: number, tag: string, q: number): Promise<ProfileVariantBlob> => {
+      const c = document.createElement('canvas');
+      c.width = dim;
+      c.height = dim;
+      const cCtx = c.getContext('2d');
+      if (cCtx) {
+        cCtx.imageSmoothingEnabled = true;
+        cCtx.imageSmoothingQuality = 'high';
+        cCtx.drawImage(out, 0, 0, dim, dim);
+      }
+      const enc = await encodeCanvasWithFallback(c, q, false);
+      return {
+        blob: enc.blob,
+        mimeType: enc.mimeType,
+        fileName: `${baseName}_${tag}.${enc.ext}`,
+        width: dim,
+        height: dim,
+        previewUrl: URL.createObjectURL(enc.blob),
+      };
+    };
+
+    profileThumb = await buildVariant(96, '96', 0.8);
+    profileMedium = await buildVariant(256, '256', 0.83);
+  } else if (preset === 'gallery' || preset === 'cover') {
     const thumbW = 480;
     const thumbH = Math.round((targetH / targetW) * thumbW);
     const thumbCanvas = document.createElement('canvas');
@@ -365,16 +662,35 @@ export async function processImageWithPreset(
     }
   }
 
-  const baseName = file.name.replace(/\.[^.]+$/, '');
   return {
     blob: mainEncoded.blob,
     previewUrl: URL.createObjectURL(mainEncoded.blob),
     thumbnailBlob: thumbBlob,
     thumbnailPreviewUrl: thumbPreviewUrl,
+    profileThumb,
+    profileMedium,
     mimeType: mainEncoded.mimeType,
     fileName: `${baseName}.${mainEncoded.ext}`,
     width: targetW,
     height: targetH,
+    faceDetected,
+  };
+}
+
+/** Genera vista rápida cuadrada antes/después para el editor de recorte */
+export async function renderCropPreviewComparison(
+  file: File,
+  preset: ImageUsePreset,
+  crop: CropTransform
+): Promise<{ originalUrl: string; enhancedUrl: string }> {
+  const source = await getOrientedCanvas(file);
+  const w = preset === 'profile' ? 320 : 480;
+  const h = preset === 'profile' ? 320 : preset === 'cover' ? 270 : 360;
+  const originalCanvas = renderCroppedCanvas(source, w, h, preset, { ...crop, autoEnhance: false });
+  const enhancedCanvas = renderCroppedCanvas(source, w, h, preset, { ...crop, autoEnhance: true });
+  return {
+    originalUrl: originalCanvas.toDataURL('image/jpeg', 0.86),
+    enhancedUrl: enhancedCanvas.toDataURL('image/jpeg', 0.86),
   };
 }
 

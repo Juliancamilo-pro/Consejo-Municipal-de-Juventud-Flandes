@@ -4,6 +4,7 @@ import {
   Camera,
   Check,
   Crop,
+  Eye,
   FileArchive,
   FileAudio,
   FileSpreadsheet,
@@ -14,6 +15,7 @@ import {
   Paperclip,
   Presentation,
   RefreshCw,
+  Sparkles,
   UploadCloud,
   X,
   ZoomIn,
@@ -21,13 +23,17 @@ import {
 } from 'lucide-react';
 import { apiRequest, resolveApiUrl } from '../lib/apiClient';
 import {
+  autoDetectProfileCropForFile,
   classifyFile,
   extractVideoThumbnail,
   formatBytes,
   processImageWithPreset,
+  renderCropPreviewComparison,
+  validateFileMagicBytes,
   type CropTransform,
   type ImageUsePreset,
   type MediaCategory,
+  type ProfileVariantBlob,
 } from '../lib/mediaProcessor';
 import { parseVideoEmbedUrl } from '../lib/storageUtils';
 import { useToast } from './ToastProvider';
@@ -35,6 +41,8 @@ import { useToast } from './ToastProvider';
 export interface UploadedFileInfo {
   url: string;
   thumbnailUrl?: string;
+  thumbUrl?: string;
+  mediumUrl?: string;
   storagePath?: string;
   thumbnailStoragePath?: string;
   videoSource?: 'upload' | 'youtube' | 'vimeo';
@@ -52,6 +60,9 @@ interface QueuedItem {
   thumbnailUrl?: string;
   processedBlob?: Blob;
   processedThumbBlob?: Blob;
+  profileThumb?: ProfileVariantBlob;
+  profileMedium?: ProfileVariantBlob;
+  faceDetected?: boolean;
   finalName: string;
   finalMime: string;
   progress: number;
@@ -79,6 +90,8 @@ function FileCategoryIcon({ category }: { category: MediaCategory }) {
       return <Presentation className="h-5 w-5 text-amber-600 dark:text-amber-400" />;
     case 'zip':
       return <FileArchive className="h-5 w-5 text-violet-600 dark:text-violet-400" />;
+    case 'text':
+      return <FileText className="h-5 w-5 text-teal-600 dark:text-teal-400" />;
     default:
       return <Paperclip className="h-5 w-5 text-slate-600 dark:text-slate-400" />;
   }
@@ -109,8 +122,14 @@ export function MediaUploader({
     zoom: 1,
     offsetX: 0,
     offsetY: 0,
+    autoEnhance: false,
   });
   const [cropPreviewSrc, setCropPreviewSrc] = useState<string>('');
+  const [cropCompareUrls, setCropCompareUrls] = useState<{
+    originalUrl: string;
+    enhancedUrl: string;
+  } | null>(null);
+  const [showBeforeOriginal, setShowBeforeOriginal] = useState(false);
   const [dragPanStart, setDragPanStart] = useState<{ x: number; y: number } | null>(null);
   const [externalVideoUrl, setExternalVideoUrl] = useState('');
 
@@ -122,7 +141,7 @@ export function MediaUploader({
 
   const presetLabel =
     imagePreset === 'profile'
-      ? 'Foto de perfil (1:1 · 512×512 WebP)'
+      ? 'Foto de perfil (1:1 · 96/256/512px WebP + auto-encuadre facial)'
       : imagePreset === 'cover'
       ? 'Portada / Banner (16:9 · 1600×900 WebP)'
       : imagePreset === 'logo'
@@ -137,7 +156,14 @@ export function MediaUploader({
 
       const newItems: QueuedItem[] = [];
       for (const file of selected) {
-        if (file.size > maxMbAllowed * 1024 * 1024 && classifyFile(file) !== 'image') {
+        const magicCheck = await validateFileMagicBytes(file);
+        if (!magicCheck.valid) {
+          showToast('Archivo bloqueado por seguridad', 'error', magicCheck.reason);
+          continue;
+        }
+
+        const category = classifyFile(file);
+        if (file.size > maxMbAllowed * 1024 * 1024 && category !== 'image') {
           showToast(
             `${file.name} supera ${maxMbAllowed} MB`,
             'error',
@@ -146,7 +172,6 @@ export function MediaUploader({
           continue;
         }
         const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        const category = classifyFile(file);
         const initialPreview =
           category === 'image' || category === 'video' ? URL.createObjectURL(file) : '';
 
@@ -159,7 +184,12 @@ export function MediaUploader({
           finalMime: file.type || 'application/octet-stream',
           progress: 0,
           status: 'processing',
-          crop: { zoom: 1, offsetX: 0, offsetY: 0 },
+          crop: {
+            zoom: 1,
+            offsetX: 0,
+            offsetY: imagePreset === 'profile' ? -0.2 : 0,
+            autoEnhance: false,
+          },
         });
       }
 
@@ -169,14 +199,23 @@ export function MediaUploader({
       for (const item of newItems) {
         try {
           if (item.category === 'image') {
-            const processed = await processImageWithPreset(item.file, imagePreset, item.crop);
+            let initialCrop: CropTransform | undefined;
+            if (imagePreset === 'profile') {
+              const detected = await autoDetectProfileCropForFile(item.file);
+              initialCrop = { ...detected.crop, autoEnhance: false };
+            }
+            const processed = await processImageWithPreset(item.file, imagePreset, initialCrop);
             setQueue((prev) =>
               prev.map((q) =>
                 q.id === item.id
                   ? {
                       ...q,
+                      crop: initialCrop || q.crop,
+                      faceDetected: processed.faceDetected,
                       processedBlob: processed.blob,
                       processedThumbBlob: processed.thumbnailBlob,
+                      profileThumb: processed.profileThumb,
+                      profileMedium: processed.profileMedium,
                       previewUrl: processed.previewUrl,
                       thumbnailUrl: processed.thumbnailPreviewUrl,
                       finalName: processed.fileName,
@@ -259,7 +298,7 @@ export function MediaUploader({
 
     setQueue((prev) =>
       prev.map((q) =>
-        q.id === item.id ? { ...q, status: 'uploading', progress: 20, errorMsg: undefined } : q
+        q.id === item.id ? { ...q, status: 'uploading', progress: 15, errorMsg: undefined } : q
       )
     );
 
@@ -272,9 +311,7 @@ export function MediaUploader({
         return null;
       }
 
-      setQueue((prev) =>
-        prev.map((q) => (q.id === item.id ? { ...q, progress: 65 } : q))
-      );
+      setQueue((prev) => prev.map((q) => (q.id === item.id ? { ...q, progress: 50 } : q)));
 
       const mainRes = await apiRequest<{ url: string; storagePath: string }>('/api/media/upload', {
         method: 'POST',
@@ -307,9 +344,49 @@ export function MediaUploader({
         thumbStoragePath = thumbRes.storagePath;
       }
 
+      // Variantes de foto de perfil (96px y 256px)
+      let profileThumbUrl: string | undefined;
+      let profileMediumUrl: string | undefined;
+      if (imagePreset === 'profile' && item.profileThumb && item.profileMedium) {
+        setQueue((prev) => prev.map((q) => (q.id === item.id ? { ...q, progress: 78 } : q)));
+        const [b96, b256] = await Promise.all([
+          blobToBase64(item.profileThumb.blob),
+          blobToBase64(item.profileMedium.blob),
+        ]);
+        const [r96, r256] = await Promise.all([
+          apiRequest<{ url: string }>('/api/media/upload', {
+            method: 'POST',
+            body: {
+              folder: storageFolder,
+              fileName: item.profileThumb.fileName,
+              mimeType: item.profileThumb.mimeType,
+              fileSize: item.profileThumb.blob.size,
+              base64Data: b96,
+            },
+            skipRefresh: true,
+          }),
+          apiRequest<{ url: string }>('/api/media/upload', {
+            method: 'POST',
+            body: {
+              folder: storageFolder,
+              fileName: item.profileMedium.fileName,
+              mimeType: item.profileMedium.mimeType,
+              fileSize: item.profileMedium.blob.size,
+              base64Data: b256,
+            },
+            skipRefresh: true,
+          }),
+        ]);
+        profileThumbUrl = resolveApiUrl(r96.url);
+        profileMediumUrl = resolveApiUrl(r256.url);
+        thumbUrl = profileThumbUrl;
+      }
+
       const info: UploadedFileInfo = {
         url: resolveApiUrl(mainRes.url),
         thumbnailUrl: thumbUrl,
+        thumbUrl: profileThumbUrl,
+        mediumUrl: profileMediumUrl,
         storagePath: mainRes.storagePath,
         thumbnailStoragePath: thumbStoragePath,
         videoSource: item.category === 'video' ? 'upload' : undefined,
@@ -390,10 +467,48 @@ export function MediaUploader({
     );
   };
 
-  const openCropEditor = (item: QueuedItem) => {
+  const openCropEditor = async (item: QueuedItem) => {
     setEditingCropId(item.id);
     setCropDraft(item.crop);
+    setShowBeforeOriginal(false);
+    setCropCompareUrls(null);
     setCropPreviewSrc(URL.createObjectURL(item.file));
+    try {
+      const comp = await renderCropPreviewComparison(item.file, imagePreset, item.crop);
+      setCropCompareUrls(comp);
+    } catch {
+      // Optional comparison preview
+    }
+  };
+
+  const refreshEnhanceComparison = async (nextCrop: CropTransform) => {
+    if (!editingCropId) return;
+    const target = queue.find((q) => q.id === editingCropId);
+    if (!target) return;
+    try {
+      const comp = await renderCropPreviewComparison(target.file, imagePreset, nextCrop);
+      setCropCompareUrls(comp);
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleAutoDetectInModal = async () => {
+    if (!editingCropId) return;
+    const target = queue.find((q) => q.id === editingCropId);
+    if (!target) return;
+    try {
+      const res = await autoDetectProfileCropForFile(target.file);
+      const next = { ...res.crop, autoEnhance: cropDraft.autoEnhance };
+      setCropDraft(next);
+      await refreshEnhanceComparison(next);
+      showToast(
+        res.faceDetected ? 'Rostro detectado y centrado' : 'Encuadre de retrato superior aplicado',
+        'info'
+      );
+    } catch {
+      showToast('No se pudo analizar la imagen', 'error');
+    }
   };
 
   const applyCrop = async () => {
@@ -410,15 +525,19 @@ export function MediaUploader({
                 crop: cropDraft,
                 processedBlob: processed.blob,
                 processedThumbBlob: processed.thumbnailBlob,
+                profileThumb: processed.profileThumb,
+                profileMedium: processed.profileMedium,
                 previewUrl: processed.previewUrl,
                 thumbnailUrl: processed.thumbnailPreviewUrl,
+                finalName: processed.fileName,
+                finalMime: processed.mimeType,
                 status: 'pending',
               }
             : q
         )
       );
       setEditingCropId(null);
-      showToast('Recorte aplicado y optimizado a WebP', 'success');
+      showToast('Recorte aplicado y optimizado', 'success');
     } catch {
       showToast('No se pudo recortar la imagen', 'error');
     }
@@ -458,7 +577,7 @@ export function MediaUploader({
         <input
           ref={fileInputRef}
           type="file"
-          accept="*/*"
+          accept={imagePreset === 'profile' ? 'image/*,.heic,.heif' : '*/*'}
           multiple={multiple}
           onChange={(e) => e.target.files && addFiles(e.target.files)}
           className="hidden"
@@ -467,7 +586,7 @@ export function MediaUploader({
           ref={cameraInputRef}
           type="file"
           accept="image/*,video/*"
-          capture="environment"
+          capture={imagePreset === 'profile' ? 'user' : 'environment'}
           onChange={(e) => e.target.files && addFiles(e.target.files)}
           className="hidden"
         />
@@ -480,7 +599,7 @@ export function MediaUploader({
         </p>
         <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
           {helperText ||
-            'Imágenes (JPG, PNG, HEIC, WebP), video MP4/WebM, audio, PDF, Word, Excel, PowerPoint y ZIP.'}
+            'Imágenes (JPG, PNG, HEIC, WebP, SVG, AVIF), video MP4/WebM, audio, PDF, Office, TXT/MD, CSV y ZIP/RAR/7Z.'}
         </p>
 
         <div className="mt-4 flex flex-wrap items-center justify-center gap-2.5">
@@ -561,9 +680,15 @@ export function MediaUploader({
                     </span>
                   </div>
 
+                  {item.faceDetected && item.status === 'pending' && (
+                    <p className="text-[11px] text-emerald-600 dark:text-emerald-400 mt-0.5">
+                      Rostro centrado automáticamente (96 / 256 / 512 px)
+                    </p>
+                  )}
+
                   {item.status === 'processing' && (
                     <p className="text-[11px] text-cyan-600 dark:text-cyan-400 mt-1">
-                      Optimizando y corrigiendo orientación...
+                      Optimizando, detectando encuadre y corrigiendo orientación...
                     </p>
                   )}
 
@@ -605,7 +730,7 @@ export function MediaUploader({
                     <button
                       type="button"
                       onClick={() => openCropEditor(item)}
-                      title="Recortar y ajustar zoom"
+                      title="Recortar, mejorar luz y ajustar zoom"
                       className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-blue-600 cursor-pointer"
                     >
                       <Crop className="h-4 w-4" />
@@ -664,7 +789,7 @@ export function MediaUploader({
         )}
       </AnimatePresence>
 
-      {/* Crop & Zoom Modal */}
+      {/* Crop & Zoom & Auto-Enhance Modal */}
       <AnimatePresence>
         {editingCropId && (
           <motion.div
@@ -677,15 +802,15 @@ export function MediaUploader({
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
-              className="w-full max-w-lg rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 shadow-2xl"
+              className="w-full max-w-lg rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 shadow-2xl space-y-4"
             >
-              <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center justify-between">
                 <div>
                   <h4 className="text-base font-bold text-slate-900 dark:text-white">
-                    Ajustar encuadre y zoom
+                    Encuadre, zoom y mejora visual
                   </h4>
                   <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Arrastra la imagen para centrar y ajusta el acercamiento ({presetLabel})
+                    Arrastra para centrar el rostro y ajusta los controles.
                   </p>
                 </div>
                 <button
@@ -700,7 +825,7 @@ export function MediaUploader({
               <div
                 className={`relative mx-auto overflow-hidden rounded-2xl bg-slate-950 select-none cursor-grab active:cursor-grabbing ${
                   imagePreset === 'profile'
-                    ? 'w-64 h-64 rounded-full'
+                    ? 'w-64 h-64 rounded-3xl ring-2 ring-emerald-500/70'
                     : imagePreset === 'cover'
                     ? 'w-full aspect-video'
                     : 'w-full aspect-[4/3]'
@@ -722,18 +847,26 @@ export function MediaUploader({
               >
                 {cropPreviewSrc && (
                   <img
-                    src={cropPreviewSrc}
+                    src={
+                      cropDraft.autoEnhance && cropCompareUrls && !showBeforeOriginal
+                        ? cropCompareUrls.enhancedUrl
+                        : cropPreviewSrc
+                    }
                     alt="Vista de recorte"
                     draggable={false}
                     className="w-full h-full object-cover pointer-events-none"
-                    style={{
-                      transform: `scale(${cropDraft.zoom}) translate(${-cropDraft.offsetX * 18}%, ${-cropDraft.offsetY * 18}%)`,
-                    }}
+                    style={
+                      cropDraft.autoEnhance && cropCompareUrls && !showBeforeOriginal
+                        ? undefined
+                        : {
+                            transform: `scale(${cropDraft.zoom}) translate(${-cropDraft.offsetX * 18}%, ${-cropDraft.offsetY * 18}%)`,
+                          }
+                    }
                   />
                 )}
               </div>
 
-              <div className="mt-5 space-y-3">
+              <div className="space-y-3">
                 <div className="flex items-center gap-3">
                   <ZoomOut className="h-4 w-4 text-slate-400" />
                   <input
@@ -742,30 +875,76 @@ export function MediaUploader({
                     max={3}
                     step={0.05}
                     value={cropDraft.zoom}
-                    onChange={(e) =>
-                      setCropDraft((prev) => ({ ...prev, zoom: Number(e.target.value) }))
-                    }
+                    onChange={(e) => {
+                      const next = { ...cropDraft, zoom: Number(e.target.value) };
+                      setCropDraft(next);
+                    }}
                     className="flex-1 accent-blue-600 cursor-pointer"
                   />
                   <ZoomIn className="h-4 w-4 text-slate-400" />
                 </div>
 
-                <div className="flex items-center justify-end gap-2 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setCropDraft({ zoom: 1, offsetX: 0, offsetY: 0 })}
-                    className="rounded-xl px-3.5 py-2 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-                  >
-                    Restablecer
-                  </button>
-                  <button
-                    type="button"
-                    onClick={applyCrop}
-                    className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-700 cursor-pointer"
-                  >
-                    <Check className="h-4 w-4" />
-                    Aplicar recorte WebP
-                  </button>
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60 p-3">
+                  <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-800 dark:text-slate-100 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(cropDraft.autoEnhance)}
+                      onChange={(e) => {
+                        const next = { ...cropDraft, autoEnhance: e.target.checked };
+                        setCropDraft(next);
+                        refreshEnhanceComparison(next);
+                      }}
+                      className="rounded border-slate-300 text-emerald-600 cursor-pointer"
+                    />
+                    <Sparkles className="h-3.5 w-3.5 text-emerald-600" />
+                    Mejorar foto (luz, contraste y nitidez)
+                  </label>
+
+                  {cropDraft.autoEnhance && (
+                    <button
+                      type="button"
+                      onPointerDown={() => setShowBeforeOriginal(true)}
+                      onPointerUp={() => setShowBeforeOriginal(false)}
+                      onPointerLeave={() => setShowBeforeOriginal(false)}
+                      onClick={() => setShowBeforeOriginal((v) => !v)}
+                      className="inline-flex items-center gap-1 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1 text-[11px] font-semibold cursor-pointer"
+                    >
+                      <Eye className="h-3 w-3" />
+                      {showBeforeOriginal ? 'Viendo: Antes' : 'Comparar: Antes/Después'}
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                  {imagePreset === 'profile' ? (
+                    <button
+                      type="button"
+                      onClick={handleAutoDetectInModal}
+                      className="rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 px-3 py-2 text-xs font-semibold text-emerald-700 dark:text-emerald-300 cursor-pointer"
+                    >
+                      Auto-centrar rostro
+                    </button>
+                  ) : (
+                    <span />
+                  )}
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setCropDraft({ zoom: 1, offsetX: 0, offsetY: 0, autoEnhance: false })}
+                      className="rounded-xl px-3 py-2 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                    >
+                      Restablecer
+                    </button>
+                    <button
+                      type="button"
+                      onClick={applyCrop}
+                      className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-700 cursor-pointer"
+                    >
+                      <Check className="h-4 w-4" />
+                      Aplicar recorte
+                    </button>
+                  </div>
                 </div>
               </div>
             </motion.div>

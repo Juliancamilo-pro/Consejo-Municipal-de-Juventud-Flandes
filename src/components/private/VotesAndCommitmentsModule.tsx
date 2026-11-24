@@ -1,30 +1,106 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { motion } from 'motion/react';
 import {
+  BellRing,
   Check,
   CheckCircle2,
   ClipboardCheck,
+  Clock,
   Edit3,
+  FileSpreadsheet,
+  Hand,
   Lock,
   Plus,
   Printer,
+  ShieldAlert,
   Trash2,
   Unlock,
   Vote,
   X,
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { ApiRequestError, apiRequest } from '../../lib/apiClient';
 import { isLeadershipTier } from '../../lib/security';
 import type {
   AccessTier,
   Commission,
   Commitment,
+  CouncilSession,
   CouncilVote,
+  MajorityType,
   PublicCouncilor,
   RoleLabel,
   VoteMode,
 } from '../../types/cmj';
+import { BrandLogo } from '../BrandLogo';
+import { AvatarBadge } from '../public/AvatarBadge';
 import { useToast } from '../ToastProvider';
+import { AnimatedCounter, ConfettiBurst } from '../ui/AnimatedPrimitives';
 import { recordAudit } from './auditHelper';
+
+const VOTE_COLORS = ['#059669', '#2563EB', '#F59E0B', '#E11D48', '#7C3AED', '#0D9488'];
+
+const MAJORITY_LABELS: Record<MajorityType, string> = {
+  simple: 'Mayoría simple',
+  absoluta: 'Mayoría absoluta (50% + 1)',
+  dos_tercios: 'Mayoría calificada (2/3)',
+  unanimidad: 'Unanimidad (100%)',
+};
+
+const MODE_LABELS: Record<VoteMode, string> = {
+  nominal: 'Nominal (voto público)',
+  secreto: 'Secreta (anónima)',
+  mano_alzada: 'Mano alzada (plenario)',
+};
+
+function VoteDonutChart({ options, tallies }: { options: string[]; tallies?: Record<string, number> }) {
+  const total = options.reduce((acc, opt) => acc + (tallies?.[opt] || 0), 0);
+  if (total === 0) {
+    return (
+      <div className="h-24 w-24 rounded-full border-4 border-dashed border-slate-200 dark:border-slate-800 flex items-center justify-center text-[10px] text-slate-400 shrink-0">
+        0 votos
+      </div>
+    );
+  }
+
+  const radius = 34;
+  const circumference = 2 * Math.PI * radius;
+  let offset = 0;
+
+  return (
+    <svg viewBox="0 0 90 90" className="h-24 w-24 shrink-0 -rotate-90" aria-label="Distribución de votos">
+      {options.map((opt, idx) => {
+        const count = tallies?.[opt] || 0;
+        const frac = count / total;
+        const dash = frac * circumference;
+        const currentOffset = offset;
+        offset += dash;
+        if (count === 0) return null;
+        return (
+          <circle
+            key={opt}
+            cx="45"
+            cy="45"
+            r={radius}
+            fill="transparent"
+            stroke={VOTE_COLORS[idx % VOTE_COLORS.length]}
+            strokeWidth="12"
+            strokeDasharray={`${dash} ${circumference - dash}`}
+            strokeDashoffset={-currentOffset}
+          />
+        );
+      })}
+      <text
+        x="45"
+        y="48"
+        textAnchor="middle"
+        className="rotate-90 origin-center fill-slate-800 dark:fill-white text-[14px] font-extrabold font-mono-num"
+      >
+        {total}
+      </text>
+    </svg>
+  );
+}
 
 export function VotesAndCommitmentsModule({
   uid,
@@ -33,6 +109,7 @@ export function VotesAndCommitmentsModule({
   accessTier,
   commissions,
   publicCouncilors,
+  sessions = [],
   votes,
   commitments,
 }: {
@@ -42,29 +119,40 @@ export function VotesAndCommitmentsModule({
   accessTier: AccessTier;
   commissions: Commission[];
   publicCouncilors: PublicCouncilor[];
+  sessions?: CouncilSession[];
   votes: CouncilVote[];
   commitments: Commitment[];
 }) {
   const { showToast } = useToast();
   const isLeader = isLeadershipTier(accessTier);
-  const activeCouncilors = publicCouncilors.filter((c) => c.active);
+  const activeCouncilors = useMemo(
+    () => publicCouncilors.filter((c) => c.active),
+    [publicCouncilors]
+  );
 
   // Nueva votación
   const [voteTitle, setVoteTitle] = useState('');
   const [voteDesc, setVoteDesc] = useState('');
   const [voteMode, setVoteMode] = useState<VoteMode>('nominal');
-  const [optionsText, setOptionsText] = useState('Sí\nNo\nAbstención');
+  const [majorityType, setMajorityType] = useState<MajorityType>('simple');
+  const [sessionId, setSessionId] = useState('');
+  const [optionsText, setOptionsText] = useState('Sí\nNo\nAbstención\nEn blanco');
   const [quorumReq, setQuorumReq] = useState(() =>
     Math.max(1, Math.floor(activeCouncilors.length / 2) + 1)
   );
+  const [opensAt, setOpensAt] = useState('');
   const [closesAt, setClosesAt] = useState('');
   const [printableVote, setPrintableVote] = useState<CouncilVote | null>(null);
+  const [confettiActive, setConfettiActive] = useState(false);
+  const [nowTick, setNowTick] = useState(() => Date.now());
 
   // Editar votación
   const [editingVoteId, setEditingVoteId] = useState<string | null>(null);
   const [editVoteTitle, setEditVoteTitle] = useState('');
   const [editVoteDesc, setEditVoteDesc] = useState('');
   const [editVoteMode, setEditVoteMode] = useState<VoteMode>('nominal');
+  const [editVoteMajority, setEditVoteMajority] = useState<MajorityType>('simple');
+  const [editVoteSessionId, setEditVoteSessionId] = useState('');
   const [editVoteQuorum, setEditVoteQuorum] = useState(1);
   const [editVoteDeadline, setEditVoteDeadline] = useState('');
   const [editVoteOptions, setEditVoteOptions] = useState('');
@@ -82,6 +170,30 @@ export function VotesAndCommitmentsModule({
   const [editCompCommId, setEditCompCommId] = useState('');
   const [editCompDue, setEditCompDue] = useState('');
 
+  useEffect(() => {
+    const id = window.setInterval(() => setNowTick(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const triggerConfetti = () => {
+    setConfettiActive(true);
+    window.setTimeout(() => setConfettiActive(false), 1600);
+  };
+
+  // Verificar quórum de sesión vinculada antes de abrir
+  const linkedSessionObj = sessions.find((s) => s.id === sessionId);
+  const linkedSessionPresent = linkedSessionObj
+    ? Object.values(linkedSessionObj.attendance || {}).filter(
+        (v) => v === 'presente' || v === 'tarde'
+      ).length
+    : null;
+  const linkedSessionQuorumMet =
+    linkedSessionObj && linkedSessionPresent !== null
+      ? linkedSessionPresent >= (linkedSessionObj.quorumRequired || 1)
+      : true;
+
+  const openPendingVotes = votes.filter((v) => v.status === 'abierta' && !v.voterUids.includes(uid));
+
   const handleCreateVote = async (e: React.FormEvent) => {
     e.preventDefault();
     const opts = optionsText
@@ -93,10 +205,14 @@ export function VotesAndCommitmentsModule({
       return;
     }
 
-    const tallies: Record<string, number> = {};
-    opts.forEach((o) => {
-      tallies[o] = 0;
-    });
+    if (linkedSessionObj && !linkedSessionQuorumMet) {
+      showToast(
+        'Quórum insuficiente en la sesión vinculada',
+        'error',
+        `Asistencia actual ${linkedSessionPresent}/${linkedSessionObj.quorumRequired || 1}. Verifica el llamado a lista primero.`
+      );
+      return;
+    }
 
     try {
       await apiRequest('/api/votes', {
@@ -104,9 +220,13 @@ export function VotesAndCommitmentsModule({
         body: {
           title: voteTitle.trim(),
           description: voteDesc.trim() || 'Votación oficial de plenaria CMJ Flandes',
+          sessionId,
           voteMode,
+          majorityType,
           options: opts,
           quorumRequired: Math.max(1, Number(quorumReq) || 1),
+          opensAt,
+          closesAt,
           deadline: closesAt,
         },
       });
@@ -114,13 +234,13 @@ export function VotesAndCommitmentsModule({
         uid,
         actorName,
         actorRoleLabel,
-        action: 'Abrió votación oficial',
+        action: `Abrió votación (${MODE_LABELS[voteMode]})`,
         module: 'Votaciones',
         targetTitle: voteTitle.trim(),
       });
       setVoteTitle('');
       setVoteDesc('');
-      showToast('Votación abierta', 'success');
+      showToast('Votación abierta y notificada a los consejeros', 'success');
     } catch (err) {
       const msg =
         err instanceof ApiRequestError ? err.message : 'No se pudo crear la votación';
@@ -139,7 +259,12 @@ export function VotesAndCommitmentsModule({
         method: 'POST',
         body: { option },
       });
-      showToast('Voto registrado correctamente', 'success');
+      showToast(
+        vote.voteMode === 'secreto'
+          ? 'Tu voto secreto quedó registrado de forma anónima'
+          : `Voto registrado: ${option}`,
+        'success'
+      );
     } catch (err) {
       const msg =
         err instanceof ApiRequestError ? err.message : 'No se pudo registrar el voto';
@@ -154,7 +279,16 @@ export function VotesAndCommitmentsModule({
         method: 'PATCH',
         body: { status: next },
       });
-      showToast(next === 'cerrada' ? 'Votación cerrada' : 'Votación reabierta', 'info');
+      if (next === 'cerrada') {
+        const total = vote.voterUids.length;
+        const quorumMet = total >= (vote.quorumRequired || 1);
+        const yesVotes = vote.tallies?.['Sí'] || vote.tallies?.['A favor'] || 0;
+        const topOpt = vote.options.slice().sort((a, b) => (vote.tallies?.[b] || 0) - (vote.tallies?.[a] || 0))[0];
+        if (quorumMet && (yesVotes > 0 || topOpt === vote.options[0])) {
+          triggerConfetti();
+        }
+      }
+      showToast(next === 'cerrada' ? 'Votación cerrada y escrutada' : 'Votación reabierta', 'info');
     } catch {
       showToast('Error al actualizar votación', 'error');
     }
@@ -165,8 +299,10 @@ export function VotesAndCommitmentsModule({
     setEditVoteTitle(v.title);
     setEditVoteDesc(v.description || '');
     setEditVoteMode(v.voteMode || 'nominal');
+    setEditVoteMajority(v.majorityType || 'simple');
+    setEditVoteSessionId(v.sessionId || '');
     setEditVoteQuorum(v.quorumRequired || 1);
-    setEditVoteDeadline(v.deadline || '');
+    setEditVoteDeadline(v.closesAt || v.deadline || '');
     setEditVoteOptions(v.options.join('\n'));
   };
 
@@ -176,7 +312,10 @@ export function VotesAndCommitmentsModule({
       const payload: Record<string, unknown> = {
         title: editVoteTitle.trim(),
         description: editVoteDesc.trim(),
+        sessionId: editVoteSessionId,
+        majorityType: editVoteMajority,
         quorumRequired: Math.max(1, Number(editVoteQuorum) || 1),
+        closesAt: editVoteDeadline,
         deadline: editVoteDeadline,
       };
       if (v.voterUids.length === 0) {
@@ -207,6 +346,41 @@ export function VotesAndCommitmentsModule({
     } catch {
       showToast('No se pudo eliminar', 'error');
     }
+  };
+
+  const handleExportVoteExcel = (v: CouncilVote) => {
+    const total = v.voterUids.length;
+    const summaryRows = v.options.map((opt) => {
+      const count = v.tallies?.[opt] || 0;
+      const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+      return {
+        Moción: v.title,
+        Modalidad: MODE_LABELS[v.voteMode || 'nominal'],
+        Mayoría: MAJORITY_LABELS[v.majorityType || 'simple'],
+        Opción: opt,
+        Votos: count,
+        Porcentaje: `${pct}%`,
+        Resultado: v.resultSummary || 'En curso',
+      };
+    });
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summaryRows), 'Escrutinio');
+
+    if (v.voteMode !== 'secreto' && v.nominalBallots && Object.keys(v.nominalBallots).length > 0) {
+      const nominalRows = Object.entries(v.nominalBallots).map(([voterUid, choice]) => {
+        const c = publicCouncilors.find((u) => u.uid === voterUid);
+        return {
+          Consejero: c?.fullName || 'Consejero',
+          Cargo: c?.roleLabel || 'Consejero',
+          Voto: choice,
+        };
+      });
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(nominalRows), 'Voto Nominal');
+    }
+
+    XLSX.writeFile(wb, `Escrutinio_${v.title.slice(0, 24).replace(/\s+/g, '_')}.xlsx`);
+    showToast('Escrutinio exportado a Excel', 'success');
   };
 
   const handleCreateCommitment = async (e: React.FormEvent) => {
@@ -288,8 +462,35 @@ export function VotesAndCommitmentsModule({
     }
   };
 
+  const formatCountdown = (targetIso?: string) => {
+    if (!targetIso) return null;
+    const targetTs = Date.parse(targetIso);
+    if (Number.isNaN(targetTs)) return null;
+    const diff = targetTs - nowTick;
+    if (diff <= 0) return 'Tiempo cumplido';
+    const hrs = Math.floor(diff / 3_600_000);
+    const mins = Math.floor((diff % 3_600_000) / 60_000);
+    const secs = Math.floor((diff % 60_000) / 1000);
+    if (hrs >= 24) return `${Math.floor(hrs / 24)}d ${hrs % 24}h`;
+    return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  };
+
   return (
     <div className="space-y-8">
+      <ConfettiBurst active={confettiActive} />
+
+      {/* Aviso visual de votaciones abiertas pendientes */}
+      {openPendingVotes.length > 0 && (
+        <div className="rounded-2xl border border-blue-200 dark:border-cyan-900/60 bg-blue-50/80 dark:bg-blue-950/30 p-4 flex items-center gap-3 no-print">
+          <BellRing className="h-5 w-5 text-blue-600 dark:text-cyan-400 shrink-0 animate-pulse" />
+          <p className="text-xs font-semibold text-blue-900 dark:text-cyan-100">
+            Tienes {openPendingVotes.length}{' '}
+            {openPendingVotes.length === 1 ? 'votación abierta pendiente' : 'votaciones abiertas pendientes'}{' '}
+            por emitir tu voto.
+          </p>
+        </div>
+      )}
+
       {/* Votaciones */}
       <div className="space-y-5 no-print">
         {isLeader && (
@@ -299,10 +500,10 @@ export function VotesAndCommitmentsModule({
           >
             <div>
               <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <Vote className="h-5 w-5 text-blue-600" /> Votaciones de Plenaria
+                <Vote className="h-5 w-5 text-blue-600" /> Votaciones de Plenaria y Escrutinio
               </h2>
               <p className="text-xs text-slate-500">
-                Configura votación nominal (voto visible) o secreta, quórum mínimo y opciones personalizadas.
+                Configura modalidad (nominal, secreta o mano alzada), regla de mayoría, vinculación a sesión y horario programado.
               </p>
             </div>
 
@@ -321,44 +522,92 @@ export function VotesAndCommitmentsModule({
                 className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2.5 text-sm"
               >
                 <option value="nominal">Votación Nominal (pública)</option>
-                <option value="secreto">Votación Secreta</option>
+                <option value="secreto">Votación Secreta (anónima)</option>
+                <option value="mano_alzada">Mano Alzada (plenario)</option>
               </select>
-              <input
-                type="date"
-                value={closesAt}
-                onChange={(e) => setClosesAt(e.target.value)}
+              <select
+                value={majorityType}
+                onChange={(e) => setMajorityType(e.target.value as MajorityType)}
                 className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2.5 text-sm"
-              />
+              >
+                <option value="simple">Mayoría simple</option>
+                <option value="absoluta">Mayoría absoluta (50%+1)</option>
+                <option value="dos_tercios">Mayoría calificada (2/3)</option>
+                <option value="unanimidad">Unanimidad (100%)</option>
+              </select>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
-              <textarea
-                rows={3}
-                value={optionsText}
-                onChange={(e) => setOptionsText(e.target.value)}
-                placeholder="Una opción por línea (ej: Sí / No / Abstención)"
-                className="sm:col-span-5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3.5 py-2 text-xs"
-              />
+              <div className="sm:col-span-5 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold text-slate-500">Opciones (1 por línea)</span>
+                  <button
+                    type="button"
+                    onClick={() => setOptionsText('Sí\nNo\nAbstención\nEn blanco')}
+                    className="text-[11px] font-semibold text-blue-600 hover:underline cursor-pointer"
+                  >
+                    Plantilla estándar
+                  </button>
+                </div>
+                <textarea
+                  rows={3}
+                  value={optionsText}
+                  onChange={(e) => setOptionsText(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3.5 py-2 text-xs"
+                />
+              </div>
+
               <div className="sm:col-span-5 space-y-2">
                 <input
                   type="text"
                   value={voteDesc}
                   onChange={(e) => setVoteDesc(e.target.value)}
-                  placeholder="Contexto breve de la votación"
+                  placeholder="Contexto breve o número de proposición"
                   className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3.5 py-2 text-xs"
                 />
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="text-slate-500">Quórum mínimo requerido:</span>
+                <div className="grid grid-cols-2 gap-2">
+                  <select
+                    value={sessionId}
+                    onChange={(e) => setSessionId(e.target.value)}
+                    className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-2.5 py-2 text-xs"
+                  >
+                    <option value="">Sin sesión vinculada</option>
+                    {sessions.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.dateIso} · {s.title}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="flex items-center gap-1.5 text-xs">
+                    <span className="text-slate-500 shrink-0">Quórum:</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={quorumReq}
+                      onChange={(e) => setQuorumReq(Number(e.target.value))}
+                      className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-2.5 py-2 text-xs font-mono-num"
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
                   <input
-                    type="number"
-                    min={1}
-                    max={100}
-                    value={quorumReq}
-                    onChange={(e) => setQuorumReq(Number(e.target.value))}
-                    className="w-20 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-2.5 py-1 text-xs font-mono-num"
+                    type="datetime-local"
+                    title="Apertura programada (opcional)"
+                    value={opensAt}
+                    onChange={(e) => setOpensAt(e.target.value)}
+                    className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-2.5 py-1.5 text-[11px]"
+                  />
+                  <input
+                    type="datetime-local"
+                    title="Cierre programado (opcional)"
+                    value={closesAt}
+                    onChange={(e) => setClosesAt(e.target.value)}
+                    className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-2.5 py-1.5 text-[11px]"
                   />
                 </div>
               </div>
+
               <div className="sm:col-span-2 flex items-end">
                 <button
                   type="submit"
@@ -368,6 +617,13 @@ export function VotesAndCommitmentsModule({
                 </button>
               </div>
             </div>
+
+            {linkedSessionObj && !linkedSessionQuorumMet && (
+              <p className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-700 dark:text-amber-400">
+                <ShieldAlert className="h-4 w-4" />
+                Advertencia: la sesión seleccionada tiene {linkedSessionPresent}/{linkedSessionObj.quorumRequired || 1} presentes (sin quórum aún).
+              </p>
+            )}
           </form>
         )}
 
@@ -381,14 +637,18 @@ export function VotesAndCommitmentsModule({
               const totalVotes = v.voterUids.length;
               const alreadyVoted = v.voterUids.includes(uid);
               const quorumMet = totalVotes >= (v.quorumRequired || 1);
+              const countdown = v.status === 'abierta' ? formatCountdown(v.closesAt || v.deadline) : null;
+              const linkedSess = v.sessionId ? sessions.find((s) => s.id === v.sessionId) : null;
+              const mode = v.voteMode || 'nominal';
+
               return (
                 <div
                   key={v.id}
-                  className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 space-y-4"
+                  className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 space-y-4 shadow-sm"
                 >
                   <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-semibold">
                         <span
                           className={`rounded-md px-2 py-0.5 ${
                             v.status === 'abierta'
@@ -398,20 +658,46 @@ export function VotesAndCommitmentsModule({
                         >
                           {v.status === 'abierta' ? 'Abierta' : 'Cerrada'}
                         </span>
-                        <span className="text-blue-600 dark:text-cyan-400 uppercase">
-                          {v.voteMode === 'secreto' ? 'Voto Secreto' : 'Voto Nominal'}
+                        <span className="inline-flex items-center gap-1 rounded-md bg-blue-50 dark:bg-blue-950/50 px-2 py-0.5 text-blue-700 dark:text-cyan-300">
+                          {mode === 'mano_alzada' && <Hand className="h-3 w-3" />}
+                          {MODE_LABELS[mode]}
                         </span>
-                        <span className="text-slate-500 font-mono-num">
-                          Quórum: {totalVotes}/{v.quorumRequired || 1}{' '}
-                          {quorumMet ? '✓' : '(pendiente)'}
+                        <span className="text-slate-500">
+                          · {MAJORITY_LABELS[v.majorityType || 'simple']}
                         </span>
                       </div>
-                      <h3 className="mt-1.5 text-base font-bold text-slate-900 dark:text-white">
+
+                      <h3 className="mt-2 text-base font-bold text-slate-900 dark:text-white">
                         {v.title}
                       </h3>
                       <p className="text-xs text-slate-500 mt-0.5">{v.description}</p>
+                      <div className="mt-1.5 flex flex-wrap items-center gap-3 text-[11px] text-slate-500 font-mono-num">
+                        <span>
+                          Quórum: <AnimatedCounter value={totalVotes} />/{v.quorumRequired || 1}{' '}
+                          {quorumMet ? '✓' : '(pendiente)'}
+                        </span>
+                        {countdown && (
+                          <span className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400">
+                            <Clock className="h-3 w-3" /> {countdown}
+                          </span>
+                        )}
+                        {linkedSess && (
+                          <span className="text-emerald-700 dark:text-emerald-400 font-sans">
+                            Sesión: {linkedSess.title}
+                          </span>
+                        )}
+                      </div>
                     </div>
+
                     <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => handleExportVoteExcel(v)}
+                        title="Exportar escrutinio a Excel"
+                        className="rounded-lg p-1.5 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 cursor-pointer"
+                      >
+                        <FileSpreadsheet className="h-4 w-4" />
+                      </button>
                       <button
                         type="button"
                         onClick={() => setPrintableVote(v)}
@@ -456,6 +742,18 @@ export function VotesAndCommitmentsModule({
                     </div>
                   </div>
 
+                  {v.resultSummary && (
+                    <div
+                      className={`rounded-xl px-3 py-2 text-xs font-bold ${
+                        v.resultSummary.startsWith('Aprobada')
+                          ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 border border-emerald-200/70 dark:border-emerald-900'
+                          : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200'
+                      }`}
+                    >
+                      Resultado: {v.resultSummary}
+                    </div>
+                  )}
+
                   {editingVoteId === v.id && isLeader && (
                     <div className="rounded-2xl border border-blue-200 dark:border-cyan-900/60 bg-blue-50/40 dark:bg-slate-950 p-3.5 space-y-2.5">
                       <input
@@ -480,8 +778,32 @@ export function VotesAndCommitmentsModule({
                           onChange={(e) => setEditVoteQuorum(Number(e.target.value))}
                           className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs"
                         />
+                        <select
+                          value={editVoteMajority}
+                          onChange={(e) => setEditVoteMajority(e.target.value as MajorityType)}
+                          className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs"
+                        >
+                          <option value="simple">Mayoría simple</option>
+                          <option value="absoluta">Mayoría absoluta</option>
+                          <option value="dos_tercios">2/3</option>
+                          <option value="unanimidad">Unanimidad</option>
+                        </select>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <select
+                          value={editVoteSessionId}
+                          onChange={(e) => setEditVoteSessionId(e.target.value)}
+                          className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs"
+                        >
+                          <option value="">Sin sesión vinculada</option>
+                          {sessions.map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {s.dateIso} · {s.title}
+                            </option>
+                          ))}
+                        </select>
                         <input
-                          type="date"
+                          type="datetime-local"
                           value={editVoteDeadline}
                           onChange={(e) => setEditVoteDeadline(e.target.value)}
                           className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs"
@@ -496,6 +818,7 @@ export function VotesAndCommitmentsModule({
                           >
                             <option value="nominal">Votación Nominal</option>
                             <option value="secreto">Votación Secreta</option>
+                            <option value="mano_alzada">Mano Alzada</option>
                           </select>
                           <textarea
                             rows={2}
@@ -524,39 +847,54 @@ export function VotesAndCommitmentsModule({
                     </div>
                   )}
 
-                  <div className="space-y-2.5">
-                    {v.options.map((opt) => {
-                      const count = v.tallies?.[opt] || 0;
-                      const pct = totalVotes > 0 ? Math.round((count / totalVotes) * 100) : 0;
-                      return (
-                        <div key={opt} className="space-y-1">
-                          <div className="flex items-center justify-between gap-2 text-xs">
+                  {/* Gráfica de dona + barras animadas */}
+                  <div className="flex flex-col sm:flex-row items-center gap-5">
+                    <VoteDonutChart options={v.options} tallies={v.tallies} />
+                    <div className="flex-1 w-full space-y-2.5">
+                      {v.options.map((opt, idx) => {
+                        const count = v.tallies?.[opt] || 0;
+                        const pct = totalVotes > 0 ? Math.round((count / totalVotes) * 100) : 0;
+                        const barColor = VOTE_COLORS[idx % VOTE_COLORS.length];
+                        return (
+                          <div key={opt} className="space-y-1">
+                            <div className="flex items-center justify-between gap-2 text-xs">
+                              <button
+                                type="button"
+                                disabled={v.status !== 'abierta' || alreadyVoted}
+                                onClick={() => handleCastVote(v, opt)}
+                                className="font-semibold text-left text-slate-800 dark:text-slate-100 hover:text-blue-600 disabled:cursor-default cursor-pointer inline-flex items-center gap-1.5"
+                              >
+                                <span
+                                  className="h-2.5 w-2.5 rounded-full inline-block shrink-0"
+                                  style={{ backgroundColor: barColor }}
+                                />
+                                {opt}
+                              </button>
+                              <span className="font-mono-num text-slate-500">
+                                {count} ({pct}%)
+                              </span>
+                            </div>
                             <button
                               type="button"
                               disabled={v.status !== 'abierta' || alreadyVoted}
                               onClick={() => handleCastVote(v, opt)}
-                              className="font-semibold text-left text-slate-800 dark:text-slate-100 hover:text-blue-600 disabled:cursor-default cursor-pointer"
+                              className="w-full h-3 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden cursor-pointer disabled:cursor-default text-left"
                             >
-                              {opt}
+                              <motion.div
+                                initial={{ scaleX: 0 }}
+                                animate={{ scaleX: pct / 100 }}
+                                transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
+                                style={{
+                                  transformOrigin: 'left center',
+                                  backgroundColor: barColor,
+                                }}
+                                className="h-full w-full"
+                              />
                             </button>
-                            <span className="font-mono-num text-slate-500">
-                              {count} ({pct}%)
-                            </span>
                           </div>
-                          <button
-                            type="button"
-                            disabled={v.status !== 'abierta' || alreadyVoted}
-                            onClick={() => handleCastVote(v, opt)}
-                            className="w-full h-3 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden cursor-pointer disabled:cursor-default text-left"
-                          >
-                            <div
-                              className="h-full bg-gradient-to-r from-blue-600 to-cyan-500 transition-all duration-500"
-                              style={{ width: `${pct}%` }}
-                            />
-                          </button>
-                        </div>
-                      );
-                    })}
+                        );
+                      })}
+                    </div>
                   </div>
 
                   {alreadyVoted ? (
@@ -569,23 +907,33 @@ export function VotesAndCommitmentsModule({
                     </p>
                   ) : null}
 
-                  {v.voteMode !== 'secreto' &&
+                  {mode !== 'secreto' &&
                     v.nominalBallots &&
                     Object.keys(v.nominalBallots).length > 0 && (
                       <div className="pt-3 border-t border-slate-100 dark:border-slate-800">
-                        <p className="text-[11px] font-bold text-slate-500 mb-1.5">
-                          Detalle nominal:
+                        <p className="text-[11px] font-bold text-slate-500 mb-2">
+                          Registro nominal ({Object.keys(v.nominalBallots).length} consejeros):
                         </p>
                         <div className="flex flex-wrap gap-1.5">
                           {Object.entries(v.nominalBallots).map(([voterId, choice]) => {
-                            const name =
-                              publicCouncilors.find((c) => c.uid === voterId)?.fullName || 'Consejero';
+                            const c = publicCouncilors.find((u) => u.uid === voterId);
                             return (
                               <span
                                 key={voterId}
-                                className="rounded-lg bg-slate-100 dark:bg-slate-800 px-2 py-1 text-[10px]"
+                                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 pl-1 pr-2.5 py-1 text-[11px]"
                               >
-                                <strong>{name}:</strong> {choice}
+                                <AvatarBadge
+                                  name={c?.fullName || 'Consejero'}
+                                  photoUrl={c?.photoUrl}
+                                  thumbUrl={c?.photoThumbUrl}
+                                  size="xs"
+                                />
+                                <strong className="truncate max-w-[110px]">
+                                  {c?.fullName || 'Consejero'}:
+                                </strong>{' '}
+                                <span className="font-semibold text-blue-600 dark:text-cyan-400">
+                                  {choice}
+                                </span>
                               </span>
                             );
                           })}
@@ -781,20 +1129,24 @@ export function VotesAndCommitmentsModule({
         )}
       </div>
 
-      {/* Modal Acta de Votación PDF */}
+      {/* Modal Acta de Escrutinio PDF */}
       {printableVote && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 p-4 overflow-y-auto flex justify-center print:static print:bg-white print:p-0 print:block">
           <div className="w-full max-w-2xl bg-white text-slate-900 rounded-2xl p-8 space-y-5 shadow-2xl my-auto print:shadow-none print:max-w-none print:p-2">
             <div className="flex items-start justify-between border-b border-slate-300 pb-4">
-              <div>
-                <p className="text-xs font-bold uppercase text-blue-700">
-                  Acta de Escrutinio · CMJ Flandes, Tolima
-                </p>
-                <h2 className="mt-1 text-xl font-extrabold">{printableVote.title}</h2>
-                <p className="text-xs text-slate-600">
-                  Modalidad: {printableVote.voteMode === 'secreto' ? 'Secreta' : 'Nominal'} · Participantes:{' '}
-                  {printableVote.voterUids.length}
-                </p>
+              <div className="flex items-center gap-3">
+                <BrandLogo size="md" />
+                <div>
+                  <p className="text-xs font-bold uppercase text-emerald-700">
+                    Acta de Escrutinio Oficial · CMJ Flandes, Tolima
+                  </p>
+                  <h2 className="mt-1 text-xl font-extrabold">{printableVote.title}</h2>
+                  <p className="text-xs text-slate-600">
+                    Modalidad: {MODE_LABELS[printableVote.voteMode || 'nominal']} · Regla:{' '}
+                    {MAJORITY_LABELS[printableVote.majorityType || 'simple']} · Participantes:{' '}
+                    {printableVote.voterUids.length}
+                  </p>
+                </div>
               </div>
               <div className="flex gap-2 no-print">
                 <button
@@ -814,24 +1166,65 @@ export function VotesAndCommitmentsModule({
               </div>
             </div>
 
+            {printableVote.resultSummary && (
+              <div className="rounded-xl border border-slate-300 bg-slate-50 p-3 text-xs font-bold">
+                Dictamen: {printableVote.resultSummary}
+              </div>
+            )}
+
             <table className="w-full text-xs border border-slate-300">
               <thead>
                 <tr className="bg-slate-100">
                   <th className="border border-slate-300 p-2 text-left">Opción</th>
                   <th className="border border-slate-300 p-2 text-right">Votos</th>
+                  <th className="border border-slate-300 p-2 text-right">%</th>
                 </tr>
               </thead>
               <tbody>
-                {printableVote.options.map((opt) => (
-                  <tr key={opt}>
-                    <td className="border border-slate-300 p-2 font-semibold">{opt}</td>
-                    <td className="border border-slate-300 p-2 text-right font-mono-num">
-                      {printableVote.tallies?.[opt] || 0}
-                    </td>
-                  </tr>
-                ))}
+                {printableVote.options.map((opt) => {
+                  const cnt = printableVote.tallies?.[opt] || 0;
+                  const pct = printableVote.voterUids.length
+                    ? Math.round((cnt / printableVote.voterUids.length) * 100)
+                    : 0;
+                  return (
+                    <tr key={opt}>
+                      <td className="border border-slate-300 p-2 font-semibold">{opt}</td>
+                      <td className="border border-slate-300 p-2 text-right font-mono-num">{cnt}</td>
+                      <td className="border border-slate-300 p-2 text-right font-mono-num">{pct}%</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
+
+            {printableVote.voteMode !== 'secreto' &&
+              printableVote.nominalBallots &&
+              Object.keys(printableVote.nominalBallots).length > 0 && (
+                <div>
+                  <h3 className="text-xs font-bold uppercase mb-1.5">Voto Nominal Individual</h3>
+                  <table className="w-full text-xs border border-slate-300">
+                    <thead>
+                      <tr className="bg-slate-100">
+                        <th className="border border-slate-300 p-2 text-left">Consejero(a)</th>
+                        <th className="border border-slate-300 p-2 text-left">Cargo</th>
+                        <th className="border border-slate-300 p-2 text-left">Decisión</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.entries(printableVote.nominalBallots).map(([vUid, choice]) => {
+                        const c = publicCouncilors.find((u) => u.uid === vUid);
+                        return (
+                          <tr key={vUid}>
+                            <td className="border border-slate-300 p-2">{c?.fullName || 'Consejero'}</td>
+                            <td className="border border-slate-300 p-2">{c?.roleLabel || 'Consejero'}</td>
+                            <td className="border border-slate-300 p-2 font-semibold">{choice}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
           </div>
         </div>
       )}

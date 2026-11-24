@@ -1,9 +1,11 @@
 import 'dotenv/config';
 import crypto from 'node:crypto';
 import express, { type NextFunction, type Request, type Response } from 'express';
-import { desc, eq, ne, sql } from 'drizzle-orm';
+import { desc, eq, inArray, ne, sql } from 'drizzle-orm';
+import { GoogleGenAI, Type } from '@google/genai';
 import { db, ensureDatabaseTables, hasDatabaseConfig } from '../db/index.ts';
 import {
+  actas,
   allowedAccounts,
   auditLogs,
   callsSurveys,
@@ -12,6 +14,7 @@ import {
   commitments,
   contactMessages,
   documents,
+  galleryAlbums,
   galleryItems,
   ideasInbox,
   letterTemplates,
@@ -115,6 +118,13 @@ function normalizeAffiliationType(value: unknown): AffiliationType {
     return value;
   }
   return '';
+}
+
+function roleDefaultDisplayOrder(roleLabel: RoleLabel): number {
+  if (roleLabel === 'Presidente') return 1;
+  if (roleLabel === 'Vicepresidente') return 2;
+  if (roleLabel === 'Secretario') return 3;
+  return 20;
 }
 
 function newId(prefix = 'id'): string {
@@ -391,6 +401,25 @@ export async function ensureMinimalStructure() {
             .onConflictDoNothing();
         }
       }
+
+      // Sincronizar correo y teléfono en perfiles públicos existentes si están vacíos
+      const allUsers = await db.select().from(users);
+      if (allUsers.length > 0) {
+        const allPubs = await db.select().from(publicCouncilors);
+        const pubByUid = new Map(allPubs.map((p) => [p.uid, p]));
+        for (const u of allUsers) {
+          const pub = pubByUid.get(u.uid);
+          if (pub && (!pub.email || (!pub.phone && u.phone))) {
+            await db
+              .update(publicCouncilors)
+              .set({
+                email: pub.email || u.email,
+                phone: pub.phone || u.phone || '',
+              })
+              .where(eq(publicCouncilors.uid, u.uid));
+          }
+        }
+      }
     } catch (error) {
       structureInitPromise = null;
       throw error;
@@ -422,10 +451,12 @@ async function buildPrivatePayload(user: AuthedUser) {
     privUserRows,
     newsRows,
     galleryRows,
+    albumRows,
     docRows,
     surveyRows,
     contactRows,
     sessionRows,
+    actaRows,
     voteRows,
     commitmentRows,
     ideaRows,
@@ -440,12 +471,14 @@ async function buildPrivatePayload(user: AuthedUser) {
     isLeader ? db.select().from(users) : db.select().from(users).where(eq(users.uid, user.uid)),
     db.select().from(newsEvents).orderBy(desc(newsEvents.createdAt)),
     db.select().from(galleryItems).orderBy(desc(galleryItems.createdAt)),
+    db.select().from(galleryAlbums).orderBy(desc(galleryAlbums.createdAt)),
     db.select().from(documents).orderBy(desc(documents.createdAt)),
     db.select().from(callsSurveys).orderBy(desc(callsSurveys.createdAt)),
     isLeader
       ? db.select().from(contactMessages).orderBy(desc(contactMessages.createdAt))
       : Promise.resolve([]),
     db.select().from(sessions).orderBy(desc(sessions.createdAt)),
+    db.select().from(actas).orderBy(desc(actas.year), desc(actas.createdAt)),
     db.select().from(votes).orderBy(desc(votes.createdAt)),
     db.select().from(commitments).orderBy(desc(commitments.createdAt)),
     db.select().from(ideasInbox).orderBy(desc(ideasInbox.createdAt)),
@@ -455,6 +488,12 @@ async function buildPrivatePayload(user: AuthedUser) {
     db.select().from(letterTemplates),
     db.select().from(workPlans),
   ]);
+
+  const sortedGallery = [...galleryRows].sort((a, b) => {
+    const orderDiff = (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
+    if (orderDiff !== 0) return orderDiff;
+    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+  });
 
   return {
     settings: settingsRows[0] || null,
@@ -474,12 +513,16 @@ async function buildPrivatePayload(user: AuthedUser) {
       updatedAt: u.updatedAt,
     })),
     newsEvents: newsRows,
-    galleryItems: galleryRows,
+    galleryItems: sortedGallery,
+    galleryAlbums: albumRows,
     documents: docRows,
     callsSurveys: surveyRows,
     contactMessages: contactRows,
     sessions: sessionRows,
-    votes: voteRows,
+    actas: actaRows,
+    votes: voteRows.map((v) =>
+      v.voteMode === 'secreto' ? { ...v, nominalBallots: {} } : v
+    ),
     commitments: commitmentRows,
     ideas: ideaRows,
     auditLogs: auditRows,
@@ -876,13 +919,17 @@ export function getApiApp(): express.Express {
             commissionName: commissionId ? comm?.name || commissionId : 'Sin comisión',
             affiliationType,
             affiliationName,
+            email: cleanEmail,
+            phone: targetUser.phone || '',
             bio: isBootstrap
               ? 'Secretario del Consejo Municipal de Juventudes de Flandes, Tolima.'
               : pendingPub?.bio || '',
             photoUrl: pendingPub?.photoUrl || '',
             storagePath: pendingPub?.storagePath || '',
             active: true,
-            displayOrder: isBootstrap ? 3 : pendingPub?.displayOrder || 20,
+            displayOrder: isBootstrap
+              ? 3
+              : pendingPub?.displayOrder || roleDefaultDisplayOrder(roleLabel),
           })
           .onConflictDoNothing();
       }
@@ -892,6 +939,16 @@ export function getApiApp(): express.Express {
         .from(publicCouncilors)
         .where(eq(publicCouncilors.uid, targetUser.uid))
         .limit(1);
+
+      if (pub && (!pub.email || (!pub.phone && targetUser.phone))) {
+        await db
+          .update(publicCouncilors)
+          .set({
+            email: pub.email || targetUser.email,
+            phone: pub.phone || targetUser.phone || '',
+          })
+          .where(eq(publicCouncilors.uid, targetUser.uid));
+      }
 
       const token = signSessionToken(targetUser.uid, targetUser.email);
       setSessionCookie(req, res, token);
@@ -1046,13 +1103,17 @@ export function getApiApp(): express.Express {
             commissionName: commissionId ? comm?.name || commissionId : 'Sin comisión',
             affiliationType,
             affiliationName,
+            email: targetEmail,
+            phone: finalUser.phone || '',
             bio: isBootstrap
               ? 'Secretario del Consejo Municipal de Juventudes de Flandes, Tolima.'
               : pendingPub?.bio || '',
             photoUrl: pendingPub?.photoUrl || '',
             storagePath: pendingPub?.storagePath || '',
             active: true,
-            displayOrder: isBootstrap ? 3 : pendingPub?.displayOrder || 20,
+            displayOrder: isBootstrap
+              ? 3
+              : pendingPub?.displayOrder || roleDefaultDisplayOrder(roleLabel),
           })
           .onConflictDoNothing();
       }
@@ -1122,8 +1183,10 @@ export function getApiApp(): express.Express {
         pubRows,
         newsRows,
         galleryRows,
+        albumRows,
         docRows,
         surveyRows,
+        publicActaRows,
       ] = await Promise.all([
         db.select().from(portalSettings).where(eq(portalSettings.id, 'site_content')).limit(1),
         db.select().from(commissions),
@@ -1140,20 +1203,44 @@ export function getApiApp(): express.Express {
           .orderBy(desc(galleryItems.createdAt)),
         db
           .select()
+          .from(galleryAlbums)
+          .where(eq(galleryAlbums.status, 'publicado'))
+          .orderBy(desc(galleryAlbums.createdAt)),
+        db
+          .select()
           .from(documents)
           .where(eq(documents.visibility, 'publico'))
           .orderBy(desc(documents.createdAt)),
         db.select().from(callsSurveys).orderBy(desc(callsSurveys.createdAt)),
+        db
+          .select()
+          .from(actas)
+          .where(inArray(actas.status, ['aprobada', 'firmada', 'archivada']))
+          .orderBy(desc(actas.year), desc(actas.createdAt)),
       ]);
+
+      const sortedGallery = [...galleryRows].sort((a, b) => {
+        const orderDiff = (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
+        if (orderDiff !== 0) return orderDiff;
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      });
+
+      const publicActas = publicActaRows.map((a) => ({
+        ...a,
+        comments: [],
+        history: [],
+      }));
 
       res.json({
         settings: settingsRows[0] || null,
         commissions: commRows.sort((a, b) => a.number - b.number),
         publicCouncilors: pubRows,
         newsEvents: newsRows,
-        galleryItems: galleryRows,
+        galleryItems: sortedGallery,
+        galleryAlbums: albumRows,
         documents: docRows,
         callsSurveys: surveyRows,
+        actas: publicActas,
       });
     } catch (error) {
       console.error('Public state fetch failed:', error);
@@ -1241,8 +1328,81 @@ export function getApiApp(): express.Express {
   });
 
   // ==========================================
-  // MULTIMEDIA EN POSTGRESQL / CLOUD SQL
+  // MULTIMEDIA EN POSTGRESQL / CLOUD SQL (CON VALIDACIÓN DE FIRMA BINARIA)
   // ==========================================
+  const DANGEROUS_EXTENSIONS = new Set([
+    '.exe',
+    '.bat',
+    '.cmd',
+    '.sh',
+    '.js',
+    '.mjs',
+    '.cjs',
+    '.msi',
+    '.scr',
+    '.vbs',
+    '.ps1',
+    '.dll',
+    '.com',
+    '.pif',
+    '.jar',
+    '.php',
+    '.html',
+    '.htm',
+    '.hta',
+  ]);
+
+  function inspectMagicSignature(buf: Buffer, mimeType: string): { ok: boolean; reason?: string } {
+    if (buf.length < 2) return { ok: false, reason: 'El archivo está vacío o dañado.' };
+    // Bloquear ejecutables Windows MZ, ELF Unix, Mach-O y scripts con shebang
+    if (buf[0] === 0x4d && buf[1] === 0x5a) {
+      return { ok: false, reason: 'No se permiten archivos ejecutables (PE/MZ).' };
+    }
+    if (buf.length >= 4 && buf[0] === 0x7f && buf[1] === 0x45 && buf[2] === 0x4c && buf[3] === 0x46) {
+      return { ok: false, reason: 'No se permiten binarios ejecutables (ELF).' };
+    }
+    if (buf[0] === 0x23 && buf[1] === 0x21) {
+      return { ok: false, reason: 'No se permiten scripts ejecutables (#!).' };
+    }
+    const lowerMime = mimeType.toLowerCase();
+    if (lowerMime.includes('pdf')) {
+      const head = buf.subarray(0, 5).toString('ascii');
+      if (head !== '%PDF-') return { ok: false, reason: 'El archivo no tiene firma PDF válida.' };
+    } else if (lowerMime === 'image/png') {
+      if (!(buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47)) {
+        return { ok: false, reason: 'La firma del archivo no corresponde a PNG.' };
+      }
+    } else if (lowerMime === 'image/jpeg' || lowerMime === 'image/jpg') {
+      if (!(buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff)) {
+        return { ok: false, reason: 'La firma del archivo no corresponde a JPEG.' };
+      }
+    } else if (lowerMime === 'image/webp') {
+      if (
+        buf.length < 12 ||
+        buf.subarray(0, 4).toString('ascii') !== 'RIFF' ||
+        buf.subarray(8, 12).toString('ascii') !== 'WEBP'
+      ) {
+        return { ok: false, reason: 'La firma del archivo no corresponde a WebP.' };
+      }
+    } else if (lowerMime === 'image/gif') {
+      const head = buf.subarray(0, 4).toString('ascii');
+      if (head !== 'GIF8') return { ok: false, reason: 'La firma del archivo no corresponde a GIF.' };
+    }
+    return { ok: true };
+  }
+
+  function sanitizeSvgBuffer(buf: Buffer): Buffer {
+    const raw = buf.toString('utf8');
+    const cleaned = raw
+      .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '')
+      .replace(/<iframe[\s\S]*?>[\s\S]*?<\/iframe>/gi, '')
+      .replace(/<object[\s\S]*?>[\s\S]*?<\/object>/gi, '')
+      .replace(/<embed[^>]*>/gi, '')
+      .replace(/\son[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+      .replace(/javascript\s*:/gi, 'blocked:');
+    return Buffer.from(cleaned, 'utf8');
+  }
+
   app.post('/api/media/upload', requireAuth, async (req: AuthedRequest, res) => {
     try {
       const { fileName, mimeType, fileSize, base64Data } = req.body || {};
@@ -1256,27 +1416,56 @@ export function getApiApp(): express.Express {
         return;
       }
 
+      const safeFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 200) || 'archivo';
+      const dotIdx = safeFileName.lastIndexOf('.');
+      const ext = dotIdx >= 0 ? safeFileName.slice(dotIdx).toLowerCase() : '';
+      if (DANGEROUS_EXTENSIONS.has(ext)) {
+        res.status(400).json({ error: `Extensión no permitida por seguridad (${ext}).` });
+        return;
+      }
+
+      const lowerMime = mimeType.toLowerCase().trim();
       const allowedPrefix = ['image/', 'video/', 'audio/', 'application/', 'text/'].some((p) =>
-        mimeType.startsWith(p)
+        lowerMime.startsWith(p)
       );
-      if (!allowedPrefix) {
+      if (!allowedPrefix || lowerMime === 'text/html' || lowerMime.includes('javascript')) {
         res.status(400).json({ error: 'Tipo de archivo no permitido.' });
         return;
       }
 
-      const sizeBytes = Number(fileSize) || Math.floor((base64Data.length * 3) / 4);
-      if (sizeBytes > 20 * 1024 * 1024) {
-        res.status(400).json({ error: 'El archivo supera el límite permitido de 20 MB.' });
+      let buffer: Buffer = Buffer.from(base64Data, 'base64');
+      const actualSize = buffer.length || Number(fileSize) || Math.floor((base64Data.length * 3) / 4);
+      const maxForType = lowerMime.startsWith('image/')
+        ? 10 * 1024 * 1024
+        : lowerMime.startsWith('video/')
+        ? 20 * 1024 * 1024
+        : 15 * 1024 * 1024;
+      if (actualSize > maxForType || actualSize > 20 * 1024 * 1024) {
+        res.status(400).json({
+          error: `El archivo supera el límite permitido (${Math.round(maxForType / (1024 * 1024))} MB).`,
+        });
         return;
+      }
+
+      const sigCheck = inspectMagicSignature(buffer, lowerMime);
+      if (!sigCheck.ok) {
+        res.status(400).json({ error: sigCheck.reason || 'Archivo rechazado por validación de contenido.' });
+        return;
+      }
+
+      let storedBase64 = base64Data;
+      if (lowerMime.includes('svg')) {
+        buffer = sanitizeSvgBuffer(buffer);
+        storedBase64 = buffer.toString('base64');
       }
 
       const id = newId('media');
       await db.insert(mediaFiles).values({
         id,
-        fileName: fileName.slice(0, 200),
-        mimeType: mimeType.slice(0, 120),
-        fileSize: sizeBytes,
-        contentBase64: base64Data,
+        fileName: safeFileName,
+        mimeType: lowerMime.slice(0, 120),
+        fileSize: buffer.length,
+        contentBase64: storedBase64,
         uploadedByUid: req.authUser!.uid,
       });
 
@@ -1284,9 +1473,9 @@ export function getApiApp(): express.Express {
         id,
         url: `/api/media/${id}`,
         storagePath: `db-media/${id}`,
-        fileName,
-        mimeType,
-        fileSize: sizeBytes,
+        fileName: safeFileName,
+        mimeType: lowerMime,
+        fileSize: buffer.length,
       });
     } catch (error) {
       console.error('Media upload failed:', error);
@@ -1303,9 +1492,27 @@ export function getApiApp(): express.Express {
         return;
       }
       const buffer = Buffer.from(file.contentBase64, 'base64');
-      res.setHeader('Content-Type', file.mimeType || 'application/octet-stream');
+      const mime = (file.mimeType || 'application/octet-stream').toLowerCase();
+      res.setHeader('Content-Type', mime);
       res.setHeader('Content-Length', String(buffer.length));
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
       res.setHeader('Cache-Control', 'public, max-age=31536000');
+
+      const inlineSafe =
+        (mime.startsWith('image/') && !mime.includes('svg')) ||
+        mime.startsWith('video/') ||
+        mime.startsWith('audio/') ||
+        mime === 'application/pdf';
+
+      if (mime.includes('svg') || !inlineSafe) {
+        res.setHeader('Content-Security-Policy', 'sandbox');
+      }
+      if (!inlineSafe) {
+        const cleanName = (file.fileName || 'archivo').replace(/["\r\n]/g, '');
+        res.setHeader('Content-Disposition', `attachment; filename="${cleanName}"`);
+      }
+
       res.send(buffer);
     } catch (error) {
       console.error('Media fetch failed:', error);
@@ -1434,6 +1641,7 @@ export function getApiApp(): express.Express {
           .where(eq(users.uid, uid));
       }
 
+      const cleanPhone = String(phone || existingUser?.phone || '').trim().slice(0, 40);
       await db
         .insert(publicCouncilors)
         .values({
@@ -1445,11 +1653,13 @@ export function getApiApp(): express.Express {
           commissionName: commName,
           affiliationType: safeAffType,
           affiliationName: safeAffName,
+          email: cleanEmail,
+          phone: cleanPhone,
           bio: '',
           photoUrl: '',
           storagePath: '',
           active: true,
-          displayOrder: 20,
+          displayOrder: roleDefaultDisplayOrder(validRole),
         })
         .onConflictDoUpdate({
           target: publicCouncilors.id,
@@ -1460,6 +1670,9 @@ export function getApiApp(): express.Express {
             commissionName: commName,
             affiliationType: safeAffType,
             affiliationName: safeAffName,
+            email: cleanEmail,
+            phone: cleanPhone,
+            displayOrder: roleDefaultDisplayOrder(validRole),
             active: true,
             updatedAt: new Date(),
           },
@@ -1564,6 +1777,7 @@ export function getApiApp(): express.Express {
             .where(eq(users.uid, uid));
         }
 
+        const cleanBulkPhone = String(row.phone || existingUser?.phone || '').trim().slice(0, 40);
         await db
           .insert(publicCouncilors)
           .values({
@@ -1575,11 +1789,14 @@ export function getApiApp(): express.Express {
             commissionName: commName,
             affiliationType: safeAffType,
             affiliationName: safeAffName,
+            email: cleanEmail,
+            phone: cleanBulkPhone,
             bio: '',
             photoUrl: '',
             storagePath: '',
             active: true,
-            displayOrder: 20 + imported,
+            displayOrder:
+              validRole === 'Consejero' ? 20 + imported : roleDefaultDisplayOrder(validRole),
           })
           .onConflictDoUpdate({
             target: publicCouncilors.id,
@@ -1590,6 +1807,8 @@ export function getApiApp(): express.Express {
               commissionName: commName,
               affiliationType: safeAffType,
               affiliationName: safeAffName,
+              email: cleanEmail,
+              phone: cleanBulkPhone,
               active: true,
               updatedAt: new Date(),
             },
@@ -1622,6 +1841,11 @@ export function getApiApp(): express.Express {
         .from(publicCouncilors)
         .where(eq(publicCouncilors.uid, targetUid))
         .limit(1);
+      const [existingUser] = await db
+        .select()
+        .from(users)
+        .where(eq(users.uid, targetUid))
+        .limit(1);
 
       const pubPatch: Record<string, unknown> = { updatedAt: new Date() };
       const userPatch: Record<string, unknown> = { updatedAt: new Date() };
@@ -1634,11 +1858,75 @@ export function getApiApp(): express.Express {
       if (typeof body.bio === 'string') pubPatch.bio = body.bio.trim().slice(0, 600);
       if (typeof body.instagram === 'string') pubPatch.instagram = body.instagram.trim().slice(0, 120);
       if (typeof body.facebook === 'string') pubPatch.facebook = body.facebook.trim().slice(0, 120);
-      if (typeof body.photoUrl === 'string' && isSafeUrl(body.photoUrl)) {
+      if (body.photoUrl === '') {
+        pubPatch.photoUrl = '';
+        pubPatch.photoThumbUrl = '';
+        pubPatch.photoMediumUrl = '';
+      } else if (typeof body.photoUrl === 'string' && isSafeUrl(body.photoUrl)) {
         pubPatch.photoUrl = body.photoUrl;
       }
+      if (body.photoThumbUrl === '') {
+        pubPatch.photoThumbUrl = '';
+      } else if (typeof body.photoThumbUrl === 'string' && isSafeUrl(body.photoThumbUrl)) {
+        pubPatch.photoThumbUrl = body.photoThumbUrl;
+      }
+      if (body.photoMediumUrl === '') {
+        pubPatch.photoMediumUrl = '';
+      } else if (typeof body.photoMediumUrl === 'string' && isSafeUrl(body.photoMediumUrl)) {
+        pubPatch.photoMediumUrl = body.photoMediumUrl;
+      }
       if (typeof body.storagePath === 'string') pubPatch.storagePath = body.storagePath.slice(0, 512);
-      if (typeof body.phone === 'string') userPatch.phone = body.phone.trim().slice(0, 40);
+      if (typeof body.phone === 'string') {
+        const cleanPhone = body.phone.trim().slice(0, 40);
+        userPatch.phone = cleanPhone;
+        pubPatch.phone = cleanPhone;
+      }
+
+      if (typeof body.email === 'string' && body.email.trim()) {
+        const nextEmail = body.email.trim().toLowerCase().slice(0, 180);
+        if (nextEmail.includes('@')) {
+          if (isLeader && existingUser && nextEmail !== existingUser.email) {
+            const [collision] = await db
+              .select({ uid: users.uid })
+              .from(users)
+              .where(eq(users.email, nextEmail))
+              .limit(1);
+            if (collision && collision.uid !== targetUid) {
+              res.status(409).json({ error: 'Ese correo electrónico ya pertenece a otro consejero.' });
+              return;
+            }
+            const oldHash = hashEmail(existingUser.email);
+            const newHash = hashEmail(nextEmail);
+            await db.delete(allowedAccounts).where(eq(allowedAccounts.emailHash, oldHash));
+            await db
+              .insert(allowedAccounts)
+              .values({
+                emailHash: newHash,
+                email: nextEmail,
+                active: typeof body.active === 'boolean' ? body.active : existingUser.active,
+                accessTier: existingUser.accessTier,
+                roleLabel: existingUser.roleLabel,
+                commissionId: existingUser.commissionId,
+                affiliationType: normalizeAffiliationType(existingPub?.affiliationType),
+                affiliationName: String(existingPub?.affiliationName || ''),
+                accountProvisioned: true,
+                mustChangePassword: existingUser.mustChangePassword,
+              })
+              .onConflictDoUpdate({
+                target: allowedAccounts.emailHash,
+                set: { email: nextEmail, active: true, updatedAt: new Date() },
+              });
+            userPatch.email = nextEmail;
+            pubPatch.email = nextEmail;
+          } else {
+            pubPatch.email = nextEmail;
+          }
+        }
+      } else if (!isLeader && typeof body.email === 'string' && !body.email.trim()) {
+        pubPatch.email = '';
+      } else if (existingPub && !existingPub.email && existingUser?.email) {
+        pubPatch.email = existingUser.email;
+      }
 
       if (typeof body.affiliationType === 'string') {
         const safeAff = normalizeAffiliationType(body.affiliationType);
@@ -1661,6 +1949,7 @@ export function getApiApp(): express.Express {
           const validRole = body.roleLabel as RoleLabel;
           const tier = roleLabelToAccessTier(validRole);
           pubPatch.roleLabel = validRole;
+          pubPatch.displayOrder = roleDefaultDisplayOrder(validRole);
           userPatch.roleLabel = validRole;
           userPatch.accessTier = tier;
           allowPatch.roleLabel = validRole;
@@ -1695,20 +1984,61 @@ export function getApiApp(): express.Express {
           .update(publicCouncilors)
           .set(pubPatch)
           .where(eq(publicCouncilors.uid, targetUid));
+      } else if (existingUser) {
+        const fallbackRole = ((pubPatch.roleLabel as RoleLabel) ||
+          (existingUser.roleLabel as RoleLabel) ||
+          'Consejero') as RoleLabel;
+        await db.insert(publicCouncilors).values({
+          id: targetUid,
+          uid: targetUid,
+          fullName:
+            (pubPatch.fullName as string) ||
+            existingUser.email.split('@')[0] ||
+            'Consejero CMJ',
+          roleLabel: fallbackRole,
+          commissionId: (pubPatch.commissionId as string) ?? existingUser.commissionId ?? '',
+          commissionName: (pubPatch.commissionName as string) || 'Sin comisión',
+          affiliationType: (pubPatch.affiliationType as string) || '',
+          affiliationName: (pubPatch.affiliationName as string) || '',
+          email: (pubPatch.email as string) || existingUser.email,
+          phone: (pubPatch.phone as string) ?? existingUser.phone ?? '',
+          bio: (pubPatch.bio as string) || '',
+          photoUrl: (pubPatch.photoUrl as string) || '',
+          photoThumbUrl: (pubPatch.photoThumbUrl as string) || '',
+          photoMediumUrl: (pubPatch.photoMediumUrl as string) || '',
+          storagePath: (pubPatch.storagePath as string) || '',
+          instagram: (pubPatch.instagram as string) || '',
+          facebook: (pubPatch.facebook as string) || '',
+          active: existingUser.active,
+          displayOrder: roleDefaultDisplayOrder(fallbackRole),
+        });
       }
 
-      const [existingUser] = await db
-        .select()
-        .from(users)
-        .where(eq(users.uid, targetUid))
-        .limit(1);
+      // Eliminar foto anterior y sus variantes en media_files cuando se reemplaza o quita
+      if (existingPub && typeof pubPatch.photoUrl === 'string' && pubPatch.photoUrl !== existingPub.photoUrl) {
+        const oldCandidates = [
+          existingPub.storagePath,
+          existingPub.photoUrl,
+          existingPub.photoThumbUrl,
+          existingPub.photoMediumUrl,
+        ];
+        for (const candidate of oldCandidates) {
+          if (!candidate) continue;
+          const m = String(candidate).match(/(?:db-media\/|\/api\/media\/)([A-Za-z0-9_-]+)/);
+          if (m?.[1]) {
+            await db.delete(mediaFiles).where(eq(mediaFiles.id, m[1])).catch(() => undefined);
+          }
+        }
+      }
+
       if (existingUser) {
         await db.update(users).set(userPatch).where(eq(users.uid, targetUid));
         if (shouldUpdateAllow) {
+          const emailForAllow = (userPatch.email as string) || existingUser.email;
           await db
             .update(allowedAccounts)
             .set(allowPatch)
-            .where(eq(allowedAccounts.emailHash, hashEmail(existingUser.email)));
+            .where(eq(allowedAccounts.emailHash, hashEmail(emailForAllow)));
         }
       }
 
@@ -2086,6 +2416,10 @@ export function getApiApp(): express.Express {
         storagePath,
         thumbnailStoragePath,
         commissionId,
+        albumId,
+        eventDate,
+        mimeType,
+        sortOrder,
         status,
       } = req.body || {};
       if (!title || !url || !isSafeUrl(url)) {
@@ -2104,6 +2438,10 @@ export function getApiApp(): express.Express {
         storagePath: String(storagePath || '').slice(0, 512),
         thumbnailStoragePath: String(thumbnailStoragePath || '').slice(0, 512),
         commissionId: typeof commissionId === 'string' ? commissionId.trim() : '',
+        albumId: typeof albumId === 'string' ? albumId.trim().slice(0, 64) : '',
+        eventDate: typeof eventDate === 'string' ? eventDate.trim().slice(0, 40) : '',
+        mimeType: typeof mimeType === 'string' ? mimeType.trim().slice(0, 120) : '',
+        sortOrder: Number.isFinite(Number(sortOrder)) ? Math.round(Number(sortOrder)) : 0,
         authorUid: req.authUser!.uid,
         authorName: req.authUser!.fullName,
         status: status === 'archivado' ? 'archivado' : 'publicado',
@@ -2112,6 +2450,28 @@ export function getApiApp(): express.Express {
     } catch (error) {
       console.error('Gallery create failed:', error);
       res.status(500).json({ error: 'No fue posible publicar en galería.' });
+    }
+  });
+
+  app.patch('/api/gallery/reorder', requireAuth, requireLeader, async (req, res) => {
+    try {
+      const { orderedIds } = req.body || {};
+      if (!Array.isArray(orderedIds)) {
+        res.status(400).json({ error: 'Lista de orden inválida.' });
+        return;
+      }
+      await Promise.all(
+        orderedIds.slice(0, 200).map((itemId, idx) =>
+          db
+            .update(galleryItems)
+            .set({ sortOrder: idx })
+            .where(eq(galleryItems.id, String(itemId)))
+        )
+      );
+      res.json({ ok: true });
+    } catch (error) {
+      console.error('Gallery reorder failed:', error);
+      res.status(500).json({ error: 'No fue posible guardar el orden de la galería.' });
     }
   });
 
@@ -2137,6 +2497,15 @@ export function getApiApp(): express.Express {
       }
       if (typeof body.commissionId === 'string') {
         patch.commissionId = body.commissionId.trim();
+      }
+      if (typeof body.albumId === 'string') {
+        patch.albumId = body.albumId.trim().slice(0, 64);
+      }
+      if (typeof body.eventDate === 'string') {
+        patch.eventDate = body.eventDate.trim().slice(0, 40);
+      }
+      if (typeof body.sortOrder === 'number') {
+        patch.sortOrder = Math.round(body.sortOrder);
       }
       if (typeof body.url === 'string' && body.url.trim() && isSafeUrl(body.url)) {
         patch.url = body.url.trim();
@@ -2178,6 +2547,66 @@ export function getApiApp(): express.Express {
     }
   });
 
+  app.post('/api/gallery-albums', requireAuth, async (req: AuthedRequest, res) => {
+    try {
+      const { title, description, coverUrl, eventDate, commissionId, status } = req.body || {};
+      if (!title || !String(title).trim()) {
+        res.status(400).json({ error: 'El nombre del álbum es obligatorio.' });
+        return;
+      }
+      const id = newId('album');
+      await db.insert(galleryAlbums).values({
+        id,
+        title: String(title).trim().slice(0, 140),
+        description: String(description || '').trim().slice(0, 400),
+        coverUrl: isSafeUrl(coverUrl) ? String(coverUrl) : '',
+        eventDate: String(eventDate || '').trim().slice(0, 40),
+        commissionId: typeof commissionId === 'string' ? commissionId.trim().slice(0, 64) : '',
+        status: status === 'archivado' ? 'archivado' : 'publicado',
+        authorUid: req.authUser!.uid,
+      });
+      res.json({ id, ok: true });
+    } catch (error) {
+      console.error('Album create failed:', error);
+      res.status(500).json({ error: 'No fue posible crear el álbum.' });
+    }
+  });
+
+  app.patch('/api/gallery-albums/:id', requireAuth, requireLeader, async (req, res) => {
+    try {
+      const id = String(req.params.id);
+      const body = req.body || {};
+      const patch: Record<string, unknown> = {};
+      if (typeof body.title === 'string' && body.title.trim()) {
+        patch.title = body.title.trim().slice(0, 140);
+      }
+      if (typeof body.description === 'string') patch.description = body.description.trim().slice(0, 400);
+      if (typeof body.coverUrl === 'string' && (body.coverUrl === '' || isSafeUrl(body.coverUrl))) {
+        patch.coverUrl = body.coverUrl;
+      }
+      if (typeof body.eventDate === 'string') patch.eventDate = body.eventDate.trim().slice(0, 40);
+      if (typeof body.commissionId === 'string') patch.commissionId = body.commissionId.trim().slice(0, 64);
+      if (body.status === 'publicado' || body.status === 'archivado') patch.status = body.status;
+      await db.update(galleryAlbums).set(patch).where(eq(galleryAlbums.id, id));
+      res.json({ ok: true });
+    } catch (error) {
+      console.error('Album update failed:', error);
+      res.status(500).json({ error: 'No fue posible actualizar el álbum.' });
+    }
+  });
+
+  app.delete('/api/gallery-albums/:id', requireAuth, requireLeader, async (req, res) => {
+    try {
+      const id = String(req.params.id);
+      await db.update(galleryItems).set({ albumId: '' }).where(eq(galleryItems.albumId, id));
+      await db.delete(galleryAlbums).where(eq(galleryAlbums.id, id));
+      res.json({ ok: true });
+    } catch (error) {
+      console.error('Album delete failed:', error);
+      res.status(500).json({ error: 'No fue posible eliminar el álbum.' });
+    }
+  });
+
   app.post('/api/documents', requireAuth, async (req: AuthedRequest, res) => {
     try {
       const {
@@ -2204,7 +2633,8 @@ export function getApiApp(): express.Express {
         title: String(title).trim().slice(0, 180),
         folder: String(folder || 'General').trim().slice(0, 80),
         category: String(category || 'Acta').trim().slice(0, 60),
-        version: String(version || '1.0').trim().slice(0, 24),
+        version: String(version || 'v1.0').trim().slice(0, 24),
+        versionHistory: [],
         fileUrl: String(fileUrl),
         storagePath: String(storagePath || '').slice(0, 512),
         fileName: String(fileName).slice(0, 200),
@@ -2220,6 +2650,65 @@ export function getApiApp(): express.Express {
     } catch (error) {
       console.error('Document create failed:', error);
       res.status(500).json({ error: 'No fue posible registrar el documento.' });
+    }
+  });
+
+  app.post('/api/documents/:id/version', requireAuth, requireLeader, async (req: AuthedRequest, res) => {
+    try {
+      const id = String(req.params.id);
+      const { version, fileUrl, storagePath, fileName, mimeType, fileSize, note } = req.body || {};
+      if (!fileUrl || !isSafeUrl(fileUrl) || !fileName) {
+        res.status(400).json({ error: 'El archivo de nueva versión es inválido.' });
+        return;
+      }
+      const [doc] = await db.select().from(documents).where(eq(documents.id, id)).limit(1);
+      if (!doc) {
+        res.status(404).json({ error: 'Documento no encontrado.' });
+        return;
+      }
+
+      const previousEntry = {
+        version: doc.version,
+        fileUrl: doc.fileUrl,
+        storagePath: doc.storagePath,
+        fileName: doc.fileName,
+        mimeType: doc.mimeType,
+        fileSize: doc.fileSize,
+        uploadedByUid: doc.uploadedByUid,
+        uploadedByName: doc.uploadedByName,
+        uploadedAt: doc.updatedAt?.toISOString() || new Date().toISOString(),
+        notes: typeof note === 'string' ? note.trim().slice(0, 200) : undefined,
+      };
+      const nextHistory = [previousEntry, ...(doc.versionHistory || [])].slice(0, 20);
+      const nextVerMatch = /^v?(\d+)(?:\.(\d+))?$/i.exec(doc.version.trim());
+      const fallbackNextVersion = nextVerMatch
+        ? `v${Number(nextVerMatch[1]) + 1}.0`
+        : `v${nextHistory.length + 1}.0`;
+      const resolvedVersion =
+        typeof version === 'string' && version.trim()
+          ? version.trim().slice(0, 24)
+          : fallbackNextVersion;
+
+      await db
+        .update(documents)
+        .set({
+          version: resolvedVersion,
+          versionHistory: nextHistory,
+          fileUrl: String(fileUrl),
+          storagePath: String(storagePath || '').slice(0, 512),
+          fileName: String(fileName).slice(0, 200),
+          mimeType: String(mimeType || 'application/octet-stream').slice(0, 120),
+          fileSize: Number(fileSize || 0),
+          uploadedByUid: req.authUser!.uid,
+          uploadedByName: req.authUser!.fullName,
+          updatedAt: new Date(),
+        })
+        .where(eq(documents.id, id));
+
+      res.json({ ok: true, version: resolvedVersion });
+    } catch (error) {
+      console.error('Document new version failed:', error);
+      res.status(500).json({ error: 'No fue posible registrar la nueva versión.' });
     }
   });
 
@@ -2378,12 +2867,23 @@ export function getApiApp(): express.Express {
 
   app.post('/api/sessions', requireAuth, requireLeader, async (req: AuthedRequest, res) => {
     try {
-      const { title, sessionType, dateIso, timeRange, location, agenda, checkInCode, quorumRequired } =
-        req.body || {};
+      const {
+        title,
+        sessionType,
+        dateIso,
+        timeRange,
+        location,
+        agenda,
+        checkInCode,
+        quorumRequired,
+        checkInDurationMinutes,
+      } = req.body || {};
       if (!title || !dateIso || !location) {
         res.status(400).json({ error: 'Título, fecha y lugar son obligatorios.' });
         return;
       }
+      const now = Date.now();
+      const mins = Math.max(5, Math.min(720, Number(checkInDurationMinutes || 120)));
       const id = newId('sess');
       await db.insert(sessions).values({
         id,
@@ -2396,7 +2896,10 @@ export function getApiApp(): express.Express {
         status: 'programada',
         actaUrl: '',
         attendance: {},
+        excuses: {},
         checkInCode: String(checkInCode || crypto.randomBytes(3).toString('hex').toUpperCase()).slice(0, 16),
+        checkInExpiresAt: new Date(now + mins * 60_000).toISOString(),
+        qrRotatedAt: new Date(now).toISOString(),
         quorumRequired: Math.max(1, Number(quorumRequired || 1)),
         createdByUid: req.authUser!.uid,
       });
@@ -2465,6 +2968,108 @@ export function getApiApp(): express.Express {
     }
   });
 
+  app.post('/api/sessions/:id/attendance-bulk', requireAuth, requireLeader, async (req, res) => {
+    try {
+      const id = String(req.params.id);
+      const { entries } = req.body || {};
+      if (!entries || typeof entries !== 'object') {
+        res.status(400).json({ error: 'Envía el mapa de asistencias a actualizar.' });
+        return;
+      }
+      const [sess] = await db.select().from(sessions).where(eq(sessions.id, id)).limit(1);
+      if (!sess) {
+        res.status(404).json({ error: 'Sesión no encontrada.' });
+        return;
+      }
+      const nextAttendance: Record<string, string> = { ...(sess.attendance || {}) };
+      for (const [uidKey, val] of Object.entries(entries as Record<string, unknown>)) {
+        if (['presente', 'tarde', 'excusa', 'ausente'].includes(String(val))) {
+          nextAttendance[String(uidKey)] = String(val);
+        }
+      }
+      await db
+        .update(sessions)
+        .set({ attendance: nextAttendance, updatedAt: new Date() })
+        .where(eq(sessions.id, id));
+      res.json({ ok: true });
+    } catch (error) {
+      console.error('Bulk attendance failed:', error);
+      res.status(500).json({ error: 'No fue posible actualizar la asistencia masiva.' });
+    }
+  });
+
+  app.post('/api/sessions/:id/rotate-code', requireAuth, requireLeader, async (req, res) => {
+    try {
+      const id = String(req.params.id);
+      const mins = Math.max(5, Math.min(720, Number(req.body?.durationMinutes || 30)));
+      const [sess] = await db.select().from(sessions).where(eq(sessions.id, id)).limit(1);
+      if (!sess) {
+        res.status(404).json({ error: 'Sesión no encontrada.' });
+        return;
+      }
+      const now = Date.now();
+      const nextCode = `CMJ-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
+      const expiresAt = new Date(now + mins * 60_000).toISOString();
+      const rotatedAt = new Date(now).toISOString();
+      await db
+        .update(sessions)
+        .set({
+          checkInCode: nextCode,
+          checkInExpiresAt: expiresAt,
+          qrRotatedAt: rotatedAt,
+          updatedAt: new Date(),
+        })
+        .where(eq(sessions.id, id));
+      res.json({ ok: true, checkInCode: nextCode, checkInExpiresAt: expiresAt });
+    } catch (error) {
+      console.error('Rotate QR code failed:', error);
+      res.status(500).json({ error: 'No se pudo rotar el código QR.' });
+    }
+  });
+
+  app.post('/api/sessions/:id/excuse', requireAuth, async (req: AuthedRequest, res) => {
+    try {
+      const id = String(req.params.id);
+      const { targetUid, reason, attachmentUrl, attachmentName } = req.body || {};
+      const resolvedUid =
+        isLeadershipTier(req.authUser!.accessTier) && typeof targetUid === 'string' && targetUid.trim()
+          ? targetUid.trim()
+          : req.authUser!.uid;
+
+      const cleanReason = String(reason || '').trim();
+      if (cleanReason.length < 4) {
+        res.status(400).json({ error: 'Describe el motivo de la excusa (mínimo 4 caracteres).' });
+        return;
+      }
+      const [sess] = await db.select().from(sessions).where(eq(sessions.id, id)).limit(1);
+      if (!sess) {
+        res.status(404).json({ error: 'Sesión no encontrada.' });
+        return;
+      }
+
+      const safeAttachmentUrl =
+        typeof attachmentUrl === 'string' && isSafeUrl(attachmentUrl) ? attachmentUrl : undefined;
+      const nextExcuses = {
+        ...(sess.excuses || {}),
+        [resolvedUid]: {
+          reason: cleanReason.slice(0, 600),
+          attachmentUrl: safeAttachmentUrl,
+          attachmentName: typeof attachmentName === 'string' ? attachmentName.slice(0, 160) : undefined,
+          submittedAt: new Date().toISOString(),
+        },
+      };
+      const nextAttendance = { ...(sess.attendance || {}), [resolvedUid]: 'excusa' };
+      await db
+        .update(sessions)
+        .set({ excuses: nextExcuses, attendance: nextAttendance, updatedAt: new Date() })
+        .where(eq(sessions.id, id));
+      res.json({ ok: true });
+    } catch (error) {
+      console.error('Submit excuse failed:', error);
+      res.status(500).json({ error: 'No fue posible registrar la excusa.' });
+    }
+  });
+
   app.post('/api/sessions/:id/checkin', requireAuth, async (req: AuthedRequest, res) => {
     try {
       const id = String(req.params.id);
@@ -2476,6 +3081,12 @@ export function getApiApp(): express.Express {
       }
       if (!sess.checkInCode || sess.checkInCode.toUpperCase() !== code) {
         res.status(400).json({ error: 'El código de asistencia no coincide con la sesión.' });
+        return;
+      }
+      if (sess.checkInExpiresAt && Date.now() > Date.parse(sess.checkInExpiresAt)) {
+        res.status(400).json({
+          error: 'El código de asistencia ha expirado. Solicita a Mesa Directiva generar uno nuevo.',
+        });
         return;
       }
       const nextAttendance = { ...(sess.attendance || {}), [req.authUser!.uid]: 'presente' };
@@ -2500,9 +3111,526 @@ export function getApiApp(): express.Express {
     }
   });
 
+  // ==========================================
+  // ACTAS OFICIALES Y ASISTENTE IA (GEMINI)
+  // ==========================================
+  function computeActaVerificationHash(acta: {
+    id: string;
+    consecutive: string;
+    title: string;
+    meetingDate: string;
+    agenda: string;
+    development: string;
+    propositions: string;
+    commitmentsSummary: string;
+  }): string {
+    return crypto
+      .createHash('sha256')
+      .update(
+        [
+          acta.id,
+          acta.consecutive,
+          acta.title,
+          acta.meetingDate,
+          acta.agenda,
+          acta.development,
+          acta.propositions,
+          acta.commitmentsSummary,
+        ].join('|')
+      )
+      .digest('hex')
+      .slice(0, 24)
+      .toUpperCase();
+  }
+
+  app.post('/api/actas', requireAuth, requireLeader, async (req: AuthedRequest, res) => {
+    try {
+      const body = req.body || {};
+      const title = String(body.title || '').trim();
+      if (!title) {
+        res.status(400).json({ error: 'El título del acta es obligatorio.' });
+        return;
+      }
+      const year = Number(body.year) || new Date().getFullYear();
+      const existingSameYear = await db
+        .select({ id: actas.id })
+        .from(actas)
+        .where(eq(actas.year, year));
+      const nextNum = String(existingSameYear.length + 1).padStart(3, '0');
+      const consecutive =
+        typeof body.consecutive === 'string' && body.consecutive.trim()
+          ? body.consecutive.trim().slice(0, 64)
+          : `Acta No. ${nextNum} de ${year}`;
+
+      let sessionMeta = {
+        location: String(body.location || 'Recinto CMJ Flandes, Tolima').trim(),
+        meetingDate: String(body.meetingDate || new Date().toISOString().slice(0, 10)).trim(),
+        timeRange: String(body.timeRange || '').trim(),
+        quorumCount: Number(body.quorumCount || 0),
+        quorumRequired: Math.max(1, Number(body.quorumRequired || 1)),
+        agenda: String(body.agenda || '').trim(),
+      };
+
+      const sessionId = typeof body.sessionId === 'string' ? body.sessionId.trim() : '';
+      if (sessionId) {
+        const [sess] = await db.select().from(sessions).where(eq(sessions.id, sessionId)).limit(1);
+        if (sess) {
+          const presentCount = Object.values(sess.attendance || {}).filter(
+            (st) => st === 'presente' || st === 'tarde'
+          ).length;
+          sessionMeta = {
+            location: String(body.location || sess.location || 'CMJ Flandes').trim(),
+            meetingDate: String(body.meetingDate || sess.dateIso).trim(),
+            timeRange: String(body.timeRange || sess.timeRange || '').trim(),
+            quorumCount: Number(body.quorumCount ?? presentCount),
+            quorumRequired: Math.max(1, Number(body.quorumRequired || sess.quorumRequired || 1)),
+            agenda: String(body.agenda || sess.agenda || '').trim(),
+          };
+        }
+      }
+
+      const id = newId('acta');
+      const nowIso = new Date().toISOString();
+      await db.insert(actas).values({
+        id,
+        consecutive,
+        year,
+        title: title.slice(0, 200),
+        sessionId,
+        commissionId: typeof body.commissionId === 'string' ? body.commissionId.trim().slice(0, 64) : '',
+        location: sessionMeta.location.slice(0, 180),
+        meetingDate: sessionMeta.meetingDate.slice(0, 40),
+        timeRange: sessionMeta.timeRange.slice(0, 64),
+        quorumCount: sessionMeta.quorumCount,
+        quorumRequired: sessionMeta.quorumRequired,
+        agenda: sessionMeta.agenda.slice(0, 4000),
+        development: String(body.development || '').slice(0, 16000),
+        propositions: String(body.propositions || '').slice(0, 8000),
+        commitmentsSummary: String(body.commitmentsSummary || '').slice(0, 8000),
+        linkedVoteIds: Array.isArray(body.linkedVoteIds)
+          ? body.linkedVoteIds.map(String).slice(0, 25)
+          : [],
+        status: 'borrador',
+        authorUid: req.authUser!.uid,
+        authorName: req.authUser!.fullName,
+        signatures: [],
+        comments: [],
+        history: [
+          {
+            at: nowIso,
+            actorName: req.authUser!.fullName,
+            action: `Creó ${consecutive} en estado borrador`,
+          },
+        ],
+        verificationHash: '',
+      });
+      res.json({ id, consecutive, ok: true });
+    } catch (error) {
+      console.error('Acta create failed:', error);
+      res.status(500).json({ error: 'No fue posible crear el acta.' });
+    }
+  });
+
+  app.patch('/api/actas/:id', requireAuth, async (req: AuthedRequest, res) => {
+    try {
+      const id = String(req.params.id);
+      const [existing] = await db.select().from(actas).where(eq(actas.id, id)).limit(1);
+      if (!existing) {
+        res.status(404).json({ error: 'Acta no encontrada.' });
+        return;
+      }
+
+      const isLeader = isLeadershipTier(req.authUser!.accessTier);
+      if (!isLeader && existing.authorUid !== req.authUser!.uid) {
+        res.status(403).json({ error: 'Solo la Mesa Directiva o la autoría puede editar esta acta.' });
+        return;
+      }
+
+      const body = req.body || {};
+      const patch: Record<string, unknown> = { updatedAt: new Date() };
+      const actions: string[] = [];
+
+      if (typeof body.title === 'string' && body.title.trim()) {
+        patch.title = body.title.trim().slice(0, 200);
+      }
+      if (typeof body.consecutive === 'string' && body.consecutive.trim()) {
+        patch.consecutive = body.consecutive.trim().slice(0, 64);
+      }
+      if (typeof body.sessionId === 'string') patch.sessionId = body.sessionId.trim().slice(0, 64);
+      if (typeof body.commissionId === 'string') patch.commissionId = body.commissionId.trim().slice(0, 64);
+      if (typeof body.location === 'string') patch.location = body.location.trim().slice(0, 180);
+      if (typeof body.meetingDate === 'string') patch.meetingDate = body.meetingDate.trim().slice(0, 40);
+      if (typeof body.timeRange === 'string') patch.timeRange = body.timeRange.trim().slice(0, 64);
+      if (typeof body.quorumCount === 'number') patch.quorumCount = Math.max(0, Math.round(body.quorumCount));
+      if (typeof body.quorumRequired === 'number') {
+        patch.quorumRequired = Math.max(1, Math.round(body.quorumRequired));
+      }
+      if (typeof body.agenda === 'string') patch.agenda = body.agenda.slice(0, 4000);
+      if (typeof body.development === 'string') patch.development = body.development.slice(0, 16000);
+      if (typeof body.propositions === 'string') patch.propositions = body.propositions.slice(0, 8000);
+      if (typeof body.commitmentsSummary === 'string') {
+        patch.commitmentsSummary = body.commitmentsSummary.slice(0, 8000);
+      }
+      if (Array.isArray(body.linkedVoteIds)) {
+        patch.linkedVoteIds = body.linkedVoteIds.map(String).slice(0, 25);
+      }
+
+      const VALID_STATUSES = ['borrador', 'revision', 'aprobada', 'firmada', 'archivada'];
+      if (typeof body.status === 'string' && VALID_STATUSES.includes(body.status) && body.status !== existing.status) {
+        if (!isLeader && ['aprobada', 'firmada', 'archivada'].includes(body.status)) {
+          res.status(403).json({ error: 'Solo Presidencia o Secretaría pueden aprobar, firmar o archivar un acta.' });
+          return;
+        }
+        patch.status = body.status;
+        actions.push(`Cambió estado de ${existing.status} a ${body.status}`);
+        if (['aprobada', 'firmada', 'archivada'].includes(body.status)) {
+          patch.verificationHash = computeActaVerificationHash({
+            id: existing.id,
+            consecutive: (patch.consecutive as string) ?? existing.consecutive,
+            title: (patch.title as string) ?? existing.title,
+            meetingDate: (patch.meetingDate as string) ?? existing.meetingDate,
+            agenda: (patch.agenda as string) ?? existing.agenda,
+            development: (patch.development as string) ?? existing.development,
+            propositions: (patch.propositions as string) ?? existing.propositions,
+            commitmentsSummary: (patch.commitmentsSummary as string) ?? existing.commitmentsSummary,
+          });
+        }
+      } else {
+        actions.push('Actualizó contenido del acta');
+      }
+
+      patch.history = [
+        {
+          at: new Date().toISOString(),
+          actorName: req.authUser!.fullName,
+          action: actions.join(' · '),
+        },
+        ...(existing.history || []),
+      ].slice(0, 40);
+
+      await db.update(actas).set(patch).where(eq(actas.id, id));
+      res.json({ ok: true });
+    } catch (error) {
+      console.error('Acta update failed:', error);
+      res.status(500).json({ error: 'No fue posible actualizar el acta.' });
+    }
+  });
+
+  app.post('/api/actas/:id/sign', requireAuth, requireLeader, async (req: AuthedRequest, res) => {
+    try {
+      const id = String(req.params.id);
+      const [existing] = await db.select().from(actas).where(eq(actas.id, id)).limit(1);
+      if (!existing) {
+        res.status(404).json({ error: 'Acta no encontrada.' });
+        return;
+      }
+      if ((existing.signatures || []).some((s) => s.uid === req.authUser!.uid)) {
+        res.status(400).json({ error: 'Ya registraste tu firma digital en esta acta.' });
+        return;
+      }
+
+      const signedAt = new Date().toISOString();
+      const docHash = computeActaVerificationHash(existing);
+      const sigHash = crypto
+        .createHash('sha256')
+        .update(`${docHash}:${req.authUser!.uid}:${signedAt}`)
+        .digest('hex')
+        .slice(0, 16)
+        .toUpperCase();
+
+      const nextSignatures = [
+        ...(existing.signatures || []),
+        {
+          uid: req.authUser!.uid,
+          name: req.authUser!.fullName,
+          roleLabel: req.authUser!.roleLabel,
+          signedAt,
+          hash: sigHash,
+        },
+      ];
+
+      const nextStatus =
+        existing.status === 'archivada'
+          ? 'archivada'
+          : 'firmada';
+
+      await db
+        .update(actas)
+        .set({
+          signatures: nextSignatures,
+          status: nextStatus,
+          verificationHash: docHash,
+          history: [
+            {
+              at: signedAt,
+              actorName: req.authUser!.fullName,
+              action: `Firmó digitalmente (${req.authUser!.roleLabel}) · Sello ${sigHash}`,
+            },
+            ...(existing.history || []),
+          ].slice(0, 40),
+          updatedAt: new Date(),
+        })
+        .where(eq(actas.id, id));
+
+      res.json({ ok: true, verificationHash: docHash, signatureHash: sigHash });
+    } catch (error) {
+      console.error('Acta sign failed:', error);
+      res.status(500).json({ error: 'No fue posible firmar el acta.' });
+    }
+  });
+
+  app.post('/api/actas/:id/comment', requireAuth, async (req: AuthedRequest, res) => {
+    try {
+      const id = String(req.params.id);
+      const bodyText = String(req.body?.body || '').trim();
+      if (bodyText.length < 2) {
+        res.status(400).json({ error: 'Escribe una observación válida.' });
+        return;
+      }
+      const [existing] = await db.select().from(actas).where(eq(actas.id, id)).limit(1);
+      if (!existing) {
+        res.status(404).json({ error: 'Acta no encontrada.' });
+        return;
+      }
+      const nextComments = [
+        {
+          id: newId('acmt'),
+          authorUid: req.authUser!.uid,
+          authorName: req.authUser!.fullName,
+          authorRoleLabel: req.authUser!.roleLabel,
+          body: bodyText.slice(0, 1200),
+          createdAt: new Date().toISOString(),
+        },
+        ...(existing.comments || []),
+      ].slice(0, 60);
+
+      await db
+        .update(actas)
+        .set({ comments: nextComments, updatedAt: new Date() })
+        .where(eq(actas.id, id));
+      res.json({ ok: true });
+    } catch (error) {
+      console.error('Acta comment failed:', error);
+      res.status(500).json({ error: 'No fue posible guardar la observación.' });
+    }
+  });
+
+  app.post('/api/actas/:id/ai-draft', requireAuth, async (req: AuthedRequest, res) => {
+    try {
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        res.status(503).json({
+          error:
+            'El asistente inteligente de redacción no tiene GEMINI_API_KEY configurada en el servidor.',
+        });
+        return;
+      }
+
+      const id = String(req.params.id);
+      const [acta] = await db.select().from(actas).where(eq(actas.id, id)).limit(1);
+      if (!acta) {
+        res.status(404).json({ error: 'Acta no encontrada.' });
+        return;
+      }
+
+      const notes = String(req.body?.notes || '').trim().slice(0, 4000);
+      const sessionId = String(req.body?.sessionId || acta.sessionId || '').trim();
+
+      let sessionContext = 'Sin sesión vinculada.';
+      if (sessionId) {
+        const [sess] = await db.select().from(sessions).where(eq(sessions.id, sessionId)).limit(1);
+        if (sess) {
+          const allCouncilors = await db.select().from(publicCouncilors);
+          const attEntries = Object.entries(sess.attendance || {}).map(([cUid, st]) => {
+            const cName = allCouncilors.find((c) => c.uid === cUid)?.fullName || cUid;
+            return `- ${cName}: ${st}`;
+          });
+          sessionContext = [
+            `Sesión: ${sess.title} (${sess.sessionType})`,
+            `Fecha: ${sess.dateIso} ${sess.timeRange || ''}`,
+            `Lugar: ${sess.location}`,
+            `Orden del día: ${sess.agenda || 'No registrado'}`,
+            `Asistencia (${attEntries.length} registros):\n${attEntries.join('\n') || 'Sin registro'}`,
+          ].join('\n');
+        }
+      }
+
+      const linkedVoteIds = Array.isArray(req.body?.linkedVoteIds)
+        ? req.body.linkedVoteIds.map(String)
+        : acta.linkedVoteIds || [];
+      let votesContext = 'Sin votaciones vinculadas.';
+      if (linkedVoteIds.length > 0) {
+        const voteRows = await db
+          .select()
+          .from(votes)
+          .where(inArray(votes.id, linkedVoteIds));
+        if (voteRows.length > 0) {
+          votesContext = voteRows
+            .map(
+              (v) =>
+                `- ${v.title} (${v.voteMode || 'nominal'}, mayoría ${v.majorityType || 'simple'}): ${
+                  v.resultSummary || JSON.stringify(v.tallies)
+                }`
+            )
+            .join('\n');
+        }
+      }
+
+      const commitmentRows = await db
+        .select()
+        .from(commitments)
+        .orderBy(desc(commitments.createdAt))
+        .limit(12);
+      const commitmentsContext =
+        commitmentRows.length > 0
+          ? commitmentRows
+              .map(
+                (c) =>
+                  `- ${c.title} (Responsable: ${c.responsibleName}, Estado: ${c.status}, Vence: ${
+                    c.dueDate || 'Por definir'
+                  })`
+              )
+              .join('\n')
+          : 'Sin compromisos activos.';
+
+      const ai = new GoogleGenAI({
+        apiKey,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          },
+        },
+      });
+
+      const prompt = [
+        `Redacta en español formal institucional colombiano (Ley Estatutaria 1622 de 2013 y Ley 1885 de 2018) el borrador de los bloques principales del acta "${acta.consecutive} — ${acta.title}" del Consejo Municipal de Juventudes (CMJ) de Flandes, Tolima.`,
+        `Lugar: ${acta.location} | Fecha: ${acta.meetingDate} ${acta.timeRange || ''}`,
+        `Orden del día:\n${acta.agenda || 'Por definir'}`,
+        `Contexto de sesión y asistencia:\n${sessionContext}`,
+        `Votaciones:\n${votesContext}`,
+        `Compromisos registrados:\n${commitmentsContext}`,
+        notes ? `Notas adicionales de secretaría:\n${notes}` : '',
+        `No inventes cifras ni acuerdos que no estén respaldados por los datos entregados.`,
+      ]
+        .filter(Boolean)
+        .join('\n\n');
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-4-hydrogen',
+        contents: prompt,
+        config: {
+          systemInstruction:
+            'Eres secretario técnico institucional del Consejo Municipal de Juventudes de Flandes, Tolima (Colombia). Responde únicamente en JSON con tres campos claros y bien redactados en español formal.',
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              development: {
+                type: Type.STRING,
+                description:
+                  'Desarrollo cronológico y formal de la sesión, verificación de quórum e intervenciones principales.',
+              },
+              propositions: {
+                type: Type.STRING,
+                description:
+                  'Proposiciones presentadas, decisiones tomadas y resultados de votaciones.',
+              },
+              commitmentsSummary: {
+                type: Type.STRING,
+                description:
+                  'Listado claro de compromisos, responsables y fechas acordadas.',
+              },
+            },
+            required: ['development', 'propositions', 'commitmentsSummary'],
+          },
+        },
+      });
+
+      const parsed = JSON.parse((response.text ?? '{}').trim()) as {
+        development?: string;
+        propositions?: string;
+        commitmentsSummary?: string;
+      };
+
+      res.json({
+        ok: true,
+        development: parsed.development || '',
+        propositions: parsed.propositions || '',
+        commitmentsSummary: parsed.commitmentsSummary || '',
+      });
+    } catch (error) {
+      console.error('Acta AI draft failed:', error);
+      res.status(500).json({
+        error: 'No se pudo generar el borrador asistido. Verifica la configuración del servicio de IA.',
+      });
+    }
+  });
+
+  app.delete('/api/actas/:id', requireAuth, requireLeader, async (req, res) => {
+    try {
+      await db.delete(actas).where(eq(actas.id, String(req.params.id)));
+      res.json({ ok: true });
+    } catch (error) {
+      console.error('Acta delete failed:', error);
+      res.status(500).json({ error: 'No fue posible eliminar el acta.' });
+    }
+  });
+
+  function computeVoteResultSummary(v: {
+    options: string[];
+    tallies: Record<string, number>;
+    voterUids: string[];
+    quorumRequired: number;
+    majorityType: string;
+  }): string {
+    const total = v.voterUids.length;
+    if (total < (v.quorumRequired || 1)) {
+      return `Sin quórum (${total}/${v.quorumRequired || 1})`;
+    }
+    const entries = v.options.map((opt) => ({ opt, count: v.tallies?.[opt] || 0 }));
+    entries.sort((a, b) => b.count - a.count);
+    const leader = entries[0];
+    const runnerUp = entries[1];
+    if (!leader || leader.count === 0) return 'Sin votos emitidos';
+
+    const maj = v.majorityType || 'simple';
+    if (maj === 'unanimidad') {
+      return leader.count === total ? `Aprobada por unanimidad (${leader.opt})` : `Rechazada · sin unanimidad`;
+    }
+    if (maj === 'dos_tercios') {
+      const needed = Math.ceil((total * 2) / 3);
+      return leader.count >= needed
+        ? `Aprobada por 2/3 (${leader.opt}: ${leader.count}/${total})`
+        : `No alcanza 2/3 (${leader.count}/${needed} requeridos)`;
+    }
+    if (maj === 'absoluta') {
+      const needed = Math.floor(total / 2) + 1;
+      return leader.count >= needed
+        ? `Aprobada por mayoría absoluta (${leader.opt}: ${leader.count}/${total})`
+        : `Empate o sin mayoría absoluta (${leader.count}/${needed})`;
+    }
+    // simple
+    if (runnerUp && leader.count === runnerUp.count) {
+      return `Empate (${leader.opt} vs ${runnerUp.opt}: ${leader.count} votos)`;
+    }
+    return `Aprobada (${leader.opt}: ${leader.count}/${total})`;
+  }
+
   app.post('/api/votes', requireAuth, requireLeader, async (req: AuthedRequest, res) => {
     try {
-      const { title, description, voteMode, options, quorumRequired, deadline } = req.body || {};
+      const {
+        title,
+        description,
+        commissionId,
+        sessionId,
+        voteMode,
+        majorityType,
+        options,
+        quorumRequired,
+        opensAt,
+        closesAt,
+        deadline,
+      } = req.body || {};
       const cleanOpts = Array.isArray(options)
         ? options.map((o) => String(o).trim()).filter(Boolean).slice(0, 8)
         : [];
@@ -2513,22 +3641,33 @@ export function getApiApp(): express.Express {
       const tallies: Record<string, number> = {};
       for (const opt of cleanOpts) tallies[opt] = 0;
 
+      const resolvedMode =
+        voteMode === 'secreto' || voteMode === 'mano_alzada' ? voteMode : 'nominal';
+      const resolvedMajority = ['simple', 'absoluta', 'dos_tercios', 'unanimidad'].includes(
+        majorityType
+      )
+        ? String(majorityType)
+        : 'simple';
+
       const id = newId('vote');
       await db.insert(votes).values({
         id,
         title: String(title).trim().slice(0, 180),
         description: String(description || 'Votación plenaria CMJ').trim().slice(0, 1000),
-        commissionId: '',
-        voteMode: voteMode === 'secreto' ? 'secreto' : 'nominal',
+        commissionId: typeof commissionId === 'string' ? commissionId.trim().slice(0, 64) : '',
+        sessionId: typeof sessionId === 'string' ? sessionId.trim().slice(0, 64) : '',
+        voteMode: resolvedMode,
+        majorityType: resolvedMajority,
         options: cleanOpts,
         tallies,
         nominalBallots: {},
         voterUids: [],
         quorumRequired: Math.max(1, Number(quorumRequired || 1)),
-        opensAt: '',
-        closesAt: '',
+        opensAt: typeof opensAt === 'string' ? opensAt.slice(0, 40) : '',
+        closesAt: typeof closesAt === 'string' ? closesAt.slice(0, 40) : '',
         status: 'abierta',
-        deadline: String(deadline || '').slice(0, 40),
+        resultSummary: '',
+        deadline: String(deadline || closesAt || '').slice(0, 40),
         createdByUid: req.authUser!.uid,
       });
       res.json({ id, ok: true });
@@ -2547,6 +3686,20 @@ export function getApiApp(): express.Express {
         res.status(400).json({ error: 'La votación no está abierta.' });
         return;
       }
+      if (vote.opensAt) {
+        const openTs = Date.parse(vote.opensAt);
+        if (!Number.isNaN(openTs) && Date.now() < openTs) {
+          res.status(400).json({ error: 'Esta votación aún no inicia según su horario programado.' });
+          return;
+        }
+      }
+      if (vote.closesAt) {
+        const closeTs = Date.parse(vote.closesAt);
+        if (!Number.isNaN(closeTs) && Date.now() > closeTs) {
+          res.status(400).json({ error: 'El tiempo programado para esta votación ya cerró.' });
+          return;
+        }
+      }
       if (!vote.options.includes(option)) {
         res.status(400).json({ error: 'Opción no válida.' });
         return;
@@ -2561,8 +3714,15 @@ export function getApiApp(): express.Express {
       nextTallies[option] = (nextTallies[option] || 0) + 1;
       const nextNominal =
         vote.voteMode === 'secreto'
-          ? vote.nominalBallots || {}
+          ? {}
           : { ...(vote.nominalBallots || {}), [req.authUser!.uid]: option };
+      const summary = computeVoteResultSummary({
+        options: vote.options,
+        tallies: nextTallies,
+        voterUids: nextVoterUids,
+        quorumRequired: vote.quorumRequired,
+        majorityType: vote.majorityType,
+      });
 
       await db
         .update(votes)
@@ -2570,10 +3730,11 @@ export function getApiApp(): express.Express {
           voterUids: nextVoterUids,
           tallies: nextTallies,
           nominalBallots: nextNominal,
+          resultSummary: summary,
           updatedAt: new Date(),
         })
         .where(eq(votes.id, id));
-      res.json({ ok: true });
+      res.json({ ok: true, resultSummary: summary });
     } catch (error) {
       console.error('Cast vote failed:', error);
       res.status(500).json({ error: 'No fue posible registrar tu voto.' });
@@ -2597,9 +3758,17 @@ export function getApiApp(): express.Express {
       if (typeof body.description === 'string') {
         patch.description = body.description.trim().slice(0, 1000);
       }
-      if (body.voteMode === 'nominal' || body.voteMode === 'secreto') {
+      if (typeof body.sessionId === 'string') patch.sessionId = body.sessionId.trim().slice(0, 64);
+      if (typeof body.commissionId === 'string') patch.commissionId = body.commissionId.trim().slice(0, 64);
+      if (typeof body.opensAt === 'string') patch.opensAt = body.opensAt.slice(0, 40);
+      if (typeof body.closesAt === 'string') patch.closesAt = body.closesAt.slice(0, 40);
+      if (['simple', 'absoluta', 'dos_tercios', 'unanimidad'].includes(body.majorityType)) {
+        patch.majorityType = body.majorityType;
+      }
+      if (['nominal', 'secreto', 'mano_alzada'].includes(body.voteMode)) {
         if (existing.voterUids.length === 0) {
           patch.voteMode = body.voteMode;
+          if (body.voteMode === 'secreto') patch.nominalBallots = {};
         }
       }
       if (typeof body.quorumRequired === 'number' || typeof body.quorumRequired === 'string') {
@@ -2619,6 +3788,14 @@ export function getApiApp(): express.Express {
           patch.tallies = tallies;
         }
       }
+      patch.resultSummary = computeVoteResultSummary({
+        options: (patch.options as string[]) || existing.options,
+        tallies: (patch.tallies as Record<string, number>) || existing.tallies,
+        voterUids: existing.voterUids,
+        quorumRequired: (patch.quorumRequired as number) ?? existing.quorumRequired,
+        majorityType: (patch.majorityType as string) || existing.majorityType,
+      });
+
       await db.update(votes).set(patch).where(eq(votes.id, id));
       res.json({ ok: true });
     } catch (error) {

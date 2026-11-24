@@ -56,6 +56,12 @@
   }
 }
 
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
 /* Print support for official letter templates and certificates */
 @media print {
   .no-print {

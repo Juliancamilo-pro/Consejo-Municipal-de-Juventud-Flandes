@@ -12,7 +12,9 @@ export type FestiveThemeId =
   | 'navidad';
 
 export type AttendanceStatus = 'presente' | 'tarde' | 'excusa' | 'ausente';
-export type VoteMode = 'nominal' | 'secreto';
+export type VoteMode = 'nominal' | 'secreto' | 'mano_alzada';
+export type MajorityType = 'simple' | 'absoluta' | 'dos_tercios' | 'unanimidad';
+export type ActaStatus = 'borrador' | 'revision' | 'aprobada' | 'firmada' | 'archivada';
 export type TaskStatus = 'pendiente' | 'en_curso' | 'hecha';
 export type AffiliationType = '' | 'partido' | 'fundacion' | 'independiente';
 
@@ -25,8 +27,12 @@ export interface PublicCouncilor {
   commissionName: string;
   affiliationType?: AffiliationType;
   affiliationName?: string;
+  email?: string;
+  phone?: string;
   bio?: string;
   photoUrl?: string;
+  photoThumbUrl?: string;
+  photoMediumUrl?: string;
   storagePath?: string;
   instagram?: string;
   facebook?: string;
@@ -106,6 +112,20 @@ export interface NewsEvent {
   updatedAt?: unknown;
 }
 
+export interface GalleryAlbum {
+  id: string;
+  title: string;
+  description?: string;
+  commissionId: string;
+  eventDate?: string;
+  coverUrl?: string;
+  authorUid: string;
+  status: 'publicado' | 'archivado';
+  sortOrder?: number;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+}
+
 export interface GalleryItem {
   id: string;
   title: string;
@@ -117,10 +137,27 @@ export interface GalleryItem {
   storagePath?: string;
   thumbnailStoragePath?: string;
   commissionId: string;
+  albumId?: string;
+  sortOrder?: number;
+  eventDate?: string;
+  mimeType?: string;
   authorUid: string;
   authorName: string;
   status: 'publicado' | 'archivado';
   createdAt?: unknown;
+}
+
+export interface DocumentVersionEntry {
+  version: string;
+  fileUrl: string;
+  storagePath?: string;
+  fileName: string;
+  mimeType: string;
+  fileSize?: number;
+  uploadedByUid: string;
+  uploadedByName: string;
+  uploadedAt: string;
+  notes?: string;
 }
 
 export interface PortalDocument {
@@ -129,6 +166,7 @@ export interface PortalDocument {
   folder?: string;
   category: string;
   version: string;
+  versionHistory?: DocumentVersionEntry[];
   fileUrl: string;
   storagePath?: string;
   fileName: string;
@@ -178,6 +216,13 @@ export interface ContactMessage {
   createdAt?: unknown;
 }
 
+export interface SessionExcuse {
+  reason: string;
+  attachmentUrl?: string;
+  attachmentName?: string;
+  submittedAt: string;
+}
+
 export interface CouncilSession {
   id: string;
   title: string;
@@ -189,7 +234,10 @@ export interface CouncilSession {
   status: 'programada' | 'en_curso' | 'finalizada';
   actaUrl?: string;
   attendance?: Record<string, AttendanceStatus>;
+  excuses?: Record<string, SessionExcuse>;
   checkInCode?: string;
+  checkInExpiresAt?: string;
+  qrRotatedAt?: string;
   quorumRequired?: number;
   createdByUid: string;
   createdAt?: unknown;
@@ -201,7 +249,9 @@ export interface CouncilVote {
   title: string;
   description: string;
   commissionId?: string;
+  sessionId?: string;
   voteMode?: VoteMode;
+  majorityType?: MajorityType;
   options: string[];
   tallies?: Record<string, number>;
   nominalBallots?: Record<string, string>;
@@ -210,8 +260,60 @@ export interface CouncilVote {
   opensAt?: string;
   closesAt?: string;
   status: 'abierta' | 'cerrada';
+  resultSummary?: string;
   deadline?: string;
   createdByUid: string;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+}
+
+export interface ActaSignature {
+  uid: string;
+  name: string;
+  roleLabel: RoleLabel;
+  signedAt: string;
+  hash: string;
+}
+
+export interface ActaComment {
+  id: string;
+  authorUid: string;
+  authorName: string;
+  authorRoleLabel: RoleLabel;
+  body: string;
+  createdAt: string;
+}
+
+export interface ActaHistoryEntry {
+  at: string;
+  actorName: string;
+  action: string;
+}
+
+export interface PortalActa {
+  id: string;
+  consecutive: string;
+  year: number;
+  title: string;
+  sessionId?: string;
+  commissionId?: string;
+  location: string;
+  meetingDate: string;
+  timeRange?: string;
+  quorumCount: number;
+  quorumRequired: number;
+  agenda: string;
+  development: string;
+  propositions: string;
+  commitmentsSummary: string;
+  linkedVoteIds: string[];
+  status: ActaStatus;
+  authorUid: string;
+  authorName: string;
+  signatures: ActaSignature[];
+  comments: ActaComment[];
+  history: ActaHistoryEntry[];
+  verificationHash?: string;
   createdAt?: unknown;
   updatedAt?: unknown;
 }
@@ -325,6 +427,7 @@ export type PrivateModule =
   | 'comisiones'
   | 'documentos'
   | 'sesiones'
+  | 'actas'
   | 'votaciones'
   | 'planillas'
   | 'encuestas'

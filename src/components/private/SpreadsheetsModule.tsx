@@ -8,7 +8,7 @@ import {
   Upload,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import { apiRequest } from '../../lib/apiClient';
+import { ApiRequestError, apiRequest } from '../../lib/apiClient';
 import { isLeadershipTier } from '../../lib/security';
 import type {
   AccessTier,
@@ -174,8 +174,8 @@ export function SpreadsheetsModule({
       const priv = privateCouncilors.find((p) => p.uid === c.uid);
       return {
         Nombre: c.fullName,
-        Correo: priv?.email || '',
-        Telefono: priv?.phone || '',
+        Correo: priv?.email || c.email || '',
+        Telefono: priv?.phone || c.phone || '',
         Cargo: c.roleLabel,
         Comision: c.commissionName || 'Sin comisión',
         Filiacion:
@@ -218,7 +218,7 @@ export function SpreadsheetsModule({
       commissionId: c.commissionId || '',
       affiliationType: (c.affiliationType || '') as AffiliationType,
       affiliationName: c.affiliationName || '',
-      phone: priv?.phone || '',
+      phone: priv?.phone || c.phone || '',
     };
   };
 
@@ -244,8 +244,9 @@ export function SpreadsheetsModule({
         return next;
       });
       showToast('Fila guardada', 'success');
-    } catch {
-      showToast('No se pudo guardar la fila', 'error');
+    } catch (err) {
+      const msg = err instanceof ApiRequestError ? err.message : 'No se pudo guardar la fila';
+      showToast(msg, 'error');
     } finally {
       setSavingRowId(null);
     }
@@ -757,7 +758,7 @@ export function SpreadsheetsModule({
                         />
                       </td>
                       <td className="p-2 border border-slate-200 dark:border-slate-800 text-slate-500">
-                        {priv?.email || 'Pendiente'}
+                        {priv?.email || c.email || 'Pendiente'}
                       </td>
                       <td className="p-1.5 border border-slate-200 dark:border-slate-800">
                         <input
