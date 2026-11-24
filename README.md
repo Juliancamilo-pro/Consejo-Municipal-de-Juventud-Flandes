@@ -7,7 +7,7 @@ Aplicación web oficial y plataforma interna de gestión del **Consejo Municipal
 - React 19 + TypeScript + Vite
 - Tailwind CSS v4 (modo claro / oscuro y temas festivos configurables)
 - Motion (`motion/react`)
-- Firebase Authentication (Correo y contraseña), Cloud Firestore (con caché persistente offline) y Firebase Storage
+- Express + Drizzle ORM + PostgreSQL (sesiones con cookies HttpOnly y token en memoria)
 - SheetJS (`xlsx`) para exportación e importación de planillas en Excel y CSV
 
 ## Instalación local
@@ -18,19 +18,23 @@ cp .env.example .env
 npm run dev
 ```
 
-## Configuración de Firebase
+## Variables de entorno requeridas (PostgreSQL)
 
-1. Verifica que `firebase-applet-config.json` tenga las credenciales de tu proyecto Firebase.
-2. En **Firebase Console → Authentication → Sign-in method**, habilita **Correo electrónico/contraseña**.
-3. En **Firebase Console → Storage**, activa Storage y publica el contenido de `storage.rules`.
-4. En **Firebase Console → Firestore Database → Reglas**, publica el contenido de `firestore.rules`.
+Configura una base de datos PostgreSQL (por ejemplo Neon, Supabase, Vercel Postgres o Cloud SQL):
+
+- `DATABASE_URL` (cadena de conexión PostgreSQL, recomendada para Vercel), **o bien**
+- `SQL_HOST`, `SQL_PORT`, `SQL_USER`, `SQL_PASSWORD`, `SQL_DB_NAME`
+- Opcional recomendado en producción: `CMJ_SESSION_SECRET` (clave aleatoria larga para firmar sesiones)
+
+Al arrancar, el servidor crea automáticamente las tablas necesarias en PostgreSQL si aún no existen.
 
 ## Despliegue en Vercel
 
 1. Sube este repositorio a GitHub/GitLab/Bitbucket e impórtalo en [Vercel](https://vercel.com/).
-2. Configuración de compilación:
+2. En **Vercel → Project Settings → Environment Variables**, agrega `DATABASE_URL` (o las variables `SQL_*`) y opcionalmente `CMJ_SESSION_SECRET`.
+3. Configuración de compilación:
    - **Framework Preset**: `Vite`
    - **Build Command**: `npm run build`
    - **Output Directory**: `dist`
-3. El archivo `vercel.json` ya incluye las reescrituras SPA necesarias.
-4. Copia tu dominio final de Vercel (por ejemplo `cmj-flandes.vercel.app`) y agrégalo en **Firebase Console → Authentication → Settings → Authorized domains**.
+4. El archivo `vercel.json` enruta automáticamente `/api/*` hacia `api/index.ts` y las demás rutas hacia `index.html`.
+5. Puedes verificar el estado de la base de datos abriendo `https://tu-dominio.vercel.app/api/health?db=1`.

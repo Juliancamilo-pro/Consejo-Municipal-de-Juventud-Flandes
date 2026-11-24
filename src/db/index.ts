@@ -1,21 +1,72 @@
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Pool } from 'pg';
+import { Pool, type PoolConfig } from 'pg';
 import * as schema from './schema.ts';
 
 declare global {
   var _postgresPool: Pool | undefined;
+  var _schemaReadyPromise: Promise<void> | undefined;
+}
+
+function getConnectionString(): string {
+  return (
+    process.env.DATABASE_URL ||
+    process.env.POSTGRES_URL ||
+    process.env.POSTGRES_URL_NON_POOLING ||
+    ''
+  ).trim();
+}
+
+export function hasDatabaseConfig(): boolean {
+  if (getConnectionString()) return true;
+  return Boolean(
+    process.env.SQL_HOST?.trim() &&
+      process.env.SQL_USER?.trim() &&
+      process.env.SQL_DB_NAME?.trim()
+  );
+}
+
+function buildPoolConfig(): PoolConfig {
+  const connectionString = getConnectionString();
+  const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+
+  if (connectionString) {
+    const isLocal =
+      connectionString.includes('localhost') ||
+      connectionString.includes('127.0.0.1') ||
+      connectionString.includes('/cloudsql/');
+    const explicitDisable = connectionString.includes('sslmode=disable') || process.env.SQL_SSL === 'false';
+    return {
+      connectionString,
+      ssl: !isLocal && !explicitDisable ? { rejectUnauthorized: false } : undefined,
+      max: isServerless ? 5 : 10,
+      idleTimeoutMillis: 15000,
+      connectionTimeoutMillis: 15000,
+    };
+  }
+
+  const host = process.env.SQL_HOST;
+  const isUnixSocket = Boolean(host && host.startsWith('/'));
+  const isLocalHost = host === 'localhost' || host === '127.0.0.1';
+  const useSsl =
+    process.env.SQL_SSL === 'true' ||
+    (Boolean(host) && !isUnixSocket && !isLocalHost && process.env.SQL_SSL !== 'false' && isServerless);
+
+  return {
+    host,
+    port: process.env.SQL_PORT ? Number(process.env.SQL_PORT) : 5432,
+    user: process.env.SQL_USER,
+    password: process.env.SQL_PASSWORD,
+    database: process.env.SQL_DB_NAME,
+    ssl: useSsl ? { rejectUnauthorized: false } : undefined,
+    max: isServerless ? 5 : 10,
+    idleTimeoutMillis: 15000,
+    connectionTimeoutMillis: 15000,
+  };
 }
 
 export const createPool = () => {
   if (!global._postgresPool) {
-    global._postgresPool = new Pool({
-      host: process.env.SQL_HOST,
-      user: process.env.SQL_USER,
-      password: process.env.SQL_PASSWORD,
-      database: process.env.SQL_DB_NAME,
-      max: 10,
-      connectionTimeoutMillis: 15000,
-    });
+    global._postgresPool = new Pool(buildPoolConfig());
 
     global._postgresPool.on('error', (err) => {
       console.error('Unexpected error on idle SQL pool client:', err);
@@ -27,3 +78,395 @@ export const createPool = () => {
 const pool = createPool();
 
 export const db = drizzle(pool, { schema });
+
+export async function ensureDatabaseTables(): Promise<void> {
+  if (global._schemaReadyPromise) {
+    return global._schemaReadyPromise;
+  }
+
+  global._schemaReadyPromise = (async () => {
+    const tableDefinitions: Array<[string, string]> = [
+      [
+        'users',
+        `CREATE TABLE IF NOT EXISTS users (
+          id SERIAL PRIMARY KEY,
+          uid TEXT NOT NULL UNIQUE,
+          email TEXT NOT NULL UNIQUE,
+          password_hash TEXT NOT NULL,
+          phone TEXT NOT NULL DEFAULT '',
+          access_tier TEXT NOT NULL DEFAULT 'tier_4_member',
+          role_label TEXT NOT NULL DEFAULT 'Consejero',
+          commission_id TEXT NOT NULL DEFAULT '',
+          active BOOLEAN NOT NULL DEFAULT true,
+          must_change_password BOOLEAN NOT NULL DEFAULT false,
+          created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )`,
+      ],
+      [
+        'allowed_accounts',
+        `CREATE TABLE IF NOT EXISTS allowed_accounts (
+          email_hash TEXT PRIMARY KEY,
+          email TEXT NOT NULL UNIQUE,
+          active BOOLEAN NOT NULL DEFAULT true,
+          access_tier TEXT NOT NULL DEFAULT 'tier_4_member',
+          role_label TEXT NOT NULL DEFAULT 'Consejero',
+          commission_id TEXT NOT NULL DEFAULT '',
+          affiliation_type TEXT NOT NULL DEFAULT '',
+          affiliation_name TEXT NOT NULL DEFAULT '',
+          account_provisioned BOOLEAN NOT NULL DEFAULT false,
+          must_change_password BOOLEAN NOT NULL DEFAULT true,
+          updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )`,
+      ],
+      [
+        'portal_security',
+        `CREATE TABLE IF NOT EXISTS portal_security (
+          id TEXT PRIMARY KEY,
+          invite_code_hash TEXT NOT NULL,
+          initial_password_hash TEXT NOT NULL,
+          updated_by_uid TEXT NOT NULL DEFAULT '',
+          updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )`,
+      ],
+      [
+        'portal_settings',
+        `CREATE TABLE IF NOT EXISTS portal_settings (
+          id TEXT PRIMARY KEY,
+          hero_title TEXT NOT NULL,
+          hero_subtitle TEXT NOT NULL,
+          hero_image_url TEXT NOT NULL DEFAULT '',
+          hero_storage_path TEXT NOT NULL DEFAULT '',
+          about_text TEXT NOT NULL DEFAULT '',
+          mission_text TEXT NOT NULL DEFAULT '',
+          vision_text TEXT NOT NULL DEFAULT '',
+          contact_email TEXT NOT NULL DEFAULT '',
+          contact_address TEXT NOT NULL DEFAULT '',
+          active_theme TEXT NOT NULL DEFAULT 'default',
+          updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )`,
+      ],
+      [
+        'public_councilors',
+        `CREATE TABLE IF NOT EXISTS public_councilors (
+          id TEXT PRIMARY KEY,
+          uid TEXT NOT NULL UNIQUE,
+          full_name TEXT NOT NULL,
+          role_label TEXT NOT NULL,
+          commission_id TEXT NOT NULL DEFAULT '',
+          commission_name TEXT NOT NULL DEFAULT 'Sin comisión',
+          affiliation_type TEXT NOT NULL DEFAULT '',
+          affiliation_name TEXT NOT NULL DEFAULT '',
+          bio TEXT NOT NULL DEFAULT '',
+          photo_url TEXT NOT NULL DEFAULT '',
+          storage_path TEXT NOT NULL DEFAULT '',
+          instagram TEXT NOT NULL DEFAULT '',
+          facebook TEXT NOT NULL DEFAULT '',
+          active BOOLEAN NOT NULL DEFAULT true,
+          display_order INTEGER NOT NULL DEFAULT 50,
+          updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )`,
+      ],
+      [
+        'commissions',
+        `CREATE TABLE IF NOT EXISTS commissions (
+          id TEXT PRIMARY KEY,
+          number INTEGER NOT NULL,
+          name TEXT NOT NULL,
+          icon_name TEXT NOT NULL DEFAULT 'BookOpen',
+          accent_color TEXT NOT NULL DEFAULT '#2563EB',
+          cover_url TEXT NOT NULL DEFAULT '',
+          storage_path TEXT NOT NULL DEFAULT '',
+          description TEXT NOT NULL,
+          coordinator_name TEXT NOT NULL,
+          coordinator_uid TEXT NOT NULL DEFAULT '',
+          work_plan_summary TEXT NOT NULL DEFAULT '',
+          updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )`,
+      ],
+      [
+        'commission_tasks',
+        `CREATE TABLE IF NOT EXISTS commission_tasks (
+          id TEXT PRIMARY KEY,
+          commission_id TEXT NOT NULL,
+          title TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pendiente',
+          assigned_name TEXT NOT NULL DEFAULT '',
+          due_date TEXT NOT NULL DEFAULT '',
+          created_by_uid TEXT NOT NULL,
+          created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )`,
+      ],
+      [
+        'news_events',
+        `CREATE TABLE IF NOT EXISTS news_events (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          type TEXT NOT NULL DEFAULT 'noticia',
+          summary TEXT NOT NULL,
+          content TEXT NOT NULL,
+          cover_url TEXT NOT NULL DEFAULT '',
+          storage_path TEXT NOT NULL DEFAULT '',
+          commission_id TEXT NOT NULL,
+          event_date TEXT NOT NULL DEFAULT '',
+          location TEXT NOT NULL DEFAULT '',
+          author_uid TEXT NOT NULL,
+          author_name TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'publicado',
+          created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )`,
+      ],
+      [
+        'gallery_items',
+        `CREATE TABLE IF NOT EXISTS gallery_items (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          description TEXT NOT NULL DEFAULT '',
+          media_type TEXT NOT NULL DEFAULT 'image',
+          video_source TEXT NOT NULL DEFAULT 'upload',
+          url TEXT NOT NULL,
+          thumbnail_url TEXT NOT NULL DEFAULT '',
+          storage_path TEXT NOT NULL DEFAULT '',
+          thumbnail_storage_path TEXT NOT NULL DEFAULT '',
+          commission_id TEXT NOT NULL,
+          author_uid TEXT NOT NULL,
+          author_name TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'publicado',
+          created_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )`,
+      ],
+      [
+        'documents',
+        `CREATE TABLE IF NOT EXISTS documents (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          folder TEXT NOT NULL DEFAULT 'General',
+          category TEXT NOT NULL,
+          version TEXT NOT NULL DEFAULT '1.0',
+          file_url TEXT NOT NULL,
+          storage_path TEXT NOT NULL DEFAULT '',
+          file_name TEXT NOT NULL,
+          mime_type TEXT NOT NULL,
+          file_size INTEGER NOT NULL DEFAULT 0,
+          visibility TEXT NOT NULL DEFAULT 'privado',
+          commission_id TEXT NOT NULL DEFAULT '',
+          uploaded_by_uid TEXT NOT NULL,
+          uploaded_by_name TEXT NOT NULL,
+          approved_by_presidente BOOLEAN NOT NULL DEFAULT false,
+          created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )`,
+      ],
+      [
+        'calls_surveys',
+        `CREATE TABLE IF NOT EXISTS calls_surveys (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          kind TEXT NOT NULL DEFAULT 'convocatoria',
+          description TEXT NOT NULL,
+          deadline TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'abierta',
+          options JSONB NOT NULL DEFAULT '[]'::jsonb,
+          response_count INTEGER NOT NULL DEFAULT 0,
+          created_by_uid TEXT NOT NULL,
+          created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )`,
+      ],
+      [
+        'survey_responses',
+        `CREATE TABLE IF NOT EXISTS survey_responses (
+          id TEXT PRIMARY KEY,
+          survey_id TEXT NOT NULL,
+          selected_option TEXT NOT NULL,
+          respondent_name TEXT NOT NULL,
+          respondent_email TEXT NOT NULL DEFAULT '',
+          comment TEXT NOT NULL DEFAULT '',
+          created_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )`,
+      ],
+      [
+        'contact_messages',
+        `CREATE TABLE IF NOT EXISTS contact_messages (
+          id TEXT PRIMARY KEY,
+          sender_name TEXT NOT NULL,
+          sender_email TEXT NOT NULL,
+          subject TEXT NOT NULL,
+          message TEXT NOT NULL,
+          category TEXT NOT NULL DEFAULT 'Consulta',
+          status TEXT NOT NULL DEFAULT 'nuevo',
+          created_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )`,
+      ],
+      [
+        'sessions',
+        `CREATE TABLE IF NOT EXISTS sessions (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          session_type TEXT NOT NULL,
+          date_iso TEXT NOT NULL,
+          time_range TEXT NOT NULL DEFAULT '',
+          location TEXT NOT NULL,
+          agenda TEXT NOT NULL DEFAULT '',
+          status TEXT NOT NULL DEFAULT 'programada',
+          acta_url TEXT NOT NULL DEFAULT '',
+          attendance JSONB NOT NULL DEFAULT '{}'::jsonb,
+          check_in_code TEXT NOT NULL DEFAULT '',
+          quorum_required INTEGER NOT NULL DEFAULT 1,
+          created_by_uid TEXT NOT NULL,
+          created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )`,
+      ],
+      [
+        'votes',
+        `CREATE TABLE IF NOT EXISTS votes (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          description TEXT NOT NULL,
+          commission_id TEXT NOT NULL DEFAULT '',
+          vote_mode TEXT NOT NULL DEFAULT 'nominal',
+          options JSONB NOT NULL DEFAULT '[]'::jsonb,
+          tallies JSONB NOT NULL DEFAULT '{}'::jsonb,
+          nominal_ballots JSONB NOT NULL DEFAULT '{}'::jsonb,
+          voter_uids JSONB NOT NULL DEFAULT '[]'::jsonb,
+          quorum_required INTEGER NOT NULL DEFAULT 1,
+          opens_at TEXT NOT NULL DEFAULT '',
+          closes_at TEXT NOT NULL DEFAULT '',
+          status TEXT NOT NULL DEFAULT 'abierta',
+          deadline TEXT NOT NULL DEFAULT '',
+          created_by_uid TEXT NOT NULL,
+          created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )`,
+      ],
+      [
+        'commitments',
+        `CREATE TABLE IF NOT EXISTS commitments (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          description TEXT NOT NULL DEFAULT '',
+          responsible_uid TEXT NOT NULL,
+          responsible_name TEXT NOT NULL,
+          commission_id TEXT NOT NULL,
+          due_date TEXT NOT NULL DEFAULT '',
+          status TEXT NOT NULL DEFAULT 'pendiente',
+          progress INTEGER NOT NULL DEFAULT 0,
+          created_by_uid TEXT NOT NULL,
+          created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )`,
+      ],
+      [
+        'ideas_inbox',
+        `CREATE TABLE IF NOT EXISTS ideas_inbox (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          description TEXT NOT NULL,
+          category TEXT NOT NULL,
+          commission_id TEXT NOT NULL DEFAULT '',
+          author_uid TEXT NOT NULL,
+          author_name TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'nueva',
+          upvoter_uids JSONB NOT NULL DEFAULT '[]'::jsonb,
+          created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )`,
+      ],
+      [
+        'letter_templates',
+        `CREATE TABLE IF NOT EXISTS letter_templates (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          category TEXT NOT NULL,
+          header_text TEXT NOT NULL DEFAULT '',
+          body_template TEXT NOT NULL,
+          signatory_role TEXT NOT NULL,
+          updated_by_uid TEXT NOT NULL,
+          updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )`,
+      ],
+      [
+        'work_plans',
+        `CREATE TABLE IF NOT EXISTS work_plans (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          axis TEXT NOT NULL,
+          commission_id TEXT NOT NULL,
+          quarter TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'planeado',
+          progress INTEGER NOT NULL DEFAULT 0,
+          evidence_count INTEGER NOT NULL DEFAULT 0,
+          updated_by_uid TEXT NOT NULL,
+          updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )`,
+      ],
+      [
+        'audit_logs',
+        `CREATE TABLE IF NOT EXISTS audit_logs (
+          id TEXT PRIMARY KEY,
+          actor_uid TEXT NOT NULL,
+          actor_name TEXT NOT NULL,
+          actor_role_label TEXT NOT NULL,
+          action TEXT NOT NULL,
+          module TEXT NOT NULL,
+          target_title TEXT NOT NULL,
+          created_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )`,
+      ],
+      [
+        'media_files',
+        `CREATE TABLE IF NOT EXISTS media_files (
+          id TEXT PRIMARY KEY,
+          file_name TEXT NOT NULL,
+          mime_type TEXT NOT NULL,
+          file_size INTEGER NOT NULL,
+          content_base64 TEXT NOT NULL,
+          uploaded_by_uid TEXT NOT NULL,
+          created_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )`,
+      ],
+    ];
+
+    try {
+      const existingRes = await pool.query<{ table_name: string }>(
+        `SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()`
+      );
+      const existingTables = new Set(existingRes.rows.map((r) => r.table_name));
+
+      for (const [tableName, createSql] of tableDefinitions) {
+        if (!existingTables.has(tableName)) {
+          await pool.query(createSql);
+        }
+      }
+
+      const colRes = await pool.query<{ table_name: string; column_name: string }>(
+        `SELECT table_name, column_name
+         FROM information_schema.columns
+         WHERE table_schema = current_schema()
+           AND table_name IN ('allowed_accounts', 'public_councilors')`
+      );
+      const existingCols = new Set(colRes.rows.map((r) => `${r.table_name}.${r.column_name}`));
+
+      const columnPatches: Array<[string, string]> = [
+        ['allowed_accounts.affiliation_type', `ALTER TABLE allowed_accounts ADD COLUMN IF NOT EXISTS affiliation_type TEXT NOT NULL DEFAULT ''`],
+        ['allowed_accounts.affiliation_name', `ALTER TABLE allowed_accounts ADD COLUMN IF NOT EXISTS affiliation_name TEXT NOT NULL DEFAULT ''`],
+        ['public_councilors.affiliation_type', `ALTER TABLE public_councilors ADD COLUMN IF NOT EXISTS affiliation_type TEXT NOT NULL DEFAULT ''`],
+        ['public_councilors.affiliation_name', `ALTER TABLE public_councilors ADD COLUMN IF NOT EXISTS affiliation_name TEXT NOT NULL DEFAULT ''`],
+      ];
+
+      for (const [key, alterSql] of columnPatches) {
+        if (!existingCols.has(key)) {
+          await pool.query(alterSql);
+        }
+      }
+    } catch (err) {
+      global._schemaReadyPromise = undefined;
+      throw err;
+    }
+  })();
+
+  return global._schemaReadyPromise;
+}

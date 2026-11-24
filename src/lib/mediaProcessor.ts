@@ -234,6 +234,38 @@ function canvasToBlob(canvas: HTMLCanvasElement, mimeType: string, quality: numb
   });
 }
 
+async function encodeCanvasWithFallback(
+  canvas: HTMLCanvasElement,
+  quality: number,
+  preferPngFallback = false
+): Promise<{ blob: Blob; mimeType: string; ext: string }> {
+  try {
+    const webpBlob = await canvasToBlob(canvas, 'image/webp', quality);
+    if (webpBlob.type === 'image/webp') {
+      return { blob: webpBlob, mimeType: 'image/webp', ext: 'webp' };
+    }
+  } catch {
+    // Fallback below for browsers without WebP canvas encoding (e.g. older Safari/iOS)
+  }
+
+  if (preferPngFallback) {
+    const pngBlob = await canvasToBlob(canvas, 'image/png', 0.92);
+    return { blob: pngBlob, mimeType: 'image/png', ext: 'png' };
+  }
+
+  try {
+    const jpegBlob = await canvasToBlob(canvas, 'image/jpeg', Math.min(0.92, quality + 0.04));
+    if (jpegBlob.type === 'image/jpeg') {
+      return { blob: jpegBlob, mimeType: 'image/jpeg', ext: 'jpg' };
+    }
+  } catch {
+    // Final PNG fallback
+  }
+
+  const pngBlob = await canvasToBlob(canvas, 'image/png', 0.92);
+  return { blob: pngBlob, mimeType: 'image/png', ext: 'png' };
+}
+
 export async function processImageWithPreset(
   file: File,
   preset: ImageUsePreset,
@@ -311,12 +343,11 @@ export async function processImageWithPreset(
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(source, sx, sy, cropW, cropH, 0, 0, targetW, targetH);
 
-  // WebP preserves alpha transparency as well as high compression
-  const outputMime = 'image/webp';
+  // WebP con respaldo automático JPEG/PNG para navegadores antiguos (p. ej. Safari clásico)
   const quality = preset === 'logo' ? 0.92 : 0.84;
-  const mainBlob = await canvasToBlob(out, outputMime, quality);
+  const mainEncoded = await encodeCanvasWithFallback(out, quality, preset === 'logo');
 
-  // Generate 400px thumbnail for gallery/cover
+  // Generate 480px thumbnail for gallery/cover
   let thumbBlob: Blob | undefined;
   let thumbPreviewUrl: string | undefined;
   if (preset === 'gallery' || preset === 'cover') {
@@ -328,19 +359,20 @@ export async function processImageWithPreset(
     const tCtx = thumbCanvas.getContext('2d');
     if (tCtx) {
       tCtx.drawImage(out, 0, 0, thumbW, thumbH);
-      thumbBlob = await canvasToBlob(thumbCanvas, 'image/webp', 0.78);
+      const thumbEncoded = await encodeCanvasWithFallback(thumbCanvas, 0.78, false);
+      thumbBlob = thumbEncoded.blob;
       thumbPreviewUrl = URL.createObjectURL(thumbBlob);
     }
   }
 
   const baseName = file.name.replace(/\.[^.]+$/, '');
   return {
-    blob: mainBlob,
-    previewUrl: URL.createObjectURL(mainBlob),
+    blob: mainEncoded.blob,
+    previewUrl: URL.createObjectURL(mainEncoded.blob),
     thumbnailBlob: thumbBlob,
     thumbnailPreviewUrl: thumbPreviewUrl,
-    mimeType: outputMime,
-    fileName: `${baseName}.webp`,
+    mimeType: mainEncoded.mimeType,
+    fileName: `${baseName}.${mainEncoded.ext}`,
     width: targetW,
     height: targetH,
   };
@@ -358,14 +390,24 @@ export async function extractVideoThumbnail(file: File): Promise<{
     video.playsInline = true;
     video.src = videoUrl;
 
-    const cleanup = () => URL.revokeObjectURL(videoUrl);
+    let settled = false;
+    const finish = (result: { thumbnailBlob?: Blob; thumbnailPreviewUrl?: string }) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeoutId);
+      URL.revokeObjectURL(videoUrl);
+      resolve(result);
+    };
+
+    const timeoutId = window.setTimeout(() => {
+      finish({});
+    }, 4000);
 
     video.onloadeddata = () => {
       try {
         video.currentTime = Math.min(1, (video.duration || 2) / 2);
       } catch {
-        cleanup();
-        resolve({});
+        finish({});
       }
     };
 
@@ -379,24 +421,21 @@ export async function extractVideoThumbnail(file: File): Promise<{
         const ctx = canvas.getContext('2d');
         if (ctx) {
           ctx.drawImage(video, 0, 0, w, h);
-          const blob = await canvasToBlob(canvas, 'image/webp', 0.8);
-          cleanup();
-          resolve({
-            thumbnailBlob: blob,
-            thumbnailPreviewUrl: URL.createObjectURL(blob),
+          const encoded = await encodeCanvasWithFallback(canvas, 0.8, false);
+          finish({
+            thumbnailBlob: encoded.blob,
+            thumbnailPreviewUrl: URL.createObjectURL(encoded.blob),
           });
           return;
         }
       } catch {
         // Ignore thumbnail extraction failure
       }
-      cleanup();
-      resolve({});
+      finish({});
     };
 
     video.onerror = () => {
-      cleanup();
-      resolve({});
+      finish({});
     };
   });
 }

@@ -10,8 +10,22 @@ const DEFAULT_INVITE_DIGEST =
 const DEFAULT_INITIAL_PWD_DIGEST =
   'sha256_salted:53d6cefc7f34d8e9b31abf542a3703bbd744d9f793026988a9a0c02a65b2f888';
 
-const SESSION_SECRET =
+let runtimeSessionSecret =
   process.env.CMJ_SESSION_SECRET || crypto.randomBytes(32).toString('hex');
+
+export function hasEnvSessionSecret(): boolean {
+  return Boolean(process.env.CMJ_SESSION_SECRET?.trim());
+}
+
+export function setRuntimeSessionSecret(secret: string): void {
+  if (!process.env.CMJ_SESSION_SECRET?.trim() && secret && secret.length >= 32) {
+    runtimeSessionSecret = secret;
+  }
+}
+
+export function getRuntimeSessionSecret(): string {
+  return process.env.CMJ_SESSION_SECRET?.trim() || runtimeSessionSecret;
+}
 
 export function sha256Hex(value: string): string {
   return crypto.createHash('sha256').update(value).digest('hex');
@@ -80,7 +94,7 @@ export function signSessionToken(uid: string, email: string): string {
   };
   const payloadB64 = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
   const sig = crypto
-    .createHmac('sha256', SESSION_SECRET)
+    .createHmac('sha256', getRuntimeSessionSecret())
     .update(payloadB64)
     .digest('base64url');
   return `${payloadB64}.${sig}`;
@@ -92,7 +106,7 @@ export function verifySessionToken(token: string): SessionTokenPayload | null {
   if (!payloadB64 || !sig) return null;
 
   const expectedSig = crypto
-    .createHmac('sha256', SESSION_SECRET)
+    .createHmac('sha256', getRuntimeSessionSecret())
     .update(payloadB64)
     .digest('base64url');
 
