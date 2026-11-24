@@ -28,16 +28,44 @@ export function hasDatabaseConfig(): boolean {
 function buildPoolConfig(): PoolConfig {
   const connectionString = getConnectionString();
   const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+  const pgSslMode = (process.env.PGSSLMODE || '').trim().toLowerCase();
+  const envForcesSsl = Boolean(pgSslMode && pgSslMode !== 'disable');
 
   if (connectionString) {
     const isLocal =
       connectionString.includes('localhost') ||
       connectionString.includes('127.0.0.1') ||
       connectionString.includes('/cloudsql/');
-    const explicitDisable = connectionString.includes('sslmode=disable') || process.env.SQL_SSL === 'false';
+    const explicitDisable =
+      connectionString.includes('sslmode=disable') || process.env.SQL_SSL === 'false';
+    const explicitVerifyFull = connectionString.includes('sslmode=verify-full');
+
+    let sanitizedUrl = connectionString;
+    if (!explicitVerifyFull && !explicitDisable) {
+      try {
+        const parsed = new URL(connectionString);
+        const mode = (parsed.searchParams.get('sslmode') || '').toLowerCase();
+        if (mode === 'require' || mode === 'prefer' || mode === 'allow') {
+          parsed.searchParams.delete('sslmode');
+          sanitizedUrl = parsed.toString();
+        }
+      } catch {
+        // Mantener URL original si no es parseable con URL()
+      }
+    }
+
+    const sslConfig =
+      isLocal || explicitDisable
+        ? envForcesSsl
+          ? { rejectUnauthorized: false }
+          : false
+        : explicitVerifyFull
+          ? true
+          : { rejectUnauthorized: false };
+
     return {
-      connectionString,
-      ssl: !isLocal && !explicitDisable ? { rejectUnauthorized: false } : undefined,
+      connectionString: sanitizedUrl,
+      ssl: sslConfig,
       max: isServerless ? 5 : 10,
       idleTimeoutMillis: 15000,
       connectionTimeoutMillis: 15000,
@@ -49,7 +77,8 @@ function buildPoolConfig(): PoolConfig {
   const isLocalHost = host === 'localhost' || host === '127.0.0.1';
   const useSsl =
     process.env.SQL_SSL === 'true' ||
-    (Boolean(host) && !isUnixSocket && !isLocalHost && process.env.SQL_SSL !== 'false' && isServerless);
+    envForcesSsl ||
+    (Boolean(host) && !isUnixSocket && !isLocalHost && process.env.SQL_SSL !== 'false');
 
   return {
     host,
@@ -57,7 +86,7 @@ function buildPoolConfig(): PoolConfig {
     user: process.env.SQL_USER,
     password: process.env.SQL_PASSWORD,
     database: process.env.SQL_DB_NAME,
-    ssl: useSsl ? { rejectUnauthorized: false } : undefined,
+    ssl: useSsl && process.env.SQL_SSL !== 'false' ? { rejectUnauthorized: false } : false,
     max: isServerless ? 5 : 10,
     idleTimeoutMillis: 15000,
     connectionTimeoutMillis: 15000,

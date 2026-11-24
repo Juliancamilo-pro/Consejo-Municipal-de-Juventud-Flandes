@@ -1,9 +1,12 @@
-import React, { Suspense, lazy, useCallback, useEffect, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { MotionConfig } from 'motion/react';
 import {
+  ApiRequestError,
   apiRequest,
   clearAuthTokenInMemory,
+  notifyAuthSync,
   setAuthTokenInMemory,
+  subscribeAuthSync,
   subscribePortalRefresh,
   type SessionUser,
 } from './lib/apiClient';
@@ -92,6 +95,8 @@ function PortalOrchestrator() {
 
   const [authUser, setAuthUser] = useState<SessionUser | null>(null);
   const [authReady, setAuthReady] = useState(false);
+  const authUserRef = useRef<SessionUser | null>(null);
+  authUserRef.current = authUser;
 
   // Estado inicial limpio (solo estructura base, cero datos ficticios)
   const [settings, setSettings] = useState<PortalSettings>(EMPTY_PORTAL_SETTINGS);
@@ -142,6 +147,52 @@ function PortalOrchestrator() {
     }
   }, []);
 
+  const refreshAuthSession = useCallback(async (retryOnTransient = false): Promise<SessionUser | null> => {
+    const attempt = async () =>
+      apiRequest<{ user: SessionUser | null; token?: string }>('/api/auth/me', {
+        skipRefresh: true,
+      });
+
+    const applyUser = (nextUser: SessionUser | null, token?: string) => {
+      if (nextUser) {
+        if (token) setAuthTokenInMemory(token);
+        const prev = authUserRef.current;
+        if (
+          !prev ||
+          prev.uid !== nextUser.uid ||
+          prev.roleLabel !== nextUser.roleLabel ||
+          prev.commissionId !== nextUser.commissionId ||
+          prev.mustChangePassword !== nextUser.mustChangePassword ||
+          prev.fullName !== nextUser.fullName
+        ) {
+          setAuthUser(nextUser);
+        }
+        return nextUser;
+      }
+      clearAuthTokenInMemory();
+      if (authUserRef.current !== null) setAuthUser(null);
+      return null;
+    };
+
+    try {
+      const res = await attempt();
+      return applyUser(res.user, res.token);
+    } catch (err) {
+      const transient =
+        err instanceof ApiRequestError && (err.status === 0 || err.status >= 500);
+      if (retryOnTransient && transient) {
+        await new Promise((r) => window.setTimeout(r, 850));
+        try {
+          const retryRes = await attempt();
+          return applyUser(retryRes.user, retryRes.token);
+        } catch {
+          return authUserRef.current;
+        }
+      }
+      return authUserRef.current;
+    }
+  }, []);
+
   const loadPrivateState = useCallback(async () => {
     try {
       const data = await apiRequest<PrivateStateResponse>('/api/private/state', {
@@ -166,26 +217,57 @@ function PortalOrchestrator() {
       setAuditLogs(data.auditLogs || []);
       setTemplates(data.templates || []);
       setWorkPlans(data.workPlans || []);
-    } catch {
-      // Si expira sesión en servidor, se maneja al siguiente check
+    } catch (err) {
+      if (err instanceof ApiRequestError && err.status === 401) {
+        try {
+          const check = await apiRequest<{ user: SessionUser | null; token?: string }>(
+            '/api/auth/me',
+            { skipRefresh: true }
+          );
+          if (check.user) {
+            if (check.token) setAuthTokenInMemory(check.token);
+            setAuthUser(check.user);
+            return;
+          }
+          clearAuthTokenInMemory();
+          setAuthUser(null);
+          setViewMode('public');
+          showToast('Tu sesión expiró. Inicia sesión nuevamente.', 'info');
+        } catch {
+          // Error temporal de red/servidor: mantener sesión actual y reintentar luego
+        }
+      }
     }
-  }, []);
+  }, [showToast]);
 
   useEffect(() => {
     let active = true;
     (async () => {
       try {
-        const res = await apiRequest<{ user: SessionUser | null; token?: string }>(
-          '/api/auth/me',
-          { skipRefresh: true }
-        );
+        let res: { user: SessionUser | null; token?: string } | null = null;
+        try {
+          res = await apiRequest<{ user: SessionUser | null; token?: string }>('/api/auth/me', {
+            skipRefresh: true,
+          });
+        } catch (err) {
+          const transient =
+            err instanceof ApiRequestError && (err.status === 0 || err.status >= 500);
+          if (transient) {
+            await new Promise((r) => window.setTimeout(r, 850));
+            res = await apiRequest<{ user: SessionUser | null; token?: string }>('/api/auth/me', {
+              skipRefresh: true,
+            });
+          } else {
+            throw err;
+          }
+        }
         if (!active) return;
-        if (res.user) {
+        if (res?.user) {
           if (res.token) setAuthTokenInMemory(res.token);
           setAuthUser(res.user);
         }
       } catch {
-        // Sin sesión activa
+        // Sin sesión activa o servidor temporalmente no disponible
       } finally {
         if (active) setAuthReady(true);
       }
@@ -197,28 +279,75 @@ function PortalOrchestrator() {
   }, [loadPublicState]);
 
   useEffect(() => {
+    const unsubSync = subscribeAuthSync((event) => {
+      if (event === 'logout') {
+        clearAuthTokenInMemory();
+        setAuthUser(null);
+        setViewMode('public');
+        loadPublicState();
+      } else if (event === 'login') {
+        refreshAuthSession(true);
+      }
+    });
+    return () => unsubSync();
+  }, [loadPublicState, refreshAuthSession]);
+
+  const authUserUid = authUser?.uid || null;
+
+  useEffect(() => {
     if (!authReady) return;
-    if (authUser) {
+    if (authUserUid) {
       loadPrivateState();
     }
     const unsub = subscribePortalRefresh(() => {
-      if (authUser) {
+      if (authUserRef.current) {
         loadPrivateState();
       } else {
         loadPublicState();
       }
     });
-    const timer = authUser
+    const timer = authUserUid
       ? window.setInterval(() => {
           loadPrivateState();
         }, 15000)
       : undefined;
 
+    let lastSessionTouch = Date.now();
+    const touchSession = () => {
+      if (!authUserRef.current) return;
+      const now = Date.now();
+      if (now - lastSessionTouch < 30000) return;
+      lastSessionTouch = now;
+      refreshAuthSession(false);
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        touchSession();
+      }
+    };
+
+    const keepAliveTimer = authUserUid
+      ? window.setInterval(() => {
+          refreshAuthSession(false);
+        }, 5 * 60 * 1000)
+      : undefined;
+
+    if (authUserUid) {
+      document.addEventListener('visibilitychange', onVisibilityChange);
+      window.addEventListener('focus', touchSession);
+      window.addEventListener('online', touchSession);
+    }
+
     return () => {
       unsub();
       if (timer) window.clearInterval(timer);
+      if (keepAliveTimer) window.clearInterval(keepAliveTimer);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('focus', touchSession);
+      window.removeEventListener('online', touchSession);
     };
-  }, [authReady, authUser, loadPrivateState, loadPublicState]);
+  }, [authReady, authUserUid, loadPrivateState, loadPublicState, refreshAuthSession]);
 
   const currentProfile = publicCouncilors.find((c) => c.uid === authUser?.uid) || null;
   const currentPrivate =
@@ -243,6 +372,7 @@ function PortalOrchestrator() {
       // ignore
     }
     clearAuthTokenInMemory();
+    notifyAuthSync('logout');
     setAuthUser(null);
     setPrivateCouncilors([]);
     setCommissionTasks([]);

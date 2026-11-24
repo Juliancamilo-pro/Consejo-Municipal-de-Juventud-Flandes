@@ -48,6 +48,84 @@ export class ApiRequestError extends Error {
   }
 }
 
+const AUTH_SYNC_CHANNEL = 'cmj_auth_sync_v1';
+
+export function getApiBaseUrl(): string {
+  const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env || {};
+  const raw = (env.VITE_API_URL || env.NEXT_PUBLIC_API_URL || '').trim();
+  if (!raw || raw === '/' || raw === 'MY_API_URL' || raw === 'MY_APP_URL') {
+    return '';
+  }
+  if (!raw.startsWith('https://') && !raw.startsWith('http://')) {
+    return '';
+  }
+  return raw.replace(/\/+$/, '');
+}
+
+export function resolveApiUrl(pathOrUrl: string): string {
+  if (!pathOrUrl) return pathOrUrl;
+  if (pathOrUrl.startsWith('https://') || pathOrUrl.startsWith('http://')) {
+    return pathOrUrl;
+  }
+  const base = getApiBaseUrl();
+  if (!base) return pathOrUrl;
+  return pathOrUrl.startsWith('/') ? `${base}${pathOrUrl}` : `${base}/${pathOrUrl}`;
+}
+
+export function notifyAuthSync(event: 'login' | 'logout'): void {
+  try {
+    if (typeof BroadcastChannel !== 'undefined') {
+      const channel = new BroadcastChannel(AUTH_SYNC_CHANNEL);
+      channel.postMessage({ type: event, ts: Date.now() });
+      channel.close();
+    }
+  } catch {
+    // ignore BroadcastChannel failures
+  }
+  try {
+    localStorage.setItem(AUTH_SYNC_CHANNEL, JSON.stringify({ type: event, ts: Date.now() }));
+  } catch {
+    // ignore storage access errors in private browsing
+  }
+}
+
+export function subscribeAuthSync(handler: (event: 'login' | 'logout') => void): () => void {
+  let channel: BroadcastChannel | null = null;
+  try {
+    if (typeof BroadcastChannel !== 'undefined') {
+      channel = new BroadcastChannel(AUTH_SYNC_CHANNEL);
+      channel.onmessage = (e) => {
+        const type = e?.data?.type;
+        if (type === 'login' || type === 'logout') handler(type);
+      };
+    }
+  } catch {
+    channel = null;
+  }
+
+  const onStorage = (e: StorageEvent) => {
+    if (e.key !== AUTH_SYNC_CHANNEL || !e.newValue) return;
+    try {
+      const parsed = JSON.parse(e.newValue) as { type?: string };
+      if (parsed.type === 'login' || parsed.type === 'logout') {
+        handler(parsed.type);
+      }
+    } catch {
+      // ignore malformed storage sync event
+    }
+  };
+
+  window.addEventListener('storage', onStorage);
+  return () => {
+    window.removeEventListener('storage', onStorage);
+    try {
+      channel?.close();
+    } catch {
+      // ignore
+    }
+  };
+}
+
 function getWindowContextHeader(): 'iframe' | 'top' {
   try {
     return window.self !== window.top ? 'iframe' : 'top';
@@ -65,6 +143,7 @@ export async function apiRequest<T>(
   } = {}
 ): Promise<T> {
   const method = options.method || 'GET';
+  const targetUrl = resolveApiUrl(url);
   const headers: Record<string, string> = {
     'X-Requested-With': 'CMJ-Flandes',
     'X-CMJ-Context': getWindowContextHeader(),
@@ -78,7 +157,7 @@ export async function apiRequest<T>(
 
   let res: Response;
   try {
-    res = await fetch(url, {
+    res = await fetch(targetUrl, {
       method,
       headers,
       credentials: 'include',

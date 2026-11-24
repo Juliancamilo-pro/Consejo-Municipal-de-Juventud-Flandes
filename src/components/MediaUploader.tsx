@@ -19,7 +19,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import { apiRequest } from '../lib/apiClient';
+import { apiRequest, resolveApiUrl } from '../lib/apiClient';
 import {
   classifyFile,
   extractVideoThumbnail,
@@ -303,12 +303,12 @@ export function MediaUploader({
           },
           skipRefresh: true,
         });
-        thumbUrl = thumbRes.url;
+        thumbUrl = resolveApiUrl(thumbRes.url);
         thumbStoragePath = thumbRes.storagePath;
       }
 
       const info: UploadedFileInfo = {
-        url: mainRes.url,
+        url: resolveApiUrl(mainRes.url),
         thumbnailUrl: thumbUrl,
         storagePath: mainRes.storagePath,
         thumbnailStoragePath: thumbStoragePath,

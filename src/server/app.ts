@@ -140,10 +140,13 @@ function parseCookies(header?: string): Record<string, string> {
 
 function isHttpsRequest(req: Request): boolean {
   if (req.secure) return true;
+  if (process.env.VERCEL === '1' || Boolean(process.env.VERCEL_ENV)) return true;
   const proto = String(req.headers['x-forwarded-proto'] || '').toLowerCase();
   if (proto.includes('https')) return true;
   const origin = String(req.headers.origin || '').toLowerCase();
-  return origin.startsWith('https://');
+  if (origin.startsWith('https://')) return true;
+  const referer = String(req.headers.referer || '').toLowerCase();
+  return referer.startsWith('https://');
 }
 
 function isIframeContext(req: Request): boolean {
@@ -156,13 +159,18 @@ function isIframeContext(req: Request): boolean {
 function buildCookieAttributes(req: Request, maxAgeSeconds: number): string {
   const https = isHttpsRequest(req);
   const inIframe = isIframeContext(req);
-  if (https && inIframe) {
-    return `Path=/; HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=${maxAgeSeconds}`;
-  }
+  const expires =
+    maxAgeSeconds <= 0
+      ? 'Thu, 01 Jan 1970 00:00:00 GMT'
+      : new Date(Date.now() + maxAgeSeconds * 1000).toUTCString();
+
   if (https) {
-    return `Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAgeSeconds}`;
+    // En Vercel/HTTPS usamos SameSite=None; Secure para conservar sesión entre recargas,
+    // subdominios API y contextos embebidos; Partitioned en iframes de terceros.
+    return `Path=/; HttpOnly; Secure; SameSite=None${inIframe ? '; Partitioned' : ''}; Max-Age=${maxAgeSeconds}; Expires=${expires}`;
   }
-  return `Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}`;
+  // En http://localhost sin TLS, los navegadores rechazan SameSite=None sin Secure.
+  return `Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}; Expires=${expires}`;
 }
 
 function setSessionCookie(req: Request, res: Response, token: string) {
@@ -491,19 +499,53 @@ export function ensureServerlessPath(req: { url?: string }) {
       parsed.searchParams.delete('__vercel_path');
       const cleanedSubpath = vercelPath.replace(/^\/+/, '');
       const qs = parsed.searchParams.toString();
-      if (
-        parsed.pathname === '/api/index' ||
-        parsed.pathname === '/api/index.ts' ||
-        parsed.pathname === '/api'
-      ) {
-        req.url = `/api/${cleanedSubpath}${qs ? `?${qs}` : ''}`;
-      } else {
-        req.url = `${parsed.pathname}${qs ? `?${qs}` : ''}`;
-      }
+      req.url = `/api/${cleanedSubpath}${qs ? `?${qs}` : ''}`;
     }
   } catch {
     // Keep original url
   }
+}
+
+function isAllowedCorsOrigin(origin: string, req: Request): boolean {
+  if (!origin) return false;
+  try {
+    const parsed = new URL(origin);
+    const reqHost = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+    if (reqHost && parsed.host === reqHost) return true;
+
+    const configuredUrls = [
+      process.env.APP_URL,
+      process.env.NEXT_PUBLIC_APP_URL,
+      process.env.VITE_APP_URL,
+      process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '',
+      process.env.VERCEL_BRANCH_URL ? `https://${process.env.VERCEL_BRANCH_URL}` : '',
+      process.env.VERCEL_PROJECT_PRODUCTION_URL
+        ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+        : '',
+      ...(process.env.CORS_ALLOWED_ORIGINS || process.env.CORS_ORIGIN || '').split(','),
+    ];
+
+    for (const candidate of configuredUrls) {
+      const trimmed = String(candidate || '').trim();
+      if (!trimmed) continue;
+      try {
+        if (new URL(trimmed).origin === parsed.origin) return true;
+      } catch {
+        if (trimmed === parsed.origin || trimmed === parsed.host) return true;
+      }
+    }
+
+    if (
+      (parsed.protocol === 'http:' &&
+        (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1')) ||
+      (parsed.protocol === 'https:' && parsed.hostname.endsWith('.vercel.app'))
+    ) {
+      return true;
+    }
+  } catch {
+    return false;
+  }
+  return false;
 }
 
 export function getApiApp(): express.Express {
@@ -511,7 +553,55 @@ export function getApiApp(): express.Express {
 
   const app = express();
   app.set('trust proxy', 1);
+
+  // CORS controlado con credenciales para despliegues con NEXT_PUBLIC_API_URL / VITE_API_URL
+  app.use((req, res, next) => {
+    const origin = typeof req.headers.origin === 'string' ? req.headers.origin : '';
+    if (origin && isAllowedCorsOrigin(origin, req)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+      res.setHeader(
+        'Access-Control-Allow-Headers',
+        'Content-Type, Authorization, X-Requested-With, X-CMJ-Context'
+      );
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+    }
+    if (req.method === 'OPTIONS') {
+      res.status(204).end();
+      return;
+    }
+    next();
+  });
+
+  // Compatibilidad con runtimes serverless que pre-analizan req.body antes de Express
+  app.use((req: Request & { _body?: boolean }, _res, next) => {
+    if (req.body !== undefined) {
+      if (typeof req.body === 'string') {
+        try {
+          req.body = JSON.parse(req.body);
+        } catch {
+          // Mantener texto si no es JSON
+        }
+      } else if (Buffer.isBuffer(req.body)) {
+        try {
+          req.body = JSON.parse(req.body.toString('utf8'));
+        } catch {
+          // Mantener buffer si no es JSON
+        }
+      }
+      req._body = true;
+    }
+    next();
+  });
+
   app.use(express.json({ limit: '25mb' }));
+
+  // Evitar cacheado de respuestas de autenticación/API en proxies y navegadores
+  app.use('/api', (_req, res, next) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    next();
+  });
 
   // Normalizar errores de body demasiado grande o JSON inválido
   app.use((err: { type?: string; status?: number }, _req: Request, res: Response, next: NextFunction) => {
@@ -544,11 +634,13 @@ export function getApiApp(): express.Express {
         res.json({ ok: true, dbConfigured: true, dbConnected: true });
       } catch (err) {
         console.error('DB health ping failed:', err);
+        const pgErr = err as { code?: string };
         res.status(503).json({
           ok: false,
           dbConfigured: true,
           dbConnected: false,
           error: 'No se pudo conectar con la base de datos PostgreSQL.',
+          errorCode: pgErr?.code || 'DB_CONNECT_ERROR',
         });
       }
       return;
@@ -558,7 +650,7 @@ export function getApiApp(): express.Express {
 
   // Verificar que la base de datos esté configurada e inicializada para rutas /api/*
   app.use('/api', async (req, res, next) => {
-    if (req.path === '/health') {
+    if (req.path === '/health' || req.path === '/auth/logout') {
       next();
       return;
     }
@@ -594,10 +686,31 @@ export function getApiApp(): express.Express {
         return;
       }
       const token = signSessionToken(user.uid, user.email);
+      setSessionCookie(req, res, token);
       res.json({ user, token });
     } catch (error) {
       console.error('Error checking current session:', error);
-      res.json({ user: null });
+      res.status(503).json({
+        error: 'No se pudo verificar la sesión temporalmente. Reintentando...',
+        code: 'SESSION_CHECK_RETRY',
+      });
+    }
+  });
+
+  app.post('/api/auth/refresh', async (req: AuthedRequest, res) => {
+    try {
+      const user = await resolveAuthUser(req);
+      if (!user) {
+        clearSessionCookie(req, res);
+        res.status(401).json({ error: 'Sesión no válida o expirada.' });
+        return;
+      }
+      const token = signSessionToken(user.uid, user.email);
+      setSessionCookie(req, res, token);
+      res.json({ user, token });
+    } catch (error) {
+      console.error('Error refreshing session:', error);
+      res.status(503).json({ error: 'No fue posible renovar la sesión.' });
     }
   });
 
@@ -689,8 +802,22 @@ export function getApiApp(): express.Express {
             active: true,
             mustChangePassword: !isBootstrap,
           })
+          .onConflictDoNothing()
           .returning();
-        targetUser = inserted;
+
+        if (inserted) {
+          targetUser = inserted;
+        } else {
+          const [concurrentUser] = await db
+            .select()
+            .from(users)
+            .where(eq(users.email, cleanEmail))
+            .limit(1);
+          if (!concurrentUser) {
+            throw new Error('No fue posible aprovisionar el usuario.');
+          }
+          targetUser = concurrentUser;
+        }
 
         await db
           .insert(allowedAccounts)

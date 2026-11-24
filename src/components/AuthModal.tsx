@@ -14,6 +14,7 @@ import {
 import {
   ApiRequestError,
   apiRequest,
+  notifyAuthSync,
   setAuthTokenInMemory,
   type SessionUser,
 } from '../lib/apiClient';
@@ -87,6 +88,7 @@ export function AuthModal({
       });
 
       setAuthTokenInMemory(res.token);
+      notifyAuthSync('login');
       onSessionInitialSecret?.(password);
       onAuthenticated(res.user);
       showToast('Bienvenido al portal privado del CMJ Flandes', 'success');
@@ -140,6 +142,7 @@ export function AuthModal({
       });
 
       setAuthTokenInMemory(res.token);
+      notifyAuthSync('login');
       onAuthenticated(res.user);
       showToast(
         currentUser ? 'Contraseña actualizada correctamente' : 'Cuenta activada e ingreso exitoso',
