@@ -26,11 +26,16 @@ import type {
   CouncilorPrivate,
   GalleryAlbum,
   GalleryItem,
+  GrantedPermission,
   IdeaItem,
   LetterTemplate,
   NewsEvent,
+  PermissionApprovalStep,
+  PermissionKey,
+  PermissionRequest,
   PortalActa,
   PortalDocument,
+  PortalNotification,
   PortalSettings,
   PublicCouncilor,
   WorkPlanItem,
@@ -65,6 +70,12 @@ interface PrivateStateResponse extends PublicStateResponse {
   auditLogs: AuditLog[];
   templates: LetterTemplate[];
   workPlans: WorkPlanItem[];
+  permissionRequests?: PermissionRequest[];
+  permissionApprovalSteps?: PermissionApprovalStep[];
+  grantedPermissions?: GrantedPermission[];
+  portalNotifications?: PortalNotification[];
+  effectivePermissions?: PermissionKey[];
+  coordinatorCommissionIds?: string[];
 }
 
 function FullScreenSkeleton() {
@@ -122,6 +133,12 @@ function PortalOrchestrator() {
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [templates, setTemplates] = useState<LetterTemplate[]>([]);
   const [workPlans, setWorkPlans] = useState<WorkPlanItem[]>([]);
+  const [permissionRequests, setPermissionRequests] = useState<PermissionRequest[]>([]);
+  const [permissionApprovalSteps, setPermissionApprovalSteps] = useState<PermissionApprovalStep[]>([]);
+  const [grantedPermissions, setGrantedPermissions] = useState<GrantedPermission[]>([]);
+  const [portalNotifications, setPortalNotifications] = useState<PortalNotification[]>([]);
+  const [effectivePermissions, setEffectivePermissions] = useState<PermissionKey[]>([]);
+  const [coordinatorCommissionIds, setCoordinatorCommissionIds] = useState<string[]>([]);
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', darkMode);
@@ -165,13 +182,19 @@ function PortalOrchestrator() {
       if (nextUser) {
         if (token) setAuthTokenInMemory(token);
         const prev = authUserRef.current;
+        const prevPerms = (prev?.effectivePermissions || []).join(',');
+        const nextPerms = (nextUser.effectivePermissions || []).join(',');
+        const prevCoords = (prev?.coordinatorCommissionIds || []).join(',');
+        const nextCoords = (nextUser.coordinatorCommissionIds || []).join(',');
         if (
           !prev ||
           prev.uid !== nextUser.uid ||
           prev.roleLabel !== nextUser.roleLabel ||
           prev.commissionId !== nextUser.commissionId ||
           prev.mustChangePassword !== nextUser.mustChangePassword ||
-          prev.fullName !== nextUser.fullName
+          prev.fullName !== nextUser.fullName ||
+          prevPerms !== nextPerms ||
+          prevCoords !== nextCoords
         ) {
           setAuthUser(nextUser);
         }
@@ -227,6 +250,16 @@ function PortalOrchestrator() {
       setAuditLogs(data.auditLogs || []);
       setTemplates(data.templates || []);
       setWorkPlans(data.workPlans || []);
+      setPermissionRequests(data.permissionRequests || []);
+      setPermissionApprovalSteps(data.permissionApprovalSteps || []);
+      setGrantedPermissions(data.grantedPermissions || []);
+      setPortalNotifications(data.portalNotifications || []);
+      if (Array.isArray(data.effectivePermissions)) {
+        setEffectivePermissions(data.effectivePermissions);
+      }
+      if (Array.isArray(data.coordinatorCommissionIds)) {
+        setCoordinatorCommissionIds(data.coordinatorCommissionIds);
+      }
     } catch (err) {
       if (err instanceof ApiRequestError && err.status === 401) {
         try {
@@ -394,6 +427,12 @@ function PortalOrchestrator() {
     setAuditLogs([]);
     setTemplates([]);
     setWorkPlans([]);
+    setPermissionRequests([]);
+    setPermissionApprovalSteps([]);
+    setGrantedPermissions([]);
+    setPortalNotifications([]);
+    setEffectivePermissions([]);
+    setCoordinatorCommissionIds([]);
     setViewMode('public');
     await loadPublicState();
     showToast('Sesión cerrada', 'info');
@@ -425,6 +464,20 @@ function PortalOrchestrator() {
           auditLogs={auditLogs}
           templates={templates}
           workPlans={workPlans}
+          permissionRequests={permissionRequests}
+          permissionApprovalSteps={permissionApprovalSteps}
+          grantedPermissions={grantedPermissions}
+          portalNotifications={portalNotifications}
+          coordinatorCommissionIds={
+            coordinatorCommissionIds.length > 0
+              ? coordinatorCommissionIds
+              : authUser.coordinatorCommissionIds || []
+          }
+          effectivePermissions={
+            effectivePermissions.length > 0
+              ? effectivePermissions
+              : authUser.effectivePermissions || []
+          }
           settings={settings}
           darkMode={darkMode}
           onToggleDarkMode={() => setDarkMode((d) => !d)}

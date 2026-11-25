@@ -1,13 +1,14 @@
 import React, { useMemo, useState } from 'react';
-import { Edit3, FileText, Plus, Printer, Save, Trash2, X } from 'lucide-react';
-import { apiRequest } from '../../lib/apiClient';
-import { isLeadershipTier } from '../../lib/security';
+import { Edit3, FileText, Plus, Printer, Save, Search, Trash2, X } from 'lucide-react';
+import { ApiRequestError, apiRequest } from '../../lib/apiClient';
 import type { AccessTier, LetterTemplate } from '../../types/cmj';
 import { useToast } from '../ToastProvider';
+import { ConfirmDialog } from '../ui/DataTableUI';
+import { PermissionDeniedBanner, usePermissions } from './PermissionGate';
 
 export function LetterTemplatesModule({
   actorName,
-  accessTier,
+  accessTier: _accessTier,
   templates,
 }: {
   uid?: string;
@@ -16,9 +17,11 @@ export function LetterTemplatesModule({
   templates: LetterTemplate[];
 }) {
   const { showToast } = useToast();
-  const isLeader = isLeadershipTier(accessTier);
+  const { can } = usePermissions();
+  const canManageTemplates = can('plantillas.gestionar');
   const [selectedId, setSelectedId] = useState(templates[0]?.id || '');
   const selected = templates.find((t) => t.id === selectedId) || templates[0] || null;
+  const [tplSearch, setTplSearch] = useState('');
 
   const [newTitle, setNewTitle] = useState('');
   const [newCategory, setNewCategory] = useState('Oficio');
@@ -37,9 +40,24 @@ export function LetterTemplatesModule({
   const [asunto, setAsunto] = useState('Gestión juvenil');
   const [contenido, setContenido] = useState('');
 
+  const [deleteTarget, setDeleteTarget] = useState<LetterTemplate | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const filteredTemplates = useMemo(() => {
+    const q = tplSearch.trim().toLowerCase();
+    if (!q) return templates;
+    return templates.filter(
+      (t) =>
+        t.title.toLowerCase().includes(q) || (t.category || '').toLowerCase().includes(q)
+    );
+  }, [templates, tplSearch]);
+
   const handleCreateTemplate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newTitle.trim() || newBody.trim().length < 10) return;
+    if (!newTitle.trim() || newBody.trim().length < 10) {
+      showToast('Ingresa un nombre y al menos 10 caracteres en el cuerpo', 'error');
+      return;
+    }
     try {
       const res = await apiRequest<{ id: string; ok: boolean }>('/api/templates', {
         method: 'POST',
@@ -54,8 +72,9 @@ export function LetterTemplatesModule({
       setSelectedId(res.id);
       setNewTitle('');
       showToast('Plantilla guardada', 'success');
-    } catch {
-      showToast('No se pudo guardar la plantilla', 'error');
+    } catch (err) {
+      const msg = err instanceof ApiRequestError ? err.message : 'No se pudo guardar la plantilla';
+      showToast(msg, 'error');
     }
   };
 
@@ -84,8 +103,27 @@ export function LetterTemplatesModule({
       });
       setEditingTplId(null);
       showToast('Plantilla actualizada', 'success');
-    } catch {
-      showToast('No se pudo actualizar la plantilla', 'error');
+    } catch (err) {
+      const msg =
+        err instanceof ApiRequestError ? err.message : 'No se pudo actualizar la plantilla';
+      showToast(msg, 'error');
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await apiRequest(`/api/templates/${encodeURIComponent(deleteTarget.id)}`, {
+        method: 'DELETE',
+      });
+      setDeleteTarget(null);
+      showToast('Plantilla eliminada', 'info');
+    } catch (err) {
+      const msg = err instanceof ApiRequestError ? err.message : 'No se pudo eliminar';
+      showToast(msg, 'error');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -101,14 +139,14 @@ export function LetterTemplatesModule({
 
   return (
     <div className="space-y-6">
-      {isLeader && (
-        <form
-          onSubmit={handleCreateTemplate}
-          className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 space-y-3 no-print"
-        >
+      {canManageTemplates ? (
+        <form onSubmit={handleCreateTemplate} className="cmj-card p-6 space-y-3 no-print">
           <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
-            <FileText className="h-5 w-5 text-blue-600" /> Plantillas de Oficios y Cartas
+            <FileText className="h-5 w-5 text-emerald-700 dark:text-emerald-400" /> Plantillas de Oficios y Cartas
           </h2>
+          <p className="text-xs text-slate-500">
+            Variables disponibles: {'{{fecha}}'}, {'{{destinatario}}'}, {'{{asunto}}'}, {'{{contenido}}'}, {'{{firmante}}'}.
+          </p>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <input
               type="text"
@@ -116,14 +154,16 @@ export function LetterTemplatesModule({
               value={newTitle}
               onChange={(e) => setNewTitle(e.target.value)}
               placeholder="Nombre de la plantilla"
-              className="sm:col-span-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3.5 py-2 text-sm"
+              aria-label="Nombre de la plantilla"
+              className="sm:col-span-2 min-h-[42px] rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3.5 py-2 text-sm"
             />
             <input
               type="text"
               value={newCategory}
               onChange={(e) => setNewCategory(e.target.value)}
               placeholder="Categoría"
-              className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3.5 py-2 text-sm"
+              aria-label="Categoría"
+              className="min-h-[42px] rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3.5 py-2 text-sm"
             />
           </div>
           <textarea
@@ -131,35 +171,66 @@ export function LetterTemplatesModule({
             required
             value={newBody}
             onChange={(e) => setNewBody(e.target.value)}
+            aria-label="Cuerpo de la plantilla"
             className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3.5 py-2 text-xs font-mono"
           />
           <button
             type="submit"
-            className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2 text-xs font-semibold text-white cursor-pointer"
+            className="min-h-[40px] inline-flex items-center gap-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 px-4 py-2 text-xs font-semibold text-white cursor-pointer whitespace-nowrap"
           >
             <Plus className="h-3.5 w-3.5" /> Guardar nueva plantilla
           </button>
         </form>
+      ) : (
+        <div className="no-print">
+          <PermissionDeniedBanner
+            permission="plantillas.gestionar"
+            customText="Puedes usar e imprimir las plantillas oficiales. Para crear o editar plantillas necesitas permiso especial."
+          />
+        </div>
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <div className="lg:col-span-4 space-y-3 no-print">
-          <h3 className="text-sm font-bold">Plantillas disponibles ({templates.length})</h3>
-          {templates.map((t) => (
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+              Plantillas ({filteredTemplates.length})
+            </h3>
+          </div>
+          <div className="relative">
+            <Search className="h-3.5 w-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <input
+              type="search"
+              value={tplSearch}
+              onChange={(e) => setTplSearch(e.target.value)}
+              placeholder="Filtrar plantillas..."
+              aria-label="Filtrar plantillas"
+              className="w-full min-h-[38px] rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 pl-8 pr-3 py-1.5 text-xs"
+            />
+          </div>
+          {filteredTemplates.map((t) => (
             <div
               key={t.id}
               onClick={() => setSelectedId(t.id)}
-              className={`rounded-2xl border p-3.5 cursor-pointer flex items-center justify-between gap-2 ${
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  setSelectedId(t.id);
+                }
+              }}
+              className={`rounded-2xl border p-3.5 cursor-pointer flex items-center justify-between gap-2 transition-colors ${
                 selected?.id === t.id
-                  ? 'border-blue-600 bg-blue-50/70 dark:bg-blue-950/30'
-                  : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900'
+                  ? 'border-emerald-600 bg-emerald-50/70 dark:bg-emerald-950/30'
+                  : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300'
               }`}
             >
               <div className="min-w-0">
                 <p className="text-xs font-bold truncate">{t.title}</p>
                 <p className="text-[11px] text-slate-500">{t.category}</p>
               </div>
-              {isLeader && (
+              {canManageTemplates && (
                 <div className="flex items-center gap-1 shrink-0">
                   <button
                     type="button"
@@ -169,7 +240,8 @@ export function LetterTemplatesModule({
                       startEditTemplate(t);
                     }}
                     title="Editar plantilla"
-                    className="text-slate-600 dark:text-slate-300 hover:text-blue-600 p-1 cursor-pointer"
+                    aria-label={`Editar ${t.title}`}
+                    className="text-slate-600 dark:text-slate-300 hover:text-blue-600 p-1.5 cursor-pointer"
                   >
                     <Edit3 className="h-3.5 w-3.5" />
                   </button>
@@ -177,11 +249,11 @@ export function LetterTemplatesModule({
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
-                      apiRequest(`/api/templates/${encodeURIComponent(t.id)}`, {
-                        method: 'DELETE',
-                      }).catch(() => showToast('No se pudo eliminar', 'error'));
+                      setDeleteTarget(t);
                     }}
-                    className="text-rose-500 p-1 cursor-pointer"
+                    title="Eliminar plantilla"
+                    aria-label={`Eliminar ${t.title}`}
+                    className="text-rose-500 p-1.5 cursor-pointer"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
@@ -192,10 +264,10 @@ export function LetterTemplatesModule({
         </div>
 
         <div className="lg:col-span-8 space-y-4">
-          {isLeader && editingTplId && (
+          {canManageTemplates && editingTplId && (
             <form
               onSubmit={handleSaveEditTemplate}
-              className="rounded-2xl border border-blue-200 dark:border-cyan-900/60 bg-blue-50/40 dark:bg-slate-900 p-5 space-y-3 no-print"
+              className="rounded-2xl border border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/40 dark:bg-slate-900 p-5 space-y-3 no-print"
             >
               <div className="flex items-center justify-between">
                 <h4 className="text-sm font-bold text-slate-900 dark:text-white">
@@ -204,6 +276,7 @@ export function LetterTemplatesModule({
                 <button
                   type="button"
                   onClick={() => setEditingTplId(null)}
+                  aria-label="Cerrar edición"
                   className="text-xs text-slate-500 hover:text-slate-800 cursor-pointer"
                 >
                   <X className="h-4 w-4" />
@@ -216,28 +289,28 @@ export function LetterTemplatesModule({
                   value={editTitle}
                   onChange={(e) => setEditTitle(e.target.value)}
                   placeholder="Título"
-                  className="sm:col-span-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-1.5 text-xs"
+                  className="sm:col-span-2 min-h-[38px] rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-1.5 text-xs"
                 />
                 <input
                   type="text"
                   value={editCategory}
                   onChange={(e) => setEditCategory(e.target.value)}
                   placeholder="Categoría"
-                  className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-1.5 text-xs"
+                  className="min-h-[38px] rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-1.5 text-xs"
                 />
                 <input
                   type="text"
                   value={editHeaderText}
                   onChange={(e) => setEditHeaderText(e.target.value)}
                   placeholder="Encabezado institucional"
-                  className="sm:col-span-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-1.5 text-xs"
+                  className="sm:col-span-2 min-h-[38px] rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-1.5 text-xs"
                 />
                 <input
                   type="text"
                   value={editSignatoryRole}
                   onChange={(e) => setEditSignatoryRole(e.target.value)}
                   placeholder="Cargo firmante"
-                  className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-1.5 text-xs"
+                  className="min-h-[38px] rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-1.5 text-xs"
                 />
               </div>
               <textarea
@@ -251,13 +324,13 @@ export function LetterTemplatesModule({
                 <button
                   type="button"
                   onClick={() => setEditingTplId(null)}
-                  className="rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-1.5 text-xs font-semibold cursor-pointer"
+                  className="min-h-[36px] rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-1.5 text-xs font-semibold cursor-pointer"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  className="inline-flex items-center gap-1 rounded-xl bg-blue-600 px-3.5 py-1.5 text-xs font-semibold text-white cursor-pointer"
+                  className="min-h-[36px] inline-flex items-center gap-1 rounded-xl bg-emerald-700 px-3.5 py-1.5 text-xs font-semibold text-white cursor-pointer"
                 >
                   <Save className="h-3.5 w-3.5" /> Guardar plantilla
                 </button>
@@ -273,28 +346,31 @@ export function LetterTemplatesModule({
                   value={destinatario}
                   onChange={(e) => setDestinatario(e.target.value)}
                   placeholder="Destinatario"
-                  className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs"
+                  aria-label="Destinatario"
+                  className="min-h-[40px] rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs"
                 />
                 <input
                   type="text"
                   value={asunto}
                   onChange={(e) => setAsunto(e.target.value)}
                   placeholder="Asunto"
-                  className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs"
+                  aria-label="Asunto"
+                  className="min-h-[40px] rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs"
                 />
                 <textarea
                   rows={2}
                   value={contenido}
                   onChange={(e) => setContenido(e.target.value)}
                   placeholder="Cuerpo o detalle de la solicitud"
+                  aria-label="Contenido de la solicitud"
                   className="sm:col-span-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs"
                 />
               </div>
 
-              <div className="rounded-2xl border border-slate-200 bg-white text-slate-900 p-8 space-y-4">
-                <div className="flex items-center justify-between border-b border-slate-300 pb-3">
+              <div className="rounded-2xl border border-slate-200 bg-white text-slate-900 p-6 sm:p-8 space-y-4 shadow-sm">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-300 pb-3">
                   <div>
-                    <p className="text-xs font-extrabold uppercase text-blue-700">
+                    <p className="text-xs font-extrabold uppercase text-emerald-700">
                       {selected.headerText || 'CONSEJO MUNICIPAL DE JUVENTUDES DE FLANDES'}
                     </p>
                     <p className="text-[11px] text-slate-500">
@@ -304,7 +380,7 @@ export function LetterTemplatesModule({
                   <button
                     type="button"
                     onClick={() => window.print()}
-                    className="no-print inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white cursor-pointer"
+                    className="no-print min-h-[38px] inline-flex items-center gap-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 px-3.5 py-1.5 text-xs font-semibold text-white cursor-pointer whitespace-nowrap self-start sm:self-auto"
                   >
                     <Printer className="h-3.5 w-3.5" /> Imprimir / PDF
                   </button>
@@ -321,6 +397,20 @@ export function LetterTemplatesModule({
           )}
         </div>
       </div>
+
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title="Eliminar plantilla de oficio"
+        description={
+          deleteTarget
+            ? `¿Seguro deseas eliminar la plantilla "${deleteTarget.title}"?`
+            : ''
+        }
+        confirmLabel="Sí, eliminar"
+        loading={deleting}
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   );
 }

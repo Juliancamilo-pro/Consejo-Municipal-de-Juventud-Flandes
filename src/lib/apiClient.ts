@@ -1,4 +1,4 @@
-import type { AccessTier, RoleLabel } from '../types/cmj';
+import type { AccessTier, GrantedPermission, PermissionKey, PrivateModule, RoleLabel } from '../types/cmj';
 
 // Token almacenado únicamente en memoria de la aplicación (nunca en localStorage ni sessionStorage)
 let inMemoryBearerToken: string | null = null;
@@ -33,18 +33,39 @@ export interface ApiErrorPayload {
   error: string;
   hint?: string;
   code?: string;
+  requiredPermission?: PermissionKey;
+  permissionLabel?: string;
+  targetModule?: PrivateModule;
+  requestable?: boolean;
+  commissionId?: string;
 }
 
 export class ApiRequestError extends Error {
   status: number;
   hint?: string;
   code?: string;
+  requiredPermission?: PermissionKey;
+  permissionLabel?: string;
+  targetModule?: PrivateModule;
+  requestable?: boolean;
+  commissionId?: string;
 
-  constructor(status: number, message: string, hint?: string, code?: string) {
+  constructor(
+    status: number,
+    message: string,
+    hint?: string,
+    code?: string,
+    extra?: Partial<ApiErrorPayload>
+  ) {
     super(message);
     this.status = status;
     this.hint = hint;
     this.code = code;
+    this.requiredPermission = extra?.requiredPermission;
+    this.permissionLabel = extra?.permissionLabel;
+    this.targetModule = extra?.targetModule;
+    this.requestable = extra?.requestable;
+    this.commissionId = extra?.commissionId;
   }
 }
 
@@ -219,7 +240,8 @@ export async function apiRequest<T>(
       res.status,
       data.error || fallbackMessage,
       data.hint,
-      data.code
+      data.code,
+      data
     );
   }
 
@@ -240,4 +262,7 @@ export interface SessionUser {
   active: boolean;
   mustChangePassword: boolean;
   fullName: string;
+  coordinatorCommissionIds?: string[];
+  grantedPermissions?: GrantedPermission[];
+  effectivePermissions?: PermissionKey[];
 }

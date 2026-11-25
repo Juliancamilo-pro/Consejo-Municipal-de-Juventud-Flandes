@@ -437,4 +437,213 @@ export type PrivateModule =
   | 'plantillas'
   | 'plan_trabajo'
   | 'guia'
-  | 'portal_editor';
+  | 'portal_editor'
+  | 'permisos';
+
+export type PermissionKey =
+  // Usuarios y Mesa
+  | 'usuarios.ver'
+  | 'usuarios.crear'
+  | 'usuarios.editar'
+  | 'usuarios.desactivar'
+  | 'usuarios.eliminar'
+  | 'usuarios.asignar_presidencia'
+  | 'usuarios.credenciales_rotar'
+  | 'usuarios.purgar_ejemplos'
+  // Comisiones
+  | 'comision.ver_todas'
+  | 'comision.coordinador_asignar'
+  | 'comision.editar_todas'
+  | 'comision.editar_propia'
+  | 'comision.miembros_gestionar'
+  | 'comision.tareas_gestionar'
+  | 'comision.reportes_exportar'
+  // Sesiones
+  | 'sesiones.ver'
+  | 'sesiones.crear'
+  | 'sesiones.editar'
+  | 'sesiones.asistencia_gestionar'
+  | 'sesiones.autoregistro'
+  | 'sesiones.eliminar'
+  | 'sesiones.exportar'
+  // Actas
+  | 'actas.ver'
+  | 'actas.crear'
+  | 'actas.editar'
+  | 'actas.comentar'
+  | 'actas.firmar'
+  | 'actas.aprobar'
+  | 'actas.eliminar'
+  | 'actas.exportar'
+  // Votaciones y Compromisos
+  | 'votaciones.ver'
+  | 'votaciones.crear'
+  | 'votaciones.editar'
+  | 'votaciones.cerrar'
+  | 'votaciones.eliminar'
+  | 'votaciones.votar'
+  | 'compromisos.ver'
+  | 'compromisos.crear'
+  | 'compromisos.editar_todos'
+  | 'compromisos.actualizar_propio'
+  | 'compromisos.eliminar'
+  | 'compromisos.exportar'
+  // Documentos
+  | 'documentos.ver'
+  | 'documentos.subir'
+  | 'documentos.editar'
+  | 'documentos.aprobar'
+  | 'documentos.eliminar'
+  | 'documentos.exportar'
+  // Planillas
+  | 'planillas.ver'
+  | 'planillas.importar'
+  | 'planillas.exportar'
+  // Portal, Noticias y Galería
+  | 'portal.editar'
+  | 'noticias.crear'
+  | 'noticias.proponer'
+  | 'noticias.publicar'
+  | 'noticias.eliminar'
+  | 'galeria.gestionar'
+  | 'galeria.subir_propia'
+  // Encuestas, Buzón e Ideas
+  | 'encuestas.ver'
+  | 'encuestas.crear'
+  | 'encuestas.ver_respuestas'
+  | 'encuestas.exportar'
+  | 'buzon.ver'
+  | 'buzon.responder'
+  | 'ideas.crear'
+  | 'ideas.votar'
+  | 'ideas.moderar'
+  // Plan de trabajo y Plantillas
+  | 'plan_trabajo.ver'
+  | 'plan_trabajo.crear'
+  | 'plan_trabajo.editar'
+  | 'plan_trabajo.eliminar'
+  | 'plantillas.ver'
+  | 'plantillas.gestionar'
+  // Auditoría y Permisos Especiales
+  | 'auditoria.ver'
+  | 'auditoria.exportar'
+  | 'permisos.solicitar'
+  | 'permisos.aprobar_presidencia'
+  | 'permisos.aprobar_vicepresidencia'
+  | 'permisos.aprobar_secretaria'
+  | 'permisos.delegar'
+  | 'permisos.revocar'
+  | 'permisos.exportar';
+
+export type PermissionRiskLevel = 'bajo' | 'medio' | 'alto';
+
+export type PermissionDurationType = 'temporal' | 'permanente';
+
+export type PermissionRequestStatus =
+  | 'pendiente_presidente'
+  | 'pendiente_vicepresidente'
+  | 'pendiente_secretario'
+  | 'aprobada'
+  | 'rechazada'
+  | 'cancelada';
+
+export type ApprovalStepRole = 'Presidente' | 'Vicepresidente' | 'Secretario';
+
+export type ApprovalStepStatus = 'pendiente' | 'aprobado' | 'rechazado' | 'omitido';
+
+export interface PermissionRequest {
+  id: string;
+  requesterUid: string;
+  requesterName: string;
+  requesterEmail: string;
+  requesterRoleLabel: RoleLabel;
+  permissionKey: PermissionKey;
+  permissionLabel: string;
+  targetModule: string;
+  targetCommissionId?: string;
+  targetCommissionName?: string;
+  reason: string;
+  purpose: string;
+  durationType: PermissionDurationType;
+  expiresAt?: string;
+  attachmentUrl?: string;
+  attachmentName?: string;
+  status: PermissionRequestStatus;
+  currentStepOrder: number;
+  rejectionReason?: string;
+  decidedByName?: string;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+}
+
+export interface PermissionApprovalStep {
+  id: string;
+  requestId: string;
+  stepOrder: number;
+  approverRole: ApprovalStepRole;
+  expectedApproverUid?: string;
+  expectedApproverName?: string;
+  delegatedFromUid?: string;
+  delegatedReason?: string;
+  status: ApprovalStepStatus;
+  decidedByUid?: string;
+  decidedByName?: string;
+  comment?: string;
+  reminderSentAt?: string;
+  decidedAt?: string;
+  createdAt?: unknown;
+}
+
+export interface GrantedPermission {
+  id: string;
+  requestId: string;
+  userUid: string;
+  userName: string;
+  userEmail: string;
+  permissionKey: PermissionKey;
+  permissionLabel: string;
+  targetModule: string;
+  targetCommissionId?: string;
+  durationType: PermissionDurationType;
+  expiresAt?: string;
+  active: boolean;
+  revokedAt?: string;
+  revokedByUid?: string;
+  revokedByName?: string;
+  revocationReason?: string;
+  grantedAt?: unknown;
+}
+
+export interface PortalNotification {
+  id: string;
+  userUid: string;
+  type:
+    | 'permiso_solicitado'
+    | 'permiso_turno'
+    | 'permiso_aprobado'
+    | 'permiso_rechazado'
+    | 'permiso_revocado'
+    | 'permiso_recordatorio_48h'
+    | 'comision_coordinador'
+    | 'general';
+  title: string;
+  message: string;
+  linkModule?: PrivateModule;
+  relatedId?: string;
+  read: boolean;
+  createdAt?: unknown;
+}
+
+export interface AuditComparisonRow {
+  module: string;
+  action: string;
+  currentState: string;
+  proposedPresidente: string;
+  proposedVicepresidente: string;
+  proposedSecretario: string;
+  proposedConsejero: string;
+  proposedCoordinador: string;
+  specialRequestable: boolean;
+  permissionKey: PermissionKey;
+}
+

@@ -1,39 +1,20 @@
 import React, { Suspense, lazy, useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  Award,
   Bell,
-  BookOpen,
-  Calendar,
-  CalendarClock,
-  FileCheck2,
-  FileSpreadsheet,
-  FileText,
-  FolderArchive,
-  FolderKanban,
+  ChevronDown,
   Globe,
-  History,
   KeyRound,
-  LayoutDashboard,
-  Lightbulb,
   LogOut,
   Menu,
-  MessageSquare,
   Moon,
-  Palette,
   Search,
   Sun,
-  Trash2,
-  UserCheck,
-  Users,
-  Vote,
   X,
 } from 'lucide-react';
-import { ApiRequestError, apiRequest } from '../../lib/apiClient';
-import { isLeadershipTier } from '../../lib/security';
-import { deleteStorageFile } from '../../lib/storageUtils';
+import { apiRequest, triggerPortalRefresh } from '../../lib/apiClient';
+import { hasPermission } from '../../lib/permissions';
 import type {
-  AffiliationType,
   AuditLog,
   CallOrSurvey,
   Commission,
@@ -45,11 +26,16 @@ import type {
   CouncilorPrivate,
   GalleryAlbum,
   GalleryItem,
+  GrantedPermission,
   IdeaItem,
   LetterTemplate,
   NewsEvent,
+  PermissionApprovalStep,
+  PermissionKey,
+  PermissionRequest,
   PortalActa,
   PortalDocument,
+  PortalNotification,
   PortalSettings,
   PrivateModule,
   PublicCouncilor,
@@ -57,12 +43,14 @@ import type {
 } from '../../types/cmj';
 import { BrandLogo } from '../BrandLogo';
 import { ModuleErrorBoundary } from '../ErrorBoundary';
-import { MediaUploader, type UploadedFileInfo } from '../MediaUploader';
 import { OfflineIndicator, PWAInstallButton } from '../PWAInstallButton';
 import { AvatarBadge } from '../public/AvatarBadge';
-import { useToast } from '../ToastProvider';
 import { SkeletonBlock } from '../ui/AnimatedPrimitives';
 import { CustomizableDashboard } from './CustomizableDashboard';
+import { GlobalSearchModal, type GlobalSearchHit } from './layout/GlobalSearchModal';
+import { MyProfileModal } from './layout/MyProfileModal';
+import { MOBILE_QUICK_MODULES, NAV_GROUPS } from './layout/PrivateNavConfig';
+import { PermissionProvider, type PermissionRequestPrefill } from './PermissionGate';
 
 const UsersAndBoardModule = lazy(() =>
   import('./UsersAndBoardModule').then((m) => ({ default: m.UsersAndBoardModule }))
@@ -109,6 +97,9 @@ const PortalEditorModule = lazy(() =>
 const RoleGuideModule = lazy(() =>
   import('./RoleGuideModule').then((m) => ({ default: m.RoleGuideModule }))
 );
+const PermissionsModule = lazy(() =>
+  import('./PermissionsModule').then((m) => ({ default: m.PermissionsModule }))
+);
 
 function ModuleLoadingFallback() {
   return (
@@ -122,21 +113,14 @@ function ModuleLoadingFallback() {
   );
 }
 
-interface SearchHit {
-  id: string;
-  title: string;
-  subtitle: string;
-  module: PrivateModule;
-  badge: string;
-}
-
 interface HeaderNotification {
   id: string;
+  dbId?: string;
+  read?: boolean;
   title: string;
   detail: string;
   module?: PrivateModule;
   action?: () => void;
-  tone: 'amber' | 'blue' | 'emerald' | 'rose';
 }
 
 export function PrivatePortal({
@@ -162,6 +146,12 @@ export function PrivatePortal({
   auditLogs,
   templates,
   workPlans,
+  permissionRequests = [],
+  permissionApprovalSteps = [],
+  grantedPermissions = [],
+  portalNotifications = [],
+  coordinatorCommissionIds = [],
+  effectivePermissions = [],
   settings,
   darkMode,
   onToggleDarkMode,
@@ -191,6 +181,12 @@ export function PrivatePortal({
   auditLogs: AuditLog[];
   templates: LetterTemplate[];
   workPlans: WorkPlanItem[];
+  permissionRequests?: PermissionRequest[];
+  permissionApprovalSteps?: PermissionApprovalStep[];
+  grantedPermissions?: GrantedPermission[];
+  portalNotifications?: PortalNotification[];
+  coordinatorCommissionIds?: string[];
+  effectivePermissions?: PermissionKey[];
   settings: PortalSettings;
   darkMode: boolean;
   onToggleDarkMode: () => void;
@@ -198,7 +194,6 @@ export function PrivatePortal({
   onOpenPasswordChange: () => void;
   onSignOut: () => void;
 }) {
-  const { showToast } = useToast();
   const [activeModule, setActiveModule] = useState<PrivateModule>('resumen');
   const [preselectedSessionForActa, setPreselectedSessionForActa] = useState<string | null>(null);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -206,39 +201,65 @@ export function PrivatePortal({
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+  const [permissionPrefill, setPermissionPrefill] = useState<PermissionRequestPrefill | null>(null);
 
   const roleLabel = privateRecord?.roleLabel || profile?.roleLabel || 'Consejero';
   const accessTier = privateRecord?.accessTier || 'tier_4_member';
-  const isLeader = isLeadershipTier(accessTier);
   const commissionId = profile?.commissionId ?? privateRecord?.commissionId ?? '';
   const fullName = profile?.fullName || email.split('@')[0] || 'Consejero CMJ';
+  const inSession = sessions.some((s) => s.status === 'en_curso');
 
-  const [editBio, setEditBio] = useState(profile?.bio || '');
-  const [editIg, setEditIg] = useState(profile?.instagram || '');
-  const [editFb, setEditFb] = useState(profile?.facebook || '');
-  const [editEmail, setEditEmail] = useState(profile?.email || privateRecord?.email || email);
-  const [editPhone, setEditPhone] = useState(privateRecord?.phone || profile?.phone || '');
-  const [editName, setEditName] = useState(fullName);
-  const [editCommissionId, setEditCommissionId] = useState(commissionId);
-  const [editAffiliationType, setEditAffiliationType] = useState<AffiliationType>(
-    profile?.affiliationType || ''
+  const computedCoordinatorIds = useMemo(() => {
+    const fromComms = commissions
+      .filter((c) => c.coordinatorUid === uid)
+      .map((c) => c.id);
+    return Array.from(new Set([...coordinatorCommissionIds, ...fromComms]));
+  }, [commissions, coordinatorCommissionIds, uid]);
+
+  const myActiveGrants = useMemo(
+    () => grantedPermissions.filter((g) => g.userUid === uid && g.active),
+    [grantedPermissions, uid]
   );
-  const [editAffiliationName, setEditAffiliationName] = useState(profile?.affiliationName || '');
-  const [savingProfile, setSavingProfile] = useState(false);
 
-  useEffect(() => {
-    if (profileModalOpen) {
-      setEditName(fullName);
-      setEditBio(profile?.bio || '');
-      setEditIg(profile?.instagram || '');
-      setEditFb(profile?.facebook || '');
-      setEditEmail(profile?.email || privateRecord?.email || email);
-      setEditPhone(privateRecord?.phone || profile?.phone || '');
-      setEditCommissionId(commissionId);
-      setEditAffiliationType(profile?.affiliationType || '');
-      setEditAffiliationName(profile?.affiliationName || '');
-    }
-  }, [profileModalOpen, fullName, profile, privateRecord, email, commissionId]);
+  const can = React.useCallback(
+    (permission: PermissionKey, targetCommissionId?: string) =>
+      hasPermission(
+        {
+          roleLabel,
+          active: privateRecord?.active ?? true,
+          coordinatorCommissionIds: computedCoordinatorIds,
+          grantedPermissions: myActiveGrants,
+          effectivePermissions,
+        },
+        permission,
+        targetCommissionId
+      ),
+    [roleLabel, privateRecord?.active, computedCoordinatorIds, myActiveGrants, effectivePermissions]
+  );
+
+  const pendingApprovalsForMe = useMemo(() => {
+    const canPres = can('permisos.aprobar_presidencia');
+    const canVp = can('permisos.aprobar_vicepresidencia');
+    const canSec = can('permisos.aprobar_secretaria');
+    return permissionRequests.filter((r) => {
+      if (r.requesterUid === uid) return false;
+      if (r.status === 'pendiente_presidente' && canPres) return true;
+      if (r.status === 'pendiente_vicepresidente' && canVp) return true;
+      if (r.status === 'pendiente_secretario' && canSec) return true;
+      return permissionApprovalSteps.some(
+        (s) =>
+          s.requestId === r.id &&
+          s.status === 'pendiente' &&
+          s.expectedApproverUid === uid
+      );
+    }).length;
+  }, [can, permissionRequests, permissionApprovalSteps, uid]);
+
+  const handleOpenRequestPermission = React.useCallback((prefill?: PermissionRequestPrefill) => {
+    setPermissionPrefill(prefill || null);
+    setActiveModule('permisos');
+  }, []);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -246,7 +267,6 @@ export function PrivatePortal({
         e.preventDefault();
         setSearchOpen((prev) => !prev);
       } else if (e.key === 'Escape') {
-        setSearchOpen(false);
         setNotificationsOpen(false);
       }
     };
@@ -254,45 +274,55 @@ export function PrivatePortal({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
-  const navItems: {
-    id: PrivateModule;
-    label: string;
-    icon: React.ReactNode;
-    leaderOnly?: boolean;
-  }[] = [
-    { id: 'resumen', label: 'Mi Tablero', icon: <LayoutDashboard className="h-4 w-4" /> },
-    { id: 'comisiones', label: 'Comisiones (1–5)', icon: <FolderKanban className="h-4 w-4" /> },
-    { id: 'sesiones', label: 'Sesiones y Asistencia', icon: <CalendarClock className="h-4 w-4" /> },
-    { id: 'actas', label: 'Actas Oficiales', icon: <FileCheck2 className="h-4 w-4" /> },
-    { id: 'votaciones', label: 'Votos y Compromisos', icon: <Vote className="h-4 w-4" /> },
-    { id: 'planillas', label: 'Planillas y Excel', icon: <FileSpreadsheet className="h-4 w-4" /> },
-    { id: 'documentos', label: 'Documentos', icon: <FolderArchive className="h-4 w-4" /> },
-    { id: 'agenda', label: 'Agenda', icon: <Calendar className="h-4 w-4" /> },
-    { id: 'buzon', label: 'Buzón de Ideas', icon: <Lightbulb className="h-4 w-4" /> },
-    { id: 'plan_trabajo', label: 'Plan de Trabajo', icon: <Award className="h-4 w-4" /> },
-    { id: 'plantillas', label: 'Plantillas de Oficios', icon: <FileText className="h-4 w-4" /> },
-    { id: 'encuestas', label: 'Encuestas y Mensajes', icon: <MessageSquare className="h-4 w-4" /> },
-    { id: 'portal_editor', label: 'Editor Portal y Galería', icon: <Palette className="h-4 w-4" /> },
-    {
-      id: 'usuarios',
-      label: 'Usuarios y Mesa',
-      icon: <Users className="h-4 w-4" />,
-      leaderOnly: true,
-    },
-    {
-      id: 'auditoria',
-      label: 'Auditoría',
-      icon: <History className="h-4 w-4" />,
-      leaderOnly: true,
-    },
-    { id: 'guia', label: 'Guía CMJ', icon: <BookOpen className="h-4 w-4" /> },
-  ];
+  const visibleGroups = useMemo(
+    () =>
+      NAV_GROUPS.map((group) => ({
+        ...group,
+        items: group.items.filter((item) => {
+          if (item.id === 'usuarios') return can('usuarios.ver');
+          if (item.id === 'auditoria') return can('auditoria.ver');
+          return true;
+        }),
+      })).filter((group) => group.items.length > 0),
+    [can]
+  );
 
-  const visibleNav = navItems.filter((n) => !n.leaderOnly || isLeader);
+  const visibleNav = useMemo(() => visibleGroups.flatMap((g) => g.items), [visibleGroups]);
+
+  const mobileQuickItems = useMemo(
+    () =>
+      MOBILE_QUICK_MODULES.map((id) => visibleNav.find((item) => item.id === id)).filter(
+        (item): item is NonNullable<typeof item> => Boolean(item)
+      ),
+    [visibleNav]
+  );
 
   const notifications = useMemo<HeaderNotification[]>(() => {
     const list: HeaderNotification[] = [];
     const todayIso = new Date().toISOString().slice(0, 10);
+
+    portalNotifications
+      .filter((n) => !n.read)
+      .slice(0, 12)
+      .forEach((n) => {
+        list.push({
+          id: `db-${n.id}`,
+          dbId: n.id,
+          read: n.read,
+          title: n.title,
+          detail: n.message,
+          module: (n.linkModule as PrivateModule) || 'permisos',
+        });
+      });
+
+    if (pendingApprovalsForMe > 0) {
+      list.push({
+        id: 'perm-approvals-pending',
+        title: `${pendingApprovalsForMe} solicitud(es) de permiso por decidir`,
+        detail: 'Tienes revisiones pendientes en el flujo secuencial CMJ.',
+        module: 'permisos',
+      });
+    }
 
     if (privateRecord?.mustChangePassword) {
       list.push({
@@ -300,7 +330,6 @@ export function PrivatePortal({
         title: 'Actualiza tu contraseña inicial',
         detail: 'Se recomienda definir una contraseña personal de seguridad.',
         action: onOpenPasswordChange,
-        tone: 'rose',
       });
     }
 
@@ -312,7 +341,6 @@ export function PrivatePortal({
           title: `Sesión en curso: ${s.title}`,
           detail: 'Ingresa para registrar asistencia o gestionar el quórum.',
           module: 'sesiones',
-          tone: 'emerald',
         })
       );
 
@@ -324,7 +352,6 @@ export function PrivatePortal({
           title: `Votación pendiente: ${v.title}`,
           detail: 'Tu voto aún no ha sido registrado en esta consulta interna.',
           module: 'votaciones',
-          tone: 'blue',
         })
       );
 
@@ -342,11 +369,10 @@ export function PrivatePortal({
           title: `Compromiso vencido o por vencer: ${c.title}`,
           detail: `Fecha límite: ${c.dueDate}`,
           module: 'votaciones',
-          tone: 'amber',
         })
       );
 
-    if (isLeader) {
+    if (can('noticias.publicar')) {
       const pendingNews = newsEvents.filter((n) => n.status === 'pendiente').length;
       if (pendingNews > 0) {
         list.push({
@@ -354,9 +380,10 @@ export function PrivatePortal({
           title: `${pendingNews} publicación(es) esperando aprobación`,
           detail: 'Revisa y aprueba las noticias enviadas por los consejeros.',
           module: 'portal_editor',
-          tone: 'amber',
         });
       }
+    }
+    if (can('buzon.responder')) {
       const unreadMsgs = contactMessages.filter((m) => m.status === 'nuevo').length;
       if (unreadMsgs > 0) {
         list.push({
@@ -364,27 +391,40 @@ export function PrivatePortal({
           title: `${unreadMsgs} mensaje(s) ciudadanos sin responder`,
           detail: 'Atiende los mensajes recibidos en el buzón público.',
           module: 'encuestas',
-          tone: 'blue',
         });
       }
     }
 
     return list;
   }, [
+    portalNotifications,
+    pendingApprovalsForMe,
     privateRecord?.mustChangePassword,
     onOpenPasswordChange,
     sessions,
     votes,
     uid,
     commitments,
-    isLeader,
+    can,
     newsEvents,
     contactMessages,
   ]);
 
-  const searchHits = useMemo<SearchHit[]>(() => {
+  const searchHits = useMemo<GlobalSearchHit[]>(() => {
     const q = searchQuery.trim().toLowerCase();
-    const hits: SearchHit[] = [];
+    const hits: GlobalSearchHit[] = [];
+
+    visibleNav.forEach((nav) => {
+      if (q && nav.label.toLowerCase().includes(q)) {
+        hits.push({
+          id: `nav-${nav.id}`,
+          title: nav.label,
+          subtitle: 'Ir directamente al módulo',
+          module: nav.id,
+          badge: 'Módulo',
+        });
+      }
+    });
 
     publicCouncilors.forEach((c) => {
       if (
@@ -397,7 +437,7 @@ export function PrivatePortal({
           id: `c-${c.id}`,
           title: c.fullName,
           subtitle: `${c.roleLabel} · ${c.commissionName || 'Sin comisión'}`,
-          module: isLeader ? 'usuarios' : 'comisiones',
+          module: can('usuarios.ver') ? 'usuarios' : 'comisiones',
           badge: 'Consejero',
         });
       }
@@ -473,143 +513,134 @@ export function PrivatePortal({
       }
     });
 
-    return hits.slice(0, 14);
-  }, [searchQuery, publicCouncilors, sessions, actas, votes, documents, newsEvents, isLeader]);
+    return hits.slice(0, 16);
+  }, [
+    searchQuery,
+    visibleNav,
+    publicCouncilors,
+    sessions,
+    actas,
+    votes,
+    documents,
+    newsEvents,
+    can,
+  ]);
 
-  const handleAvatarUpload = async (files: UploadedFileInfo[]) => {
-    const first = files[0];
-    if (!first) return;
-    try {
-      if (profile?.storagePath) {
-        await deleteStorageFile(profile.storagePath, profile.photoUrl);
-      }
-      await apiRequest(`/api/councilors/${encodeURIComponent(uid)}`, {
-        method: 'PATCH',
-        body: {
-          photoUrl: first.url,
-          photoThumbUrl: first.thumbUrl || first.thumbnailUrl || first.url,
-          photoMediumUrl: first.mediumUrl || first.url,
-          storagePath: first.storagePath || '',
-        },
-      });
-      showToast('Foto de perfil actualizada', 'success');
-    } catch (err) {
-      const msg =
-        err instanceof ApiRequestError ? err.message : 'No se pudo actualizar la foto de perfil';
-      showToast(msg, 'error');
-    }
+  const toggleGroup = (groupId: string) => {
+    setCollapsedGroups((prev) => ({ ...prev, [groupId]: !prev[groupId] }));
   };
 
-  const handleRemoveAvatar = async () => {
-    try {
-      if (profile?.storagePath) {
-        await deleteStorageFile(profile.storagePath, profile.photoUrl);
-      }
-      await apiRequest(`/api/councilors/${encodeURIComponent(uid)}`, {
-        method: 'PATCH',
-        body: {
-          photoUrl: '',
-          photoThumbUrl: '',
-          photoMediumUrl: '',
-          storagePath: '',
-        },
-      });
-      showToast('Foto de perfil eliminada', 'info');
-    } catch (err) {
-      const msg =
-        err instanceof ApiRequestError ? err.message : 'No se pudo quitar la foto de perfil';
-      showToast(msg, 'error');
-    }
-  };
-
-  const handleSaveMyProfile = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSavingProfile(true);
-    try {
-      const payload: Record<string, unknown> = {
-        fullName: editName.trim() || fullName,
-        bio: editBio.trim(),
-        instagram: editIg.trim(),
-        facebook: editFb.trim(),
-        email: editEmail.trim().toLowerCase(),
-        phone: editPhone.trim(),
-        affiliationType: editAffiliationType,
-        affiliationName: editAffiliationName.trim(),
-      };
-      if (isLeader) {
-        payload.commissionId = editCommissionId;
-      }
-      await apiRequest(`/api/councilors/${encodeURIComponent(uid)}`, {
-        method: 'PATCH',
-        body: payload,
-      });
-      setProfileModalOpen(false);
-      showToast('Perfil actualizado correctamente', 'success');
-    } catch (err) {
-      const msg = err instanceof ApiRequestError ? err.message : 'Error al actualizar perfil';
-      showToast(msg, 'error');
-    } finally {
-      setSavingProfile(false);
-    }
-  };
+  const renderGroupedNavigation = (onPick?: () => void) => (
+    <div className="space-y-4">
+      {visibleGroups.map((group) => {
+        const isCollapsed = Boolean(collapsedGroups[group.id]);
+        return (
+          <div key={group.id} className="space-y-1">
+            <button
+              type="button"
+              onClick={() => toggleGroup(group.id)}
+              className="w-full flex items-center justify-between px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 cursor-pointer"
+            >
+              <span>{group.label}</span>
+              <ChevronDown
+                className={`h-3 w-3 transition-transform ${isCollapsed ? '-rotate-90' : ''}`}
+              />
+            </button>
+            {!isCollapsed && (
+              <div className="space-y-0.5">
+                {group.items.map((item) => {
+                  const active = activeModule === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => {
+                        setActiveModule(item.id);
+                        onPick?.();
+                      }}
+                      className={`relative w-full min-h-[38px] flex items-center gap-2.5 rounded-xl px-3 py-2 text-xs font-semibold transition-colors cursor-pointer ${
+                        active
+                          ? 'text-white'
+                          : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/70'
+                      }`}
+                    >
+                      {active && (
+                        <motion.span
+                          layoutId={onPick ? 'mobile-nav-active' : 'private-nav-active'}
+                          transition={{ type: 'spring', stiffness: 380, damping: 32 }}
+                          className="absolute inset-0 rounded-xl bg-emerald-700 shadow-sm"
+                        />
+                      )}
+                      <span className="relative z-10 flex items-center justify-between gap-2 w-full min-w-0">
+                        <span className="flex items-center gap-2.5 min-w-0">
+                          {item.icon}
+                          <span className="truncate">{item.label}</span>
+                        </span>
+                        {item.id === 'permisos' && pendingApprovalsForMe > 0 && (
+                          <span
+                            className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold font-mono-num ${
+                              active
+                                ? 'bg-white text-emerald-800'
+                                : 'bg-amber-500 text-white'
+                            }`}
+                          >
+                            {pendingApprovalsForMe}
+                          </span>
+                        )}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-[#090D16] text-slate-900 dark:text-slate-100 flex">
-      {/* Sidebar Desktop */}
-      <aside className="hidden lg:flex w-64 shrink-0 flex-col border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-4 no-print">
-        <div className="flex items-center gap-3 px-2 pb-4 border-b border-slate-100 dark:border-slate-800">
-          <BrandLogo size="sm" />
-          <div className="min-w-0">
-            <p className="text-sm font-extrabold truncate">CMJ Flandes</p>
-            <p className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 truncate">
-              {roleLabel}
-            </p>
+    <PermissionProvider
+      uid={uid}
+      roleLabel={roleLabel}
+      coordinatorCommissionIds={computedCoordinatorIds}
+      grantedPermissions={myActiveGrants}
+      effectivePermissions={effectivePermissions}
+      onRequestPermission={handleOpenRequestPermission}
+    >
+      <div className="min-h-screen bg-slate-50 dark:bg-[#070B14] text-slate-900 dark:text-slate-100 flex">
+        {/* Sidebar Desktop */}
+        <aside className="hidden lg:flex w-64 shrink-0 flex-col border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-4 no-print sticky top-0 h-screen">
+          <div className="flex items-center gap-3 px-2 pb-4 border-b border-slate-100 dark:border-slate-800">
+            <BrandLogo size="sm" />
+            <div className="min-w-0">
+              <p className="text-sm font-extrabold truncate">CMJ Flandes</p>
+              <p className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 truncate">
+                {roleLabel}
+              </p>
+            </div>
           </div>
-        </div>
 
-        <nav className="flex-1 overflow-y-auto py-3 space-y-1">
-          {visibleNav.map((item) => {
-            const active = activeModule === item.id;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => setActiveModule(item.id)}
-                className={`relative w-full flex items-center gap-2.5 rounded-xl px-3 py-2 text-xs font-semibold transition-colors cursor-pointer ${
-                  active
-                    ? 'text-white'
-                    : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/70'
-                }`}
-              >
-                {active && (
-                  <motion.span
-                    layoutId="private-nav-active"
-                    transition={{ type: 'spring', stiffness: 380, damping: 32 }}
-                    className="absolute inset-0 rounded-xl bg-blue-600 shadow-sm"
-                  />
-                )}
-                <span className="relative z-10 flex items-center gap-2.5 min-w-0">
-                  {item.icon}
-                  <span className="truncate">{item.label}</span>
-                </span>
-              </button>
-            );
-          })}
+        <nav
+          aria-label="Menú principal del portal privado"
+          className="flex-1 overflow-y-auto py-3 pr-1"
+        >
+          {renderGroupedNavigation()}
         </nav>
 
-        <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-1.5">
+        <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-1">
           <button
             type="button"
             onClick={onGoPublic}
-            className="w-full flex items-center gap-2.5 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+            className="w-full min-h-[38px] flex items-center gap-2.5 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
           >
-            <Globe className="h-4 w-4 text-blue-600" />
+            <Globe className="h-4 w-4 text-emerald-700 dark:text-emerald-400" />
             Ver portal público
           </button>
           <button
             type="button"
             onClick={onSignOut}
-            className="w-full flex items-center gap-2.5 rounded-xl px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 cursor-pointer"
+            className="w-full min-h-[38px] flex items-center gap-2.5 rounded-xl px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 cursor-pointer"
           >
             <LogOut className="h-4 w-4" />
             Cerrar sesión
@@ -619,27 +650,33 @@ export function PrivatePortal({
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col min-w-0">
-        <header className="sticky top-0 z-30 h-16 border-b border-slate-200 dark:border-slate-800 bg-white/90 dark:bg-slate-950/90 backdrop-blur-md px-4 sm:px-6 flex items-center justify-between gap-3 no-print">
-          <div className="flex items-center gap-3 min-w-0">
+        <header className="sticky top-0 z-30 h-16 border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md px-4 sm:px-6 flex items-center justify-between gap-3 no-print">
+          <div className="flex items-center gap-2.5 min-w-0">
             <button
               type="button"
               onClick={() => setMobileSidebarOpen(true)}
               aria-label="Abrir menú lateral"
-              className="lg:hidden rounded-xl p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              className="lg:hidden min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
             >
               <Menu className="h-5 w-5" />
             </button>
-            <p className="text-sm font-bold truncate">
-              {visibleNav.find((n) => n.id === activeModule)?.label || 'Mi Tablero'}
-            </p>
+            <div className="min-w-0">
+              <p className="text-sm font-bold truncate text-slate-900 dark:text-white">
+                {visibleNav.find((n) => n.id === activeModule)?.label || 'Mi Tablero'}
+              </p>
+              <p className="hidden sm:block text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                Consejo Municipal de Juventudes · Flandes, Tolima
+              </p>
+            </div>
           </div>
 
-          <div className="flex items-center gap-1.5 sm:gap-2 relative">
+          <div className="flex items-center gap-1 sm:gap-2 relative">
             <button
               type="button"
               onClick={() => setSearchOpen(true)}
               title="Búsqueda global (Ctrl+K)"
-              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 px-2.5 py-1.5 text-xs text-slate-500 hover:border-blue-500 cursor-pointer"
+              aria-label="Búsqueda global"
+              className="min-h-[40px] inline-flex items-center gap-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 px-2.5 py-1.5 text-xs text-slate-500 hover:border-emerald-600 cursor-pointer"
             >
               <Search className="h-3.5 w-3.5" />
               <span className="hidden md:inline">Buscar...</span>
@@ -656,11 +693,11 @@ export function PrivatePortal({
                 type="button"
                 onClick={() => setNotificationsOpen((v) => !v)}
                 aria-label="Abrir notificaciones"
-                className="relative rounded-xl p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                className="relative min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
               >
                 <Bell className="h-4 w-4" />
                 {notifications.length > 0 && (
-                  <span className="absolute -top-0.5 -right-0.5 h-4 min-w-[16px] rounded-full bg-rose-600 px-1 text-[10px] font-bold text-white flex items-center justify-center font-mono-num">
+                  <span className="absolute top-1 right-1 h-4 min-w-[16px] rounded-full bg-rose-600 px-1 text-[10px] font-bold text-white flex items-center justify-center font-mono-num">
                     {notifications.length}
                   </span>
                 )}
@@ -668,15 +705,36 @@ export function PrivatePortal({
 
               {notificationsOpen && (
                 <div className="absolute right-0 mt-2 w-80 max-w-[90vw] rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-2xl p-3 space-y-2 z-50">
-                  <div className="flex items-center justify-between px-1 pb-1 border-b border-slate-100 dark:border-slate-800">
-                    <span className="text-xs font-bold">Notificaciones ({notifications.length})</span>
-                    <button
-                      type="button"
-                      onClick={() => setNotificationsOpen(false)}
-                      className="text-slate-400 hover:text-slate-700 cursor-pointer"
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </button>
+                  <div className="flex items-center justify-between gap-2 px-1 pb-1 border-b border-slate-100 dark:border-slate-800">
+                    <span className="text-xs font-bold">
+                      Notificaciones ({notifications.length})
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      {portalNotifications.some((n) => !n.read) && (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              await apiRequest('/api/notifications/read-all', { method: 'POST' });
+                              triggerPortalRefresh();
+                            } catch {
+                              // ignore
+                            }
+                          }}
+                          className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400 hover:underline cursor-pointer"
+                        >
+                          Marcar todo leído
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setNotificationsOpen(false)}
+                        aria-label="Cerrar notificaciones"
+                        className="text-slate-400 hover:text-slate-700 cursor-pointer p-1"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   </div>
                   {notifications.length === 0 ? (
                     <p className="text-xs text-slate-500 py-4 text-center">
@@ -688,8 +746,13 @@ export function PrivatePortal({
                         <button
                           key={n.id}
                           type="button"
-                          onClick={() => {
+                          onClick={async () => {
                             setNotificationsOpen(false);
+                            if (n.dbId) {
+                              apiRequest(`/api/notifications/${n.dbId}/read`, { method: 'PATCH' })
+                                .then(() => triggerPortalRefresh())
+                                .catch(() => undefined);
+                            }
                             if (n.action) n.action();
                             else if (n.module) setActiveModule(n.module);
                           }}
@@ -711,7 +774,7 @@ export function PrivatePortal({
               type="button"
               onClick={onToggleDarkMode}
               aria-label="Cambiar modo visual"
-              className="rounded-xl p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
             >
               {darkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </button>
@@ -719,24 +782,16 @@ export function PrivatePortal({
               type="button"
               onClick={onOpenPasswordChange}
               title="Cambiar contraseña"
-              className="rounded-xl p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              aria-label="Cambiar contraseña"
+              className="hidden sm:flex min-h-[40px] min-w-[40px] items-center justify-center rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
             >
               <KeyRound className="h-4 w-4" />
             </button>
             <button
               type="button"
-              onClick={() => {
-                setEditName(fullName);
-                setEditBio(profile?.bio || '');
-                setEditIg(profile?.instagram || '');
-                setEditFb(profile?.facebook || '');
-                setEditPhone(privateRecord?.phone || '');
-                setEditCommissionId(commissionId);
-                setEditAffiliationType(profile?.affiliationType || '');
-                setEditAffiliationName(profile?.affiliationName || '');
-                setProfileModalOpen(true);
-              }}
-              className="flex items-center gap-2 rounded-xl border border-slate-200 dark:border-slate-800 px-2.5 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              onClick={() => setProfileModalOpen(true)}
+              aria-label="Abrir mi perfil"
+              className="min-h-[40px] flex items-center gap-2 rounded-xl border border-slate-200 dark:border-slate-800 px-2 py-1 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
             >
               <AvatarBadge
                 name={fullName}
@@ -744,14 +799,12 @@ export function PrivatePortal({
                 thumbUrl={profile?.photoThumbUrl}
                 mediumUrl={profile?.photoMediumUrl}
                 accentColor={commissions.find((c) => c.id === commissionId)?.accentColor}
-                statusIndicator={
-                  sessions.some((s) => s.status === 'en_curso') ? 'in_session' : 'active'
-                }
+                statusIndicator={inSession ? 'in_session' : 'active'}
                 size="sm"
               />
               <div className="hidden sm:block text-left">
                 <p className="text-xs font-bold leading-none truncate max-w-[140px]">{fullName}</p>
-                <p className="text-[10px] font-semibold text-blue-600 dark:text-cyan-400 mt-0.5">
+                <p className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400 mt-0.5">
                   {roleLabel}
                 </p>
               </div>
@@ -762,12 +815,12 @@ export function PrivatePortal({
         {/* Mobile Drawer */}
         {mobileSidebarOpen && (
           <div
-            className="fixed inset-0 z-50 bg-slate-950/70 lg:hidden flex"
+            className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-sm lg:hidden flex"
             onClick={() => setMobileSidebarOpen(false)}
           >
             <div
               onClick={(e) => e.stopPropagation()}
-              className="w-72 bg-white dark:bg-slate-950 h-full p-4 flex flex-col"
+              className="w-72 max-w-[85vw] bg-white dark:bg-slate-950 h-full p-4 flex flex-col shadow-2xl"
             >
               <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
                 <div className="flex items-center gap-2.5">
@@ -778,43 +831,35 @@ export function PrivatePortal({
                   type="button"
                   onClick={() => setMobileSidebarOpen(false)}
                   aria-label="Cerrar menú"
-                  className="p-1.5 rounded-lg"
+                  className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800"
                 >
                   <X className="h-4 w-4" />
                 </button>
               </div>
-              <div className="flex-1 overflow-y-auto py-3 space-y-1">
-                {visibleNav.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => {
-                      setActiveModule(item.id);
-                      setMobileSidebarOpen(false);
-                    }}
-                    className={`w-full flex items-center gap-2.5 rounded-xl px-3 py-2 text-xs font-semibold ${
-                      activeModule === item.id
-                        ? 'bg-blue-600 text-white'
-                        : 'text-slate-700 dark:text-slate-200'
-                    }`}
-                  >
-                    {item.icon}
-                    {item.label}
-                  </button>
-                ))}
+
+              <div className="flex-1 overflow-y-auto py-3">
+                {renderGroupedNavigation(() => setMobileSidebarOpen(false))}
               </div>
+
               <div className="pt-3 border-t border-slate-200 dark:border-slate-800 space-y-1">
                 <button
                   type="button"
+                  onClick={onOpenPasswordChange}
+                  className="w-full min-h-[40px] flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200"
+                >
+                  <KeyRound className="h-4 w-4 text-slate-500" /> Cambiar contraseña
+                </button>
+                <button
+                  type="button"
                   onClick={onGoPublic}
-                  className="w-full flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold text-blue-600"
+                  className="w-full min-h-[40px] flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold text-emerald-700 dark:text-emerald-400"
                 >
                   <Globe className="h-4 w-4" /> Portal público
                 </button>
                 <button
                   type="button"
                   onClick={onSignOut}
-                  className="w-full flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold text-rose-600"
+                  className="w-full min-h-[40px] flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold text-rose-600"
                 >
                   <LogOut className="h-4 w-4" /> Cerrar sesión
                 </button>
@@ -823,7 +868,7 @@ export function PrivatePortal({
           </div>
         )}
 
-        <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto">
+        <main className="flex-1 p-4 sm:p-6 lg:p-8 pb-24 lg:pb-8 max-w-7xl w-full mx-auto">
           <ModuleErrorBoundary key={activeModule} moduleName={activeModule}>
             <AnimatePresence mode="wait">
               <motion.div
@@ -831,7 +876,7 @@ export function PrivatePortal({
                 initial={{ opacity: 0, y: 6 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -4 }}
-                transition={{ duration: 0.18, ease: 'easeOut' }}
+                transition={{ duration: 0.16, ease: 'easeOut' }}
               >
                 <Suspense fallback={<ModuleLoadingFallback />}>
                   {activeModule === 'resumen' && (
@@ -839,7 +884,6 @@ export function PrivatePortal({
                       uid={uid}
                       fullName={fullName}
                       roleLabel={roleLabel}
-                      accessTier={accessTier}
                       commissionId={commissionId}
                       affiliationType={profile?.affiliationType}
                       affiliationName={profile?.affiliationName}
@@ -859,7 +903,7 @@ export function PrivatePortal({
                     />
                   )}
 
-                  {activeModule === 'usuarios' && isLeader && (
+                  {activeModule === 'usuarios' && can('usuarios.ver') && (
                     <UsersAndBoardModule
                       uid={uid}
                       actorName={fullName}
@@ -867,6 +911,7 @@ export function PrivatePortal({
                       commissions={commissions}
                       publicCouncilors={publicCouncilors}
                       privateCouncilors={privateCouncilors}
+                      grantedPermissions={grantedPermissions}
                     />
                   )}
 
@@ -936,7 +981,6 @@ export function PrivatePortal({
                       uid={uid}
                       actorName={fullName}
                       actorRoleLabel={roleLabel}
-                      accessTier={accessTier}
                       commissions={commissions}
                       commissionTasks={commissionTasks}
                       publicCouncilors={publicCouncilors}
@@ -1000,16 +1044,29 @@ export function PrivatePortal({
 
                   {activeModule === 'plan_trabajo' && (
                     <WorkPlanAndCertsModule
-                      uid={uid}
                       actorName={fullName}
-                      accessTier={accessTier}
                       commissions={commissions}
                       workPlans={workPlans}
                     />
                   )}
 
-                  {activeModule === 'auditoria' && isLeader && (
+                  {activeModule === 'auditoria' && can('auditoria.ver') && (
                     <AuditLogModule auditLogs={auditLogs} />
+                  )}
+
+                  {activeModule === 'permisos' && (
+                    <PermissionsModule
+                      uid={uid}
+                      roleLabel={roleLabel}
+                      commissions={commissions}
+                      publicCouncilors={publicCouncilors}
+                      privateCouncilors={privateCouncilors}
+                      permissionRequests={permissionRequests}
+                      permissionApprovalSteps={permissionApprovalSteps}
+                      grantedPermissions={grantedPermissions}
+                      prefill={permissionPrefill}
+                      onClearPrefill={() => setPermissionPrefill(null)}
+                    />
                   )}
 
                   {activeModule === 'portal_editor' && (
@@ -1017,7 +1074,6 @@ export function PrivatePortal({
                       uid={uid}
                       actorName={fullName}
                       actorRoleLabel={roleLabel}
-                      accessTier={accessTier}
                       settings={settings}
                       commissions={commissions}
                       newsEvents={newsEvents}
@@ -1034,284 +1090,70 @@ export function PrivatePortal({
         </main>
       </div>
 
+      {/* Barra Inferior Móvil (<= 15% altura, botones >= 44x44px) */}
+      <nav
+        aria-label="Navegación rápida móvil"
+        className="lg:hidden fixed bottom-0 inset-x-0 z-40 h-16 border-t border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md px-2 grid grid-cols-5 items-center no-print"
+      >
+        {mobileQuickItems.map((item) => {
+          const active = activeModule === item.id;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => setActiveModule(item.id)}
+              className={`min-h-[44px] flex flex-col items-center justify-center gap-0.5 rounded-xl px-1 transition-colors cursor-pointer ${
+                active
+                  ? 'text-emerald-700 dark:text-emerald-400 font-bold'
+                  : 'text-slate-500 dark:text-slate-400 font-medium'
+              }`}
+            >
+              {item.icon}
+              <span className="text-[10px] leading-tight truncate max-w-full">
+                {item.shortLabel}
+              </span>
+            </button>
+          );
+        })}
+        <button
+          type="button"
+          onClick={() => setMobileSidebarOpen(true)}
+          className="min-h-[44px] flex flex-col items-center justify-center gap-0.5 rounded-xl px-1 text-slate-600 dark:text-slate-300 font-medium cursor-pointer"
+        >
+          <Menu className="h-4 w-4" />
+          <span className="text-[10px] leading-tight">Menú</span>
+        </button>
+      </nav>
+
       <OfflineIndicator />
 
-      {/* Búsqueda Global Ctrl+K */}
-      {searchOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-start justify-center pt-20 bg-slate-950/75 backdrop-blur-sm p-4"
-          onClick={() => setSearchOpen(false)}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-xl rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden"
-          >
-            <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-100 dark:border-slate-800">
-              <Search className="h-4 w-4 text-slate-400 shrink-0" />
-              <input
-                autoFocus
-                type="search"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Buscar consejeros, actas, sesiones, documentos o votaciones..."
-                className="flex-1 bg-transparent text-sm text-slate-900 dark:text-white outline-none"
-              />
-              <button
-                type="button"
-                onClick={() => setSearchOpen(false)}
-                className="text-xs text-slate-400 hover:text-slate-700 cursor-pointer"
-              >
-                Esc
-              </button>
-            </div>
-            <div className="max-h-80 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
-              {searchHits.length === 0 ? (
-                <p className="p-6 text-center text-xs text-slate-500">
-                  No se encontraron resultados para "{searchQuery}".
-                </p>
-              ) : (
-                searchHits.map((hit) => (
-                  <button
-                    key={hit.id}
-                    type="button"
-                    onClick={() => {
-                      setActiveModule(hit.module);
-                      setSearchOpen(false);
-                      setSearchQuery('');
-                    }}
-                    className="w-full text-left px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-800/60 flex items-center justify-between gap-3 cursor-pointer"
-                  >
-                    <div className="min-w-0">
-                      <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
-                        {hit.title}
-                      </p>
-                      <p className="text-[11px] text-slate-500 truncate">{hit.subtitle}</p>
-                    </div>
-                    <span className="rounded-lg bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[10px] font-semibold text-slate-600 dark:text-slate-300 shrink-0">
-                      {hit.badge}
-                    </span>
-                  </button>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      <GlobalSearchModal
+        open={searchOpen}
+        query={searchQuery}
+        hits={searchHits}
+        onQueryChange={setSearchQuery}
+        onSelect={(mod) => setActiveModule(mod)}
+        onClose={() => {
+          setSearchOpen(false);
+          setSearchQuery('');
+        }}
+      />
 
-      {/* Modal Mi Perfil */}
-      {profileModalOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-sm p-4"
-          onClick={() => setProfileModalOpen(false)}
-        >
-          <form
-            onSubmit={handleSaveMyProfile}
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 space-y-4 shadow-2xl"
-          >
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <AvatarBadge
-                  name={editName || fullName}
-                  photoUrl={profile?.photoUrl}
-                  thumbUrl={profile?.photoThumbUrl}
-                  mediumUrl={profile?.photoMediumUrl}
-                  accentColor={commissions.find((c) => c.id === commissionId)?.accentColor}
-                  statusIndicator={
-                    sessions.some((s) => s.status === 'en_curso') ? 'in_session' : 'active'
-                  }
-                  size="md"
-                />
-                <div>
-                  <h3 className="text-lg font-bold flex items-center gap-2">
-                    <UserCheck className="h-5 w-5 text-emerald-700 dark:text-emerald-400" />
-                    Mi Perfil de Consejero
-                  </h3>
-                  <p className="text-[11px] text-slate-500">
-                    Visible en el directorio público del CMJ Flandes
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setProfileModalOpen(false)}
-                aria-label="Cerrar perfil"
-                className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            <div className="space-y-2">
-              <MediaUploader
-                storageFolder={`profiles/${uid}`}
-                imagePreset="profile"
-                label="Actualizar foto de perfil (recorte 1:1 WebP)"
-                onUploaded={handleAvatarUpload}
-              />
-              {profile?.photoUrl && (
-                <button
-                  type="button"
-                  onClick={handleRemoveAvatar}
-                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-rose-600 hover:underline cursor-pointer"
-                >
-                  <Trash2 className="h-3 w-3" /> Quitar foto actual
-                </button>
-              )}
-            </div>
-
-            <div>
-              <label className="block text-[11px] font-semibold text-slate-500 mb-1">
-                Nombre completo
-              </label>
-              <input
-                type="text"
-                required
-                value={editName}
-                onChange={(e) => setEditName(e.target.value)}
-                placeholder="Nombre completo"
-                className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3.5 py-2 text-sm"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[11px] font-semibold text-slate-500 mb-1">
-                Correo público de contacto
-              </label>
-              <input
-                type="email"
-                value={editEmail}
-                onChange={(e) => setEditEmail(e.target.value)}
-                placeholder="correo@ejemplo.com"
-                className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3.5 py-2 text-xs"
-              />
-              <p className="mt-1 text-[10px] text-slate-400">
-                {isLeader
-                  ? 'Al guardar como Mesa Directiva, se sincroniza también con tu correo de acceso.'
-                  : 'Se muestra en tu ficha pública para contacto ciudadano.'}
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-[11px] font-semibold text-slate-500 mb-1">
-                Reseña o perfil juvenil
-              </label>
-              <textarea
-                rows={3}
-                value={editBio}
-                onChange={(e) => setEditBio(e.target.value)}
-                placeholder="Cuéntale a la juventud de Flandes sobre tu labor y causas..."
-                className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3.5 py-2 text-xs"
-              />
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-500 mb-1">
-                  Filiación
-                </label>
-                <select
-                  value={editAffiliationType}
-                  onChange={(e) => setEditAffiliationType(e.target.value as AffiliationType)}
-                  className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs"
-                >
-                  <option value="">Filiación (opcional)</option>
-                  <option value="partido">Partido político</option>
-                  <option value="fundacion">Fundación / Organización</option>
-                  <option value="independiente">Independiente</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-500 mb-1">
-                  Nombre de organización o partido
-                </label>
-                <input
-                  type="text"
-                  value={editAffiliationName}
-                  onChange={(e) => setEditAffiliationName(e.target.value)}
-                  placeholder={
-                    editAffiliationType === 'partido'
-                      ? 'Nombre del partido político'
-                      : editAffiliationType === 'fundacion'
-                      ? 'Nombre de la fundación u org.'
-                      : 'Nombre de lista o colectivo'
-                  }
-                  className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs"
-                />
-              </div>
-            </div>
-
-            {isLeader && (
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-500 mb-1">
-                  Comisión asignada
-                </label>
-                <select
-                  value={editCommissionId}
-                  onChange={(e) => setEditCommissionId(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs"
-                >
-                  <option value="">Sin comisión asignada</option>
-                  {commissions.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-500 mb-1">
-                  Teléfono / WhatsApp
-                </label>
-                <input
-                  type="text"
-                  value={editPhone}
-                  onChange={(e) => setEditPhone(e.target.value)}
-                  placeholder="Ej: 3101234567"
-                  className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs"
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-500 mb-1">
-                  Instagram
-                </label>
-                <input
-                  type="text"
-                  value={editIg}
-                  onChange={(e) => setEditIg(e.target.value)}
-                  placeholder="@usuario o enlace"
-                  className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-[11px] font-semibold text-slate-500 mb-1">
-                Facebook (opcional)
-              </label>
-              <input
-                type="text"
-                value={editFb}
-                onChange={(e) => setEditFb(e.target.value)}
-                placeholder="Usuario o enlace de Facebook"
-                className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs"
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={savingProfile}
-              className="w-full rounded-xl bg-emerald-700 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800 disabled:opacity-60 cursor-pointer"
-            >
-              {savingProfile ? 'Guardando perfil...' : 'Guardar perfil'}
-            </button>
-          </form>
-        </div>
-      )}
-    </div>
+      <MyProfileModal
+        open={profileModalOpen}
+        uid={uid}
+        email={email}
+        fullName={fullName}
+        canEditCommission={can('usuarios.editar')}
+        inSession={inSession}
+        profile={profile}
+        privateRecord={privateRecord}
+        commissions={commissions}
+        commissionId={commissionId}
+        onClose={() => setProfileModalOpen(false)}
+      />
+      </div>
+    </PermissionProvider>
   );
 }
 export default PrivatePortal;

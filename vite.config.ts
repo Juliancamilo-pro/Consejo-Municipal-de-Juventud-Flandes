@@ -1,13 +1,37 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
+function disableViteClientWsPlugin(): Plugin {
+  let isWsDisabled = false;
+  return {
+    name: 'disable-vite-client-ws',
+    apply: 'serve',
+    enforce: 'post',
+    configResolved(config) {
+      isWsDisabled = config.server.ws === false || config.server.hmr === false;
+    },
+    transform(code, id) {
+      if (!isWsDisabled) return null;
+      if (id.includes('vite/dist/client/client.mjs') || id.endsWith('/@vite/client')) {
+        return code.replace(
+          'transport.connect(createHMRHandler(handleMessage));',
+          '/* WebSocket HMR disabled */'
+        );
+      }
+      return null;
+    },
+  };
+}
+
 export default defineConfig(() => {
+  const enableHmr = process.env.ENABLE_HMR === 'true';
   return {
     envPrefix: ['VITE_', 'NEXT_PUBLIC_'],
     plugins: [
+      disableViteClientWsPlugin(),
       react(),
       tailwindcss(),
       VitePWA({
@@ -129,8 +153,9 @@ export default defineConfig(() => {
       },
     },
     server: {
-      hmr: process.env.DISABLE_HMR !== 'true',
-      watch: process.env.DISABLE_HMR === 'true' ? null : {},
+      hmr: enableHmr,
+      ws: enableHmr ? undefined : false,
+      watch: enableHmr ? {} : null,
     },
   };
 });

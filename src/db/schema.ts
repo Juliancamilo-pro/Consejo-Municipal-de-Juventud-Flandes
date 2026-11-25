@@ -426,3 +426,83 @@ export const mediaFiles = pgTable('media_files', {
   uploadedByUid: text('uploaded_by_uid').notNull(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
+
+// Solicitudes de permisos especiales con justificación obligatoria
+export const permissionRequests = pgTable('permission_requests', {
+  id: text('id').primaryKey(),
+  requesterUid: text('requester_uid').notNull(),
+  requesterName: text('requester_name').notNull(),
+  requesterEmail: text('requester_email').notNull(),
+  requesterRoleLabel: text('requester_role_label').notNull(),
+  permissionKey: text('permission_key').notNull(),
+  permissionLabel: text('permission_label').notNull(),
+  targetModule: text('target_module').notNull(),
+  targetCommissionId: text('target_commission_id').notNull().default(''),
+  targetCommissionName: text('target_commission_name').notNull().default(''),
+  reason: text('reason').notNull(),
+  purpose: text('purpose').notNull().default(''),
+  durationType: text('duration_type').notNull().default('temporal'),
+  expiresAt: text('expires_at').notNull().default(''),
+  attachmentUrl: text('attachment_url').notNull().default(''),
+  attachmentName: text('attachment_name').notNull().default(''),
+  status: text('status').notNull().default('pendiente_presidente'),
+  currentStepOrder: integer('current_step_order').notNull().default(1),
+  rejectionReason: text('rejection_reason').notNull().default(''),
+  decidedByName: text('decided_by_name').notNull().default(''),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+// Cadena secuencial obligatoria de aprobación: 1 Presidente -> 2 Vicepresidente -> 3 Secretario
+export const permissionApprovalSteps = pgTable('permission_approval_steps', {
+  id: text('id').primaryKey(),
+  requestId: text('request_id').notNull(),
+  stepOrder: integer('step_order').notNull(),
+  approverRole: text('approver_role').notNull(),
+  expectedApproverUid: text('expected_approver_uid').notNull().default(''),
+  expectedApproverName: text('expected_approver_name').notNull().default(''),
+  delegatedFromUid: text('delegated_from_uid').notNull().default(''),
+  delegatedReason: text('delegated_reason').notNull().default(''),
+  status: text('status').notNull().default('pendiente'),
+  decidedByUid: text('decided_by_uid').notNull().default(''),
+  decidedByName: text('decided_by_name').notNull().default(''),
+  comment: text('comment').notNull().default(''),
+  reminderSentAt: text('reminder_sent_at').notNull().default(''),
+  decidedAt: text('decided_at').notNull().default(''),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+// Permisos especiales otorgados tras completar la cadena 1 -> 2 -> 3
+export const grantedPermissions = pgTable('granted_permissions', {
+  id: text('id').primaryKey(),
+  requestId: text('request_id').notNull(),
+  userUid: text('user_uid').notNull(),
+  userName: text('user_name').notNull(),
+  userEmail: text('user_email').notNull(),
+  permissionKey: text('permission_key').notNull(),
+  permissionLabel: text('permission_label').notNull(),
+  targetModule: text('target_module').notNull(),
+  targetCommissionId: text('target_commission_id').notNull().default(''),
+  durationType: text('duration_type').notNull().default('temporal'),
+  expiresAt: text('expires_at').notNull().default(''),
+  active: boolean('active').notNull().default(true),
+  revokedAt: text('revoked_at').notNull().default(''),
+  revokedByUid: text('revoked_by_uid').notNull().default(''),
+  revokedByName: text('revoked_by_name').notNull().default(''),
+  revocationReason: text('revocation_reason').notNull().default(''),
+  grantedAt: timestamp('granted_at').defaultNow().notNull(),
+});
+
+// Notificaciones internas persistentes del portal
+export const notifications = pgTable('notifications', {
+  id: text('id').primaryKey(),
+  userUid: text('user_uid').notNull(),
+  type: text('type').notNull().default('general'),
+  title: text('title').notNull(),
+  message: text('message').notNull(),
+  linkModule: text('link_module').notNull().default(''),
+  relatedId: text('related_id').notNull().default(''),
+  read: boolean('read').notNull().default(false),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+

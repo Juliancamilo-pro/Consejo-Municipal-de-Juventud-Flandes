@@ -1,12 +1,15 @@
 import React, { useMemo, useState } from 'react';
-import { BellRing, Calendar, CalendarDays, List } from 'lucide-react';
+import { BellRing, Calendar, CalendarDays, FileSpreadsheet, List } from 'lucide-react';
+import { exportStyledWorkbook } from '../../lib/excelExport';
 import type { Commitment, CouncilSession, NewsEvent } from '../../types/cmj';
+import { useToast } from '../ToastProvider';
 
 interface AgendaEntry {
   id: string;
   dateIso: string;
   title: string;
   kind: string;
+  category: 'session' | 'event' | 'commitment';
   sub: string;
   tone: 'blue' | 'emerald' | 'amber';
 }
@@ -20,7 +23,11 @@ export function AgendaCalendarModule({
   newsEvents: NewsEvent[];
   commitments?: Commitment[];
 }) {
+  const { showToast } = useToast();
   const [viewMode, setViewMode] = useState<'month' | 'week' | 'list'>('month');
+  const [categoryFilter, setCategoryFilter] = useState<'all' | 'session' | 'event' | 'commitment'>('all');
+  const [exporting, setExporting] = useState(false);
+
   const today = new Date();
   const todayIso = today.toISOString().slice(0, 10);
   const [yearMonth, setYearMonth] = useState(
@@ -35,6 +42,7 @@ export function AgendaCalendarModule({
         dateIso: s.dateIso,
         title: s.title,
         kind: `Sesión ${s.sessionType}`,
+        category: 'session',
         sub: `${s.timeRange || ''} · ${s.location}`,
         tone: 'blue',
       })
@@ -47,6 +55,7 @@ export function AgendaCalendarModule({
           dateIso: n.eventDate || '',
           title: n.title,
           kind: 'Evento Público',
+          category: 'event',
           sub: n.location || 'Flandes',
           tone: 'emerald',
         })
@@ -59,12 +68,15 @@ export function AgendaCalendarModule({
           dateIso: c.dueDate || '',
           title: `Vence: ${c.title}`,
           kind: 'Compromiso',
+          category: 'commitment',
           sub: `Responsable: ${c.responsibleName}`,
           tone: 'amber',
         })
       );
-    return combined.sort((a, b) => a.dateIso.localeCompare(b.dateIso));
-  }, [sessions, newsEvents, commitments]);
+    return combined
+      .filter((item) => categoryFilter === 'all' || item.category === categoryFilter)
+      .sort((a, b) => a.dateIso.localeCompare(b.dateIso));
+  }, [sessions, newsEvents, commitments, categoryFilter]);
 
   const upcoming7Days = useMemo(() => {
     const limitDate = new Date(today.getTime() + 7 * 86400000).toISOString().slice(0, 10);
@@ -87,10 +99,57 @@ export function AgendaCalendarModule({
   const daysInMonth = new Date(y, m, 0).getDate();
   const firstWeekday = (new Date(y, m - 1, 1).getDay() + 6) % 7;
 
+  const monthItems = useMemo(
+    () => items.filter((it) => it.dateIso.startsWith(yearMonth)),
+    [items, yearMonth]
+  );
+
   const badgeTone = (tone: AgendaEntry['tone']) => {
     if (tone === 'emerald') return 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300';
     if (tone === 'amber') return 'bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300';
     return 'bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-cyan-300';
+  };
+
+  const handleExportAgenda = async () => {
+    if (items.length === 0) {
+      showToast('No hay actividades en la agenda para exportar', 'info');
+      return;
+    }
+    setExporting(true);
+    try {
+      await exportStyledWorkbook({
+        fileName: `Agenda_CMJ_${yearMonth}.xlsx`,
+        reportTitle: 'Agenda y Cronograma Oficial CMJ',
+        moduleName: 'Agenda y Calendario',
+        sheets: [
+          {
+            name: 'Cronograma',
+            title: 'Actividades, Sesiones y Compromisos Programados',
+            kpis: [
+              { label: 'Total actividades', value: items.length },
+              { label: 'Próximos 7 días', value: upcoming7Days.length },
+            ],
+            columns: [
+              { key: 'fecha', header: 'Fecha', type: 'date', minWidth: 14, maxWidth: 16 },
+              { key: 'tipo', header: 'Tipo', type: 'text', minWidth: 18, maxWidth: 24 },
+              { key: 'titulo', header: 'Actividad / Sesión', type: 'text', minWidth: 28, maxWidth: 46, wrap: true },
+              { key: 'detalle', header: 'Horario / Lugar / Responsable', type: 'text', minWidth: 26, maxWidth: 44, wrap: true },
+            ],
+            rows: items.map((it) => ({
+              fecha: it.dateIso,
+              tipo: it.kind,
+              titulo: it.title,
+              detalle: it.sub,
+            })),
+          },
+        ],
+      });
+      showToast('Agenda exportada a Excel', 'success');
+    } catch {
+      showToast('No se pudo exportar la agenda', 'error');
+    } finally {
+      setExporting(false);
+    }
   };
 
   return (
@@ -110,11 +169,11 @@ export function AgendaCalendarModule({
         </div>
       )}
 
-      <div className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 space-y-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="cmj-card p-6 space-y-5">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
           <div>
             <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
-              <Calendar className="h-5 w-5 text-blue-600" /> Agenda y Cronograma CMJ
+              <Calendar className="h-5 w-5 text-emerald-700 dark:text-emerald-400" /> Agenda y Cronograma CMJ
             </h2>
             <p className="text-xs text-slate-500">
               Sesiones programadas, eventos territoriales y vencimientos de compromisos.
@@ -122,19 +181,35 @@ export function AgendaCalendarModule({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            <select
+              aria-label="Filtrar tipo de actividad"
+              value={categoryFilter}
+              onChange={(e) =>
+                setCategoryFilter(e.target.value as 'all' | 'session' | 'event' | 'commitment')
+              }
+              className="min-h-[38px] rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-1.5 text-xs"
+            >
+              <option value="all">Todas las actividades</option>
+              <option value="session">Solo sesiones</option>
+              <option value="event">Solo eventos</option>
+              <option value="commitment">Compromisos por vencer</option>
+            </select>
+
             {viewMode === 'month' && (
               <input
                 type="month"
+                aria-label="Seleccionar mes"
                 value={yearMonth}
                 onChange={(e) => setYearMonth(e.target.value)}
-                className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-1.5 text-xs"
+                className="min-h-[38px] rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-1.5 text-xs"
               />
             )}
+
             <div className="inline-flex rounded-xl bg-slate-100 dark:bg-slate-800 p-1">
               <button
                 type="button"
                 onClick={() => setViewMode('month')}
-                className={`rounded-lg px-3 py-1 text-xs font-semibold cursor-pointer ${
+                className={`min-h-[32px] rounded-lg px-3 py-1 text-xs font-semibold cursor-pointer ${
                   viewMode === 'month' ? 'bg-white dark:bg-slate-900 shadow-sm' : ''
                 }`}
               >
@@ -143,7 +218,7 @@ export function AgendaCalendarModule({
               <button
                 type="button"
                 onClick={() => setViewMode('week')}
-                className={`rounded-lg px-3 py-1 text-xs font-semibold inline-flex items-center gap-1 cursor-pointer ${
+                className={`min-h-[32px] rounded-lg px-3 py-1 text-xs font-semibold inline-flex items-center gap-1 cursor-pointer ${
                   viewMode === 'week' ? 'bg-white dark:bg-slate-900 shadow-sm' : ''
                 }`}
               >
@@ -152,60 +227,97 @@ export function AgendaCalendarModule({
               <button
                 type="button"
                 onClick={() => setViewMode('list')}
-                className={`rounded-lg px-3 py-1 text-xs font-semibold inline-flex items-center gap-1 cursor-pointer ${
+                className={`min-h-[32px] rounded-lg px-3 py-1 text-xs font-semibold inline-flex items-center gap-1 cursor-pointer ${
                   viewMode === 'list' ? 'bg-white dark:bg-slate-900 shadow-sm' : ''
                 }`}
               >
                 <List className="h-3.5 w-3.5" /> Lista
               </button>
             </div>
+
+            <button
+              type="button"
+              disabled={exporting}
+              onClick={handleExportAgenda}
+              className="min-h-[38px] inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/70 dark:bg-emerald-950/30 px-3 py-1.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300 cursor-pointer whitespace-nowrap"
+            >
+              <FileSpreadsheet className="h-3.5 w-3.5" />
+              {exporting ? 'Exportando...' : 'Excel (.xlsx)'}
+            </button>
           </div>
         </div>
 
         {viewMode === 'month' ? (
-          <div className="grid grid-cols-7 gap-1.5 text-xs">
-            {['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'].map((d) => (
-              <div key={d} className="p-2 text-center font-bold text-slate-500">
-                {d}
-              </div>
-            ))}
-            {Array.from({ length: firstWeekday }).map((_, i) => (
-              <div key={`pad-${i}`} className="min-h-[76px] rounded-xl bg-slate-50/40 dark:bg-slate-950/30" />
-            ))}
-            {Array.from({ length: daysInMonth }).map((_, idx) => {
-              const dayNum = idx + 1;
-              const dateStr = `${yearMonth}-${String(dayNum).padStart(2, '0')}`;
-              const dayItems = items.filter((it) => it.dateIso === dateStr);
-              const isToday = dateStr === todayIso;
-              return (
-                <div
-                  key={dayNum}
-                  className={`min-h-[84px] rounded-xl border p-1.5 space-y-1 ${
-                    isToday
-                      ? 'border-blue-500 bg-blue-50/30 dark:bg-blue-950/20'
-                      : 'border-slate-200/80 dark:border-slate-800'
-                  }`}
-                >
-                  <span
-                    className={`font-mono-num text-[11px] font-bold ${
-                      isToday ? 'text-blue-600 dark:text-cyan-400' : 'text-slate-500'
+          <>
+            {/* Vista móvil cronológica del mes seleccionado */}
+            <div className="md:hidden space-y-2.5">
+              {monthItems.length === 0 ? (
+                <p className="text-xs text-slate-500 py-8 text-center">
+                  No hay actividades programadas en {yearMonth}.
+                </p>
+              ) : (
+                monthItems.map((it) => (
+                  <div
+                    key={it.id}
+                    className="rounded-2xl border border-slate-200 dark:border-slate-800 p-3.5 flex items-start justify-between gap-3"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 font-mono-num">
+                        {it.dateIso} · {it.kind}
+                      </p>
+                      <p className="text-sm font-bold text-slate-900 dark:text-white">{it.title}</p>
+                      <p className="text-xs text-slate-500">{it.sub}</p>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Vista escritorio en cuadrícula mensual */}
+            <div className="hidden md:grid grid-cols-7 gap-1.5 text-xs">
+              {['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'].map((d) => (
+                <div key={d} className="p-2 text-center font-bold text-slate-500">
+                  {d}
+                </div>
+              ))}
+              {Array.from({ length: firstWeekday }).map((_, i) => (
+                <div key={`pad-${i}`} className="min-h-[76px] rounded-xl bg-slate-50/40 dark:bg-slate-950/30" />
+              ))}
+              {Array.from({ length: daysInMonth }).map((_, idx) => {
+                const dayNum = idx + 1;
+                const dateStr = `${yearMonth}-${String(dayNum).padStart(2, '0')}`;
+                const dayItems = items.filter((it) => it.dateIso === dateStr);
+                const isToday = dateStr === todayIso;
+                return (
+                  <div
+                    key={dayNum}
+                    className={`min-h-[84px] rounded-xl border p-1.5 space-y-1 ${
+                      isToday
+                        ? 'border-emerald-600 bg-emerald-50/30 dark:bg-emerald-950/20'
+                        : 'border-slate-200/80 dark:border-slate-800'
                     }`}
                   >
-                    {dayNum}
-                  </span>
-                  {dayItems.map((it) => (
-                    <div
-                      key={it.id}
-                      className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold truncate ${badgeTone(it.tone)}`}
-                      title={`${it.kind}: ${it.title} (${it.sub})`}
+                    <span
+                      className={`font-mono-num text-[11px] font-bold ${
+                        isToday ? 'text-emerald-700 dark:text-emerald-400' : 'text-slate-500'
+                      }`}
                     >
-                      {it.title}
-                    </div>
-                  ))}
-                </div>
-              );
-            })}
-          </div>
+                      {dayNum}
+                    </span>
+                    {dayItems.map((it) => (
+                      <div
+                        key={it.id}
+                        className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold truncate ${badgeTone(it.tone)}`}
+                        title={`${it.kind}: ${it.title} (${it.sub})`}
+                      >
+                        {it.title}
+                      </div>
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+          </>
         ) : viewMode === 'week' ? (
           <div className="grid grid-cols-1 md:grid-cols-7 gap-2.5 text-xs">
             {weekDays.map((day) => {
@@ -216,7 +328,7 @@ export function AgendaCalendarModule({
                   key={day.iso}
                   className={`rounded-2xl border p-3 min-h-[140px] space-y-2 ${
                     isToday
-                      ? 'border-blue-500 bg-blue-50/30 dark:bg-blue-950/20'
+                      ? 'border-emerald-600 bg-emerald-50/30 dark:bg-emerald-950/20'
                       : 'border-slate-200 dark:border-slate-800'
                   }`}
                 >
@@ -245,13 +357,13 @@ export function AgendaCalendarModule({
             {items.map((it) => (
               <div key={it.id} className="py-3 flex items-center justify-between gap-4">
                 <div>
-                  <p className="text-[11px] font-semibold text-blue-600 dark:text-cyan-400">
+                  <p className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400">
                     {it.kind} · <span className="font-mono-num">{it.dateIso}</span>
                   </p>
                   <p className="text-sm font-bold text-slate-900 dark:text-white">{it.title}</p>
                   <p className="text-xs text-slate-500">{it.sub}</p>
                 </div>
-                <span className={`rounded-lg px-2.5 py-1 text-[10px] font-bold ${badgeTone(it.tone)}`}>
+                <span className={`rounded-lg px-2.5 py-1 text-[10px] font-bold shrink-0 ${badgeTone(it.tone)}`}>
                   {it.kind}
                 </span>
               </div>

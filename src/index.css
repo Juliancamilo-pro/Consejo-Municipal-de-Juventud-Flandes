@@ -6,11 +6,37 @@
     --font-display: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
     --font-body: 'DM Sans', system-ui, -apple-system, sans-serif;
     --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+
+    /* Semantic surface & institutional tokens */
+    --cmj-bg: #f8fafc;
+    --cmj-surface: #ffffff;
+    --cmj-surface-muted: #f1f5f9;
+    --cmj-border: #e2e8f0;
+    --cmj-text: #0f172a;
+    --cmj-text-muted: #475569;
+    --cmj-accent: #047857;
+    --cmj-accent-strong: #065f46;
+    --cmj-radius-card: 1.25rem;
+    --cmj-radius-control: 0.75rem;
+    --cmj-shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04), 0 6px 20px -8px rgba(15, 23, 42, 0.08);
+  }
+
+  .dark {
+    --cmj-bg: #070b14;
+    --cmj-surface: #0f172a;
+    --cmj-surface-muted: #1e293b;
+    --cmj-border: #1e293b;
+    --cmj-text: #f8fafc;
+    --cmj-text-muted: #94a3b8;
+    --cmj-accent: #10b981;
+    --cmj-accent-strong: #059669;
+    --cmj-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.25), 0 8px 24px -10px rgba(0, 0, 0, 0.5);
   }
 
   html {
     scroll-behavior: smooth;
     font-family: var(--font-body);
+    -webkit-tap-highlight-color: transparent;
   }
 
   h1, h2, h3, h4, .font-display {
@@ -20,6 +46,15 @@
   .font-mono-num {
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
+  }
+
+  button:focus-visible,
+  a:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible {
+    outline: 2px solid #059669;
+    outline-offset: 2px;
   }
 }
 
@@ -31,10 +66,17 @@
   text-wrap: balance;
 }
 
+.cmj-card {
+  background-color: var(--cmj-surface);
+  border: 1px solid var(--cmj-border);
+  border-radius: var(--cmj-radius-card);
+  box-shadow: var(--cmj-shadow-card);
+}
+
 /* Custom subtle scrollbars */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
 }
 
 ::-webkit-scrollbar-track {
@@ -47,7 +89,7 @@
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(100, 116, 139, 0.45);
+  background: rgba(100, 116, 139, 0.48);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -62,7 +104,7 @@
   }
 }
 
-/* Print support for official letter templates and certificates */
+/* Print support for official letter templates, actas, and spreadsheets */
 @media print {
   .no-print {
     display: none !important;

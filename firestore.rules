@@ -670,5 +670,28 @@ service cloud.firestore {
       allow update: if isValidId(settingId) && isValidPortalSettings(incoming()) && isLeadership() && incoming().updatedAt == request.time;
       allow delete: if isValidId(settingId) && isLeadership();
     }
+
+    match /permission_requests/{reqId} {
+      allow get, list: if isCouncilor() && (isLeadership() || resource.data.requesterUid == request.auth.uid);
+      allow create: if isValidId(reqId) && isCouncilor() && incoming().requesterUid == request.auth.uid;
+      allow update: if isLeadership() && incoming().requesterUid == existing().requesterUid;
+      allow delete: if false;
+    }
+
+    match /permission_approval_steps/{stepId} {
+      allow get, list: if isLeadership() || (isCouncilor() && resource.data.expectedApproverUid == request.auth.uid);
+      allow create, update, delete: if false;
+    }
+
+    match /granted_permissions/{grantId} {
+      allow get, list: if isLeadership() || (isCouncilor() && resource.data.userUid == request.auth.uid);
+      allow create, update, delete: if false;
+    }
+
+    match /notifications/{notifId} {
+      allow get, list: if isCouncilor() && resource.data.recipientUid == request.auth.uid;
+      allow update: if isCouncilor() && resource.data.recipientUid == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['read']);
+      allow create, delete: if false;
+    }
   }
 }

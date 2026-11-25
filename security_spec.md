@@ -1,22 +1,29 @@
 # Security Specification — Portal CMJ Flandes
 
 ## 1. Data Invariants & Role Matrix
-1. **Zero PII in public collections**: `public_councilors` exposes only public names, role labels, commissions, bios, and social handles. `allowed_accounts/{emailHash}` uses SHA-256 hex IDs with `allow list: if false` so emails cannot be enumerated.
-2. **Role Hierarchy (no privileged escalation)**:
-   - Leadership (`Presidente`, `Vicepresidente`, `Secretario`): full read/write management of users, commissions, sessions, votes, documents, portal content, and audit logs.
-   - `Consejero`: can update own profile (`bio`, `photoUrl`, `instagram`, `facebook`, `fullName`), self-check-in attendance on active sessions, cast 1 ballot per open vote, manage tasks in commissions, upload evidence/documents (internal/pending approval), submit ideas, and update own commitments.
-3. **Self-Healing Account Provisioning**: An authenticated user in `allowed_accounts/{emailHash}` (or the bootstrap Secretary `trujillogordilooo@gmail.com`) can repair missing `roles/{uid}`, `public_councilors/{uid}`, and `councilor_private/{uid}` records ONLY for their own UID and matching their allowlisted `accessTier` / `roleLabel`.
-4. **Immutable Audit Trail**: `audit_logs/{logId}` is append-only (`allow update, delete: if false`) with `actorUid == request.auth.uid`.
-5. **Storage Rules**: Public reads for published assets; authenticated password-provider writes bounded by strict file size and MIME type limits (`image/*` <= 15 MB, `video/*` <= 150 MB, documents <= 30 MB); deletions allowed for owners and leadership.
+1. **Zero PII in public collections**: `public_councilors` exposes only public names, role labels, commissions, bios, and social handles. Survey PII (`survey_responses` emails) and contact inbox (`contact_messages`) are locked strictly behind granular server permissions (`encuestas.ver_respuestas`, `buzon.responder`).
+2. **Granular Role Hierarchy & Dynamic Coordinator Scope (`src/lib/permissions.ts`)**:
+   - **`Presidente`**: full operational, approval, signature, presidential assignment (`usuarios.asignar_presidencia`), credential rotation, sample purge, and audit oversight.
+   - **`Vicepresidente`**: full commission supervision, validations, commitments, votes, portal moderation, and approval step 2/3. Cannot assign `Presidente`, cannot purge database samples, and cannot modify audit logs.
+   - **`Secretario`**: sessions, attendance, actas drafting/publishing, official letter templates, surveys, citizen inbox responses, documents, and final approval step 3/3. Cannot assign `Presidente` or rotate credentials unless granted.
+   - **`Consejero`**: self-check-in attendance, voting (1 ballot per open vote), own commitments, bank of ideas, own profile, and special permission requests.
+   - **Dynamic Commission Coordinator (`commissions.coordinatorUid`)**: any active councilor assigned as coordinator inherits scoped privileges (`comision.editar_propia`, `comision.miembros_gestionar`, `comision.tareas_gestionar`, `comision.reportes_exportar`, `plan_trabajo.editar`, `documentos.subir`, `galeria.gestionar`) strictly scoped to their `commissionId`.
+3. **Sequential 3-Step Special Permission Workflow**:
+   - Path: `1. Presidente` (`pendiente_presidente`) -> `2. Vicepresidente` (`pendiente_vicepresidente`) -> `3. Secretario` (`pendiente_secretario`) -> `aprobada`.
+   - Mandatory non-gibberish justification (>= 100 chars, anti-repetition check, coherent word diversity).
+   - **Anti-Self-Escalation & Anti-Self-Approval**: users cannot edit their own role/tier, cannot approve/decide/delegate/revoke their own request or step (`decidedByUid != requesterUid`), and automatic grants are written server-side into `granted_permissions` with automatic deactivation when `expiresAt` passes or when user is suspended/deleted.
+4. **Immutable Audit Trail**: `audit_logs` is strictly append-only (`update`/`delete` blocked) with server-verified `actorUid`.
+5. **Storage Rules**: Authenticated uploads bounded by strict size and MIME type limits (`image/*` <= 15 MB, `video/*` <= 150 MB, documents <= 30 MB).
 
 ## 2. Adversarial Payloads Verified Blocked
-1. Unauthenticated `list` on `/allowed_accounts` -> `PERMISSION_DENIED`
-2. Unauthenticated `get` on `/portal_security/leader_config` -> `PERMISSION_DENIED`
-3. `Consejero` creating/updating `/roles/{uid}` with `accessTier: "tier_3_sec"` -> `PERMISSION_DENIED`
-4. `Consejero` modifying `accessTier` or `roleLabel` in `/councilor_private/{uid}` -> `PERMISSION_DENIED`
-5. Shadow field injection on `/news_events/{id}` or `/commission_tasks/{id}` -> `PERMISSION_DENIED`
-6. Unauthenticated `list` on `/documents` without `visibility == 'publico'` -> `PERMISSION_DENIED`
-7. `Consejero` casting a second vote on `/votes/{voteId}` -> `PERMISSION_DENIED`
-8. Spoofed `actorUid` on `/audit_logs/{id}` -> `PERMISSION_DENIED`
-9. Oversized or invalid document IDs -> `PERMISSION_DENIED`
-10. Public caller setting `status: 'publicado'` or `approvedByPresidente: true` -> `PERMISSION_DENIED`
+1. Unauthenticated access to `/api/private/state`, `/api/permissions/*`, or `/api/survey-responses` -> `401`/`403`
+2. `Consejero` calling privileged routes (`POST /api/councilors`, `PATCH /api/portal-settings`, `PATCH /api/actas/:id` status `aprobada`) -> `403 PERMISSION_DENIED_REQUESTABLE`
+3. User attempting self-role escalation (`PATCH /api/councilors/:ownUid` with `roleLabel` or `active`) -> `403`
+4. `Vicepresidente`/`Secretario` attempting to create/edit/delete a `Presidente` account -> `403`
+5. Approver attempting to approve or delegate their own `permission_requests` item -> `403`
+6. Skipping approval order (e.g., `Secretario` deciding a `pendiente_presidente` request) -> `409`
+7. Coordinator modifying another commission (`PATCH /api/commissions/:otherId` or `/members`) -> `403`
+8. Spoofed `actorUid` or modifying/deleting `audit_logs` -> Blocked
+9. Suspended/deleted user retaining commission coordinator privileges or active `granted_permissions` -> Auto-revoked on suspension/deletion
+10. Temporal grant past `expiresAt` -> Auto-deactivated during session resolution
+

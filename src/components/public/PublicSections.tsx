@@ -502,7 +502,7 @@ export function IdentityAndDirectorySection({
                     </div>
 
                     {(affLabel || c.affiliationName) && (
-                      <div className="text-xs text-slate-600 dark:text-slate-300 border-l-2 border-slate-200 dark:border-slate-700 pl-3">
+                      <div className="text-xs text-slate-600 dark:text-slate-300">
                         <span className="font-semibold text-slate-900 dark:text-white">
                           {affLabel || 'Filiación'}
                         </span>

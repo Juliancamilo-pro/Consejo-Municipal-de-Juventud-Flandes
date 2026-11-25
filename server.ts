@@ -4,7 +4,9 @@ import path from 'node:path';
 import express from 'express';
 import { getApiApp } from './src/server/app.ts';
 
-const PORT = Number(process.env.PORT || 3000);
+const portArgIdx = process.argv.indexOf('--port');
+const cliPort = portArgIdx !== -1 ? Number(process.argv[portArgIdx + 1]) : NaN;
+const PORT = Number.isFinite(cliPort) && cliPort > 0 ? cliPort : Number(process.env.PORT || 3000);
 
 async function startServer() {
   const app = getApiApp();
@@ -18,7 +20,9 @@ async function startServer() {
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        hmr: process.env.DISABLE_HMR === 'true' ? false : { server: httpServer },
+        hmr: false,
+        ws: false,
+        watch: null,
       },
       appType: 'spa',
     });

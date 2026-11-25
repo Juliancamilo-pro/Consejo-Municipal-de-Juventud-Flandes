@@ -368,20 +368,29 @@ export function ConfettiBurst({ active }: { active: boolean }) {
 }
 
 export function EmptyState({
+  icon,
   title,
   description,
   actionLabel,
   onAction,
 }: {
+  icon?: React.ComponentType<{ className?: string }> | React.ReactNode;
   title: string;
   description: string;
   actionLabel?: string;
   onAction?: () => void;
 }) {
+  const renderIcon = () => {
+    if (!icon) return <Inbox className="h-6 w-6" />;
+    if (React.isValidElement(icon)) return icon;
+    const IconComp = icon as React.ComponentType<{ className?: string }>;
+    return <IconComp className="h-6 w-6" />;
+  };
+
   return (
     <div className="rounded-3xl border border-dashed border-slate-300 dark:border-slate-700 bg-white/60 dark:bg-slate-900/50 p-10 text-center">
       <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400">
-        <Inbox className="h-6 w-6" />
+        {renderIcon()}
       </div>
       <h4 className="text-base font-semibold text-slate-900 dark:text-white">{title}</h4>
       <p className="mx-auto mt-1.5 max-w-md text-sm text-slate-600 dark:text-slate-400">

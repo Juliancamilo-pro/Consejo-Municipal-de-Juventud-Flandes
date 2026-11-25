@@ -677,17 +677,12 @@ export function PublicMediaAndCivic({
                       {cs.kind === 'encuesta' ? 'Encuesta' : 'Convocatoria'}
                     </span>
                     <span
-                      className={`inline-flex items-center gap-1.5 font-mono-num text-[11px] font-semibold ${
+                      className={`font-mono-num text-[11px] font-semibold ${
                         cs.status === 'abierta'
                           ? 'text-emerald-700 dark:text-emerald-400'
                           : 'text-slate-500 dark:text-slate-400'
                       }`}
                     >
-                      <span
-                        className={`h-1.5 w-1.5 rounded-full ${
-                          cs.status === 'abierta' ? 'bg-emerald-600' : 'bg-slate-400'
-                        }`}
-                      />
                       {cs.status === 'abierta' ? 'Abierta' : 'Cerrada'} · Cierra {cs.deadline}
                     </span>
                   </div>

@@ -2,26 +2,23 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   Archive,
   CheckCircle2,
-  ClipboardCheck,
   Clock,
   FileDown,
   FileSignature,
+  FileSpreadsheet,
   FileText,
   History,
   MessageSquare,
   Plus,
   Printer,
-  QrCode,
   Save,
-  Search,
   Send,
-  ShieldCheck,
   Sparkles,
   Trash2,
   Vote,
 } from 'lucide-react';
 import { ApiRequestError, apiRequest } from '../../lib/apiClient';
-import { isLeadershipTier } from '../../lib/security';
+import { exportStyledWorkbook } from '../../lib/excelExport';
 import type {
   AccessTier,
   ActaStatus,
@@ -32,94 +29,20 @@ import type {
   PublicCouncilor,
   RoleLabel,
 } from '../../types/cmj';
-import { BrandLogo } from '../BrandLogo';
-import { AvatarBadge } from '../public/AvatarBadge';
 import { useToast } from '../ToastProvider';
-import { ConfettiBurst } from '../ui/AnimatedPrimitives';
+import { ConfettiBurst, EmptyState } from '../ui/AnimatedPrimitives';
+import { ConfirmDialog, DataToolbar, PaginationBar } from '../ui/DataTableUI';
+import { ActaCreateModal } from './actas/ActaCreateModal';
+import { ActaDocumentPreview } from './actas/ActaDocumentPreview';
+import { ACTA_TEMPLATES, STATUS_STEPS } from './actas/actasShared';
 import { recordAudit } from './auditHelper';
-
-const STATUS_STEPS: { id: ActaStatus; label: string; badgeCls: string }[] = [
-  { id: 'borrador', label: 'Borrador', badgeCls: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300' },
-  { id: 'revision', label: 'En revisión', badgeCls: 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300' },
-  { id: 'aprobada', label: 'Aprobada', badgeCls: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300' },
-  { id: 'firmada', label: 'Firmada', badgeCls: 'bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-cyan-300' },
-  { id: 'archivada', label: 'Archivada', badgeCls: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300' },
-];
-
-const ACTA_TEMPLATES: {
-  id: string;
-  label: string;
-  titlePrefix: string;
-  agenda: string;
-  developmentIntro: string;
-}[] = [
-  {
-    id: 'plenaria_ordinaria',
-    label: 'Plenaria Ordinaria',
-    titlePrefix: 'Sesión Plenaria Ordinaria CMJ Flandes',
-    agenda:
-      '1. Llamado a lista y verificación de quórum.\n2. Lectura y aprobación del orden del día.\n3. Lectura y aprobación del acta anterior.\n4. Informes de comisiones permanentes.\n5. Proposiciones, votaciones y varios.\n6. Cierre de la sesión.',
-    developmentIntro:
-      'En el municipio de Flandes, Tolima, siendo la hora señalada, se reunieron los consejeros y consejeras municipales de juventud en sesión plenaria ordinaria conforme a la Ley Estatutaria 1622 de 2013 y la Ley 1885 de 2018.',
-  },
-  {
-    id: 'extraordinaria',
-    label: 'Sesión Extraordinaria',
-    titlePrefix: 'Sesión Plenaria Extraordinaria CMJ Flandes',
-    agenda:
-      '1. Verificación de quórum.\n2. Lectura del decreto o convocatoria extraordinaria.\n3. Punto único de deliberación y votación.\n4. Asignación de compromisos y cierre.',
-    developmentIntro:
-      'Previa convocatoria formal de la Mesa Directiva del Consejo Municipal de Juventudes de Flandes, Tolima, se instaló sesión extraordinaria para atender los asuntos urgentes del orden del día.',
-  },
-  {
-    id: 'comision',
-    label: 'Sesión de Comisión',
-    titlePrefix: 'Mesa de Trabajo de Comisión CMJ',
-    agenda:
-      '1. Verificación de integrantes de la comisión.\n2. Seguimiento al plan de trabajo y tareas asignadas.\n3. Formulación de propuestas e iniciativas territoriales.\n4. Compromisos y fecha de próxima mesa.',
-    developmentIntro:
-      'Los integrantes de la comisión permanente del CMJ Flandes se reunieron con el propósito de avanzar en las metas estratégicas de su eje temático juvenil.',
-  },
-];
-
-function ActaQrSvg({ code }: { code: string }) {
-  const cells = useMemo(() => {
-    const size = 11;
-    const grid: boolean[] = [];
-    let seed = 13;
-    for (let i = 0; i < code.length; i++) seed += code.charCodeAt(i) * (i + 5);
-    for (let r = 0; r < size; r++) {
-      for (let c = 0; c < size; c++) {
-        const corner =
-          (r < 3 && c < 3) || (r < 3 && c >= size - 3) || (r >= size - 3 && c < 3);
-        const val = corner || ((seed + r * 19 + c * 29 + r * c) % 3 !== 0);
-        grid.push(val);
-      }
-    }
-    return grid;
-  }, [code]);
-
-  return (
-    <svg
-      viewBox="0 0 110 110"
-      className="h-20 w-20 rounded-xl bg-white p-1.5 border border-slate-300 shrink-0"
-      aria-label={`Sello QR de verificación ${code}`}
-    >
-      {cells.map((filled, idx) => {
-        if (!filled) return null;
-        const r = Math.floor(idx / 11);
-        const c = idx % 11;
-        return <rect key={idx} x={c * 10 + 1} y={r * 10 + 1} width="8" height="8" rx="1.2" fill="#0f172a" />;
-      })}
-    </svg>
-  );
-}
+import { PermissionDeniedBanner, usePermissions } from './PermissionGate';
 
 export function ActasModule({
   uid,
   actorName,
   actorRoleLabel,
-  accessTier,
+  accessTier: _accessTier,
   actas,
   sessions,
   votes,
@@ -141,16 +64,24 @@ export function ActasModule({
   onClearPreselectedSession?: () => void;
 }) {
   const { showToast } = useToast();
-  const isLeader = isLeadershipTier(accessTier);
+  const { can } = usePermissions();
+  const canCreateActa = can('actas.crear');
+  const canEditActa = can('actas.editar');
+  const canApproveActa = can('actas.aprobar');
+  const canSignActa = can('actas.firmar');
+  const canDeleteActa = can('actas.eliminar');
+  const canExportActas = can('actas.exportar');
 
   const [selectedActaId, setSelectedActaId] = useState<string>(actas[0]?.id || '');
   const [searchText, setSearchText] = useState('');
   const [yearFilter, setYearFilter] = useState<string>('todos');
   const [statusFilter, setStatusFilter] = useState<string>('todos');
   const [commissionFilter, setCommissionFilter] = useState<string>('todas');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(6);
   const [confettiKey, setConfettiKey] = useState(0);
 
-  // Creación rápida de nueva acta
+  // Creación rápida en modal
   const [creatingOpen, setCreatingOpen] = useState(false);
   const [newTemplateId, setNewTemplateId] = useState('plenaria_ordinaria');
   const [newTitle, setNewTitle] = useState('');
@@ -160,6 +91,10 @@ export function ActasModule({
   const [newDate, setNewDate] = useState(new Date().toISOString().slice(0, 10));
   const [newLocation, setNewLocation] = useState('Recinto CMJ Flandes, Tolima');
   const [creating, setCreating] = useState(false);
+
+  // Confirmación eliminar
+  const [deleteTarget, setDeleteTarget] = useState<PortalActa | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   // Editor de acta seleccionada
   const selectedActa = useMemo(
@@ -252,6 +187,11 @@ export function ActasModule({
       );
     });
   }, [actas, searchText, yearFilter, statusFilter, commissionFilter]);
+
+  const paginatedActas = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return filteredActas.slice(start, start + pageSize);
+  }, [filteredActas, page, pageSize]);
 
   const linkedSession = useMemo(
     () => sessions.find((s) => s.id === (editSessionId || selectedActa?.sessionId)) || null,
@@ -399,7 +339,11 @@ export function ActasModule({
       if (res.development) setEditDevelopment(res.development);
       if (res.propositions) setEditPropositions(res.propositions);
       if (res.commitmentsSummary) setEditCommitmentsSummary(res.commitmentsSummary);
-      showToast('Borrador generado con IA', 'success', 'Revisa y ajusta los detalles antes de aprobar.');
+      showToast(
+        'Borrador generado con IA',
+        'success',
+        'Revisa y ajusta los detalles antes de aprobar.'
+      );
     } catch (err) {
       const msg =
         err instanceof ApiRequestError
@@ -454,14 +398,65 @@ export function ActasModule({
     }
   };
 
-  const handleDeleteActa = async (acta: PortalActa) => {
+  const handleConfirmDeleteActa = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
     try {
-      await apiRequest(`/api/actas/${encodeURIComponent(acta.id)}`, { method: 'DELETE' });
-      if (selectedActa?.id === acta.id) setSelectedActaId('');
+      await apiRequest(`/api/actas/${encodeURIComponent(deleteTarget.id)}`, { method: 'DELETE' });
+      if (selectedActa?.id === deleteTarget.id) setSelectedActaId('');
       showToast('Acta eliminada', 'info');
+      setDeleteTarget(null);
     } catch {
       showToast('Sin permisos para eliminar el acta', 'error');
+    } finally {
+      setDeleting(false);
     }
+  };
+
+  const handleExportActasExcel = async () => {
+    await exportStyledWorkbook({
+      fileName: `CMJ_Flandes_Indice_Actas_${new Date().toISOString().slice(0, 10)}.xlsx`,
+      reportTitle: 'Índice Oficial de Actas CMJ Flandes',
+      moduleName: 'Actas Oficiales',
+      generatedBy: actorName,
+      sheets: [
+        {
+          name: 'Actas Oficiales',
+          title: 'Registro Histórico y Trazabilidad de Actas',
+          kpis: [
+            { label: 'Total actas', value: filteredActas.length },
+            {
+              label: 'Firmadas / Archivadas',
+              value: filteredActas.filter((a) => a.status === 'firmada' || a.status === 'archivada').length,
+            },
+          ],
+          columns: [
+            { key: 'consecutivo', header: 'Consecutivo', type: 'text', minWidth: 16 },
+            { key: 'vigencia', header: 'Vigencia', type: 'integer', minWidth: 10 },
+            { key: 'titulo', header: 'Título del Acta', type: 'text', minWidth: 32, wrap: true },
+            { key: 'fecha', header: 'Fecha', type: 'date', minWidth: 13 },
+            { key: 'estado', header: 'Estado', type: 'text', minWidth: 14 },
+            { key: 'comision', header: 'Ámbito / Comisión', type: 'text', minWidth: 22 },
+            { key: 'quorum', header: 'Asistentes', type: 'integer', minWidth: 12 },
+            { key: 'firmas', header: 'Firmas', type: 'integer', minWidth: 10 },
+            { key: 'hash', header: 'Hash Verificación', type: 'text', minWidth: 20 },
+          ],
+          rows: filteredActas.map((a) => ({
+            consecutivo: a.consecutive,
+            vigencia: a.year,
+            titulo: a.title,
+            fecha: a.meetingDate,
+            estado: a.status.toUpperCase(),
+            comision:
+              commissions.find((c) => c.id === a.commissionId)?.name || 'Plenaria General',
+            quorum: a.quorumCount,
+            firmas: a.signatures.length,
+            hash: a.verificationHash || 'Pendiente',
+          })),
+        },
+      ],
+    });
+    showToast('Índice de Actas exportado a Excel', 'success');
   };
 
   const handleExportWord = () => {
@@ -504,15 +499,15 @@ export function ActasModule({
     URL.revokeObjectURL(url);
   };
 
-  const canEditSelected = Boolean(selectedActa && (isLeader || selectedActa.authorUid === uid));
+  const canEditSelected = Boolean(selectedActa && canEditActa);
   const alreadySignedByMe = Boolean(selectedActa?.signatures.some((s) => s.uid === uid));
 
   return (
     <div className="space-y-6">
       <ConfettiBurst key={confettiKey} active={confettiKey > 0} />
 
-      {/* Encabezado y Creación Rápida */}
-      <div className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 space-y-4 no-print">
+      {/* Encabezado y filtros */}
+      <div className="cmj-card p-6 space-y-4 no-print">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
@@ -520,134 +515,53 @@ export function ActasModule({
               Actas Oficiales, Aprobación y Firma Digital
             </h2>
             <p className="text-xs text-slate-500">
-              Redacción estructurada con consecutivo automático, asistente IA institucional, firma digital y archivo histórico.
+              Redacción estructurada con consecutivo automático, asistente IA, firma digital y exportación oficial.
             </p>
           </div>
-          {isLeader && (
-            <button
-              type="button"
-              onClick={() => setCreatingOpen((v) => !v)}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-700 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-800 cursor-pointer"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              {creatingOpen ? 'Cerrar formulario' : 'Nueva acta oficial'}
-            </button>
-          )}
+          <div className="flex flex-wrap items-center gap-2">
+            {canExportActas && (
+              <button
+                type="button"
+                onClick={handleExportActasExcel}
+                className="min-h-[38px] inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 px-3.5 py-2 text-xs font-semibold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 cursor-pointer whitespace-nowrap"
+              >
+                <FileSpreadsheet className="h-3.5 w-3.5" /> Índice Excel
+              </button>
+            )}
+            {canCreateActa ? (
+              <button
+                type="button"
+                onClick={() => setCreatingOpen(true)}
+                className="min-h-[38px] inline-flex items-center gap-1.5 rounded-xl bg-emerald-700 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-800 cursor-pointer whitespace-nowrap"
+              >
+                <Plus className="h-3.5 w-3.5" /> Nueva acta oficial
+              </button>
+            ) : (
+              <PermissionDeniedBanner
+                permission="actas.crear"
+                compact
+                customText="Solo Secretaría/Presidencia o con permiso pueden redactar actas."
+              />
+            )}
+          </div>
         </div>
 
-        {creatingOpen && isLeader && (
-          <form
-            onSubmit={handleCreateActa}
-            className="rounded-2xl border border-emerald-200 dark:border-emerald-900/50 bg-emerald-50/40 dark:bg-slate-950 p-5 space-y-3"
-          >
-            <p className="text-xs font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
-              Crear acta con consecutivo automático ({newYear})
-            </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-              <select
-                value={newTemplateId}
-                onChange={(e) => setNewTemplateId(e.target.value)}
-                className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs"
-              >
-                {ACTA_TEMPLATES.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    Plantilla: {t.label}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={newSessionId}
-                onChange={(e) => {
-                  const sid = e.target.value;
-                  setNewSessionId(sid);
-                  const sess = sessions.find((s) => s.id === sid);
-                  if (sess) {
-                    setNewTitle(`Acta — ${sess.title}`);
-                    setNewDate(sess.dateIso);
-                    setNewLocation(sess.location);
-                  }
-                }}
-                className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs"
-              >
-                <option value="">Vincular sesión (opcional)</option>
-                {sessions.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.dateIso} · {s.title}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={newCommissionId}
-                onChange={(e) => setNewCommissionId(e.target.value)}
-                className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs"
-              >
-                <option value="">Plenaria General CMJ</option>
-                {commissions.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-              <input
-                type="number"
-                value={newYear}
-                onChange={(e) => setNewYear(Number(e.target.value))}
-                min={2020}
-                max={2040}
-                className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs"
-              />
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-              <input
-                type="text"
-                required
-                value={newTitle}
-                onChange={(e) => setNewTitle(e.target.value)}
-                placeholder="Título del acta (ej: Plenaria Ordinaria de Mayo)"
-                className="sm:col-span-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3.5 py-2 text-xs"
-              />
-              <input
-                type="date"
-                value={newDate}
-                onChange={(e) => setNewDate(e.target.value)}
-                className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs"
-              />
-              <input
-                type="text"
-                value={newLocation}
-                onChange={(e) => setNewLocation(e.target.value)}
-                placeholder="Lugar de reunión"
-                className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs"
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={creating}
-              className="rounded-xl bg-emerald-700 px-5 py-2 text-xs font-semibold text-white hover:bg-emerald-800 disabled:opacity-60 cursor-pointer"
-            >
-              {creating ? 'Creando...' : 'Crear borrador de acta'}
-            </button>
-          </form>
-        )}
-
-        {/* Filtros de archivo histórico */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 pt-2 border-t border-slate-100 dark:border-slate-800">
-          <div className="relative">
-            <Search className="h-3.5 w-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              type="search"
-              value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
-              placeholder="Buscar texto o consecutivo..."
-              className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 pl-8 pr-3 py-2 text-xs"
-            />
-          </div>
+        <DataToolbar
+          search={searchText}
+          onSearchChange={(v) => {
+            setSearchText(v);
+            setPage(1);
+          }}
+          searchPlaceholder="Buscar texto, consecutivo o acuerdo..."
+        >
           <select
+            aria-label="Filtrar por vigencia"
             value={yearFilter}
-            onChange={(e) => setYearFilter(e.target.value)}
-            className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs"
+            onChange={(e) => {
+              setYearFilter(e.target.value);
+              setPage(1);
+            }}
+            className="min-h-[40px] rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs"
           >
             <option value="todos">Todos los años</option>
             {yearsAvailable.map((y) => (
@@ -657,9 +571,13 @@ export function ActasModule({
             ))}
           </select>
           <select
+            aria-label="Filtrar por estado"
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs"
+            onChange={(e) => {
+              setStatusFilter(e.target.value);
+              setPage(1);
+            }}
+            className="min-h-[40px] rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs"
           >
             <option value="todos">Todos los estados</option>
             {STATUS_STEPS.map((st) => (
@@ -669,9 +587,13 @@ export function ActasModule({
             ))}
           </select>
           <select
+            aria-label="Filtrar por comisión"
             value={commissionFilter}
-            onChange={(e) => setCommissionFilter(e.target.value)}
-            className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs"
+            onChange={(e) => {
+              setCommissionFilter(e.target.value);
+              setPage(1);
+            }}
+            className="min-h-[40px] rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs"
           >
             <option value="todas">Todas las comisiones</option>
             {commissions.map((c) => (
@@ -680,7 +602,7 @@ export function ActasModule({
               </option>
             ))}
           </select>
-        </div>
+        </DataToolbar>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -689,82 +611,93 @@ export function ActasModule({
           <p className="text-xs font-bold uppercase tracking-wider text-slate-500 px-1">
             Archivo de Actas ({filteredActas.length})
           </p>
-          {filteredActas.length === 0 ? (
-            <div className="rounded-3xl border border-dashed border-slate-300 dark:border-slate-700 p-8 text-center text-xs text-slate-500">
-              No hay actas registradas que coincidan con el filtro.
-            </div>
+          {paginatedActas.length === 0 ? (
+            <EmptyState
+              icon={FileText}
+              title="Sin actas coincidentes"
+              description="Ajusta los filtros o crea una nueva acta oficial."
+            />
           ) : (
-            filteredActas.map((a) => {
-              const stMeta = STATUS_STEPS.find((s) => s.id === a.status) || STATUS_STEPS[0];
-              const isSelected = selectedActa?.id === a.id;
-              return (
-                <div
-                  key={a.id}
-                  onClick={() => setSelectedActaId(a.id)}
-                  className={`rounded-2xl border p-4 cursor-pointer transition-colors space-y-2 ${
-                    isSelected
-                      ? 'border-emerald-600 bg-emerald-50/60 dark:bg-emerald-950/25'
-                      : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300 dark:hover:border-slate-700'
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-mono-num text-[11px] font-bold text-emerald-700 dark:text-emerald-400">
-                      {a.consecutive}
-                    </span>
-                    <span className={`rounded-lg px-2 py-0.5 text-[10px] font-bold ${stMeta.badgeCls}`}>
-                      {stMeta.label}
-                    </span>
-                  </div>
-                  <p className="text-sm font-bold text-slate-900 dark:text-white line-clamp-2">
-                    {a.title}
-                  </p>
-                  <div className="flex items-center justify-between text-[11px] text-slate-500">
-                    <span>{a.meetingDate || 'Sin fecha'}</span>
-                    <span>
-                      {a.signatures.length} firma{a.signatures.length === 1 ? '' : 's'}
-                    </span>
-                  </div>
-                </div>
-              );
-            })
+            <div className="space-y-2">
+              {paginatedActas.map((a) => {
+                const stMeta = STATUS_STEPS.find((s) => s.id === a.status) || STATUS_STEPS[0];
+                const isSelected = selectedActa?.id === a.id;
+                return (
+                  <button
+                    key={a.id}
+                    type="button"
+                    onClick={() => setSelectedActaId(a.id)}
+                    className={`w-full text-left rounded-2xl border p-4 cursor-pointer transition-colors space-y-2 ${
+                      isSelected
+                        ? 'border-emerald-600 bg-emerald-50/60 dark:bg-emerald-950/25'
+                        : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hover:border-slate-300 dark:hover:border-slate-700'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-mono-num text-[11px] font-bold text-emerald-700 dark:text-emerald-400">
+                        {a.consecutive}
+                      </span>
+                      <span className={`rounded-lg px-2 py-0.5 text-[10px] font-bold ${stMeta.badgeCls}`}>
+                        {stMeta.label}
+                      </span>
+                    </div>
+                    <p className="text-sm font-bold text-slate-900 dark:text-white line-clamp-2">
+                      {a.title}
+                    </p>
+                    <div className="flex items-center justify-between text-[11px] text-slate-500">
+                      <span>{a.meetingDate || 'Sin fecha'}</span>
+                      <span>
+                        {a.signatures.length} firma{a.signatures.length === 1 ? '' : 's'}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+              <PaginationBar
+                totalItems={filteredActas.length}
+                page={page}
+                pageSize={pageSize}
+                onPageChange={setPage}
+                onPageSizeChange={setPageSize}
+                pageSizeOptions={[6, 12, 24]}
+              />
+            </div>
           )}
         </div>
 
         {/* Editor y Vista Oficial Imprimible */}
         <div className="lg:col-span-8 space-y-5">
           {!selectedActa ? (
-            <div className="rounded-3xl border border-dashed border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 p-12 text-center space-y-2 no-print">
-              <FileText className="h-8 w-8 mx-auto text-slate-400" />
-              <p className="text-sm font-bold text-slate-700 dark:text-slate-200">
-                Selecciona o crea un acta para comenzar
-              </p>
-              <p className="text-xs text-slate-500">
-                Podrás vincular la asistencia de una sesión, generar borrador asistido por IA y firmar digitalmente.
-              </p>
-            </div>
+            <EmptyState
+              icon={FileText}
+              title="Selecciona o crea un acta para comenzar"
+              description="Podrás vincular la asistencia de una sesión, generar borrador con IA y firmar digitalmente."
+            />
           ) : (
             <>
               {/* Barra de Flujo de Estados y Acciones */}
-              <div className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 space-y-4 no-print">
+              <div className="cmj-card p-5 space-y-4 no-print">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex flex-wrap items-center gap-1.5">
                     {STATUS_STEPS.map((st, idx) => {
                       const activeIdx = STATUS_STEPS.findIndex((s) => s.id === selectedActa.status);
                       const passed = idx <= activeIdx;
+                      const requiresApproval = st.id === 'aprobada' || st.id === 'archivada';
+                      const stepAllowed = requiresApproval ? canApproveActa : canEditActa;
                       return (
                         <button
                           key={st.id}
                           type="button"
-                          disabled={!isLeader || saving}
+                          disabled={!stepAllowed || saving}
                           onClick={() => handleSaveActa(st.id)}
-                          title={isLeader ? `Cambiar estado a ${st.label}` : st.label}
-                          className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition-colors ${
+                          title={stepAllowed ? `Cambiar estado a ${st.label}` : st.label}
+                          className={`rounded-lg px-2.5 py-1.5 text-[11px] font-bold transition-colors whitespace-nowrap ${
                             selectedActa.status === st.id
                               ? 'bg-emerald-700 text-white'
                               : passed
                               ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300'
                               : 'bg-slate-100 text-slate-500 dark:bg-slate-800'
-                          } ${isLeader ? 'cursor-pointer hover:opacity-90' : 'cursor-default'}`}
+                          } ${stepAllowed ? 'cursor-pointer hover:opacity-90' : 'cursor-default'}`}
                         >
                           {idx + 1}. {st.label}
                         </button>
@@ -776,34 +709,41 @@ export function ActasModule({
                     <button
                       type="button"
                       onClick={() => window.print()}
-                      className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-1.5 text-xs font-semibold cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800"
+                      className="min-h-[36px] inline-flex items-center gap-1.5 rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-1.5 text-xs font-semibold cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 whitespace-nowrap"
                     >
                       <Printer className="h-3.5 w-3.5" /> Imprimir / PDF
                     </button>
-                    <button
-                      type="button"
-                      onClick={handleExportWord}
-                      className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-1.5 text-xs font-semibold cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800"
-                    >
-                      <FileDown className="h-3.5 w-3.5" /> Word (.doc)
-                    </button>
-                    {isLeader && (
+                    {canExportActas && (
+                      <button
+                        type="button"
+                        onClick={handleExportWord}
+                        className="min-h-[36px] inline-flex items-center gap-1.5 rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-1.5 text-xs font-semibold cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 whitespace-nowrap"
+                      >
+                        <FileDown className="h-3.5 w-3.5" /> Word (.doc)
+                      </button>
+                    )}
+                    {canSignActa && (
                       <button
                         type="button"
                         disabled={signing || alreadySignedByMe}
                         onClick={handleSignActa}
-                        className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50 cursor-pointer"
+                        className="min-h-[36px] inline-flex items-center gap-1.5 rounded-xl bg-emerald-700 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-emerald-800 disabled:opacity-50 cursor-pointer whitespace-nowrap"
                       >
                         <FileSignature className="h-3.5 w-3.5" />
-                        {alreadySignedByMe ? 'Ya firmada por ti' : signing ? 'Firmando...' : 'Firmar acta'}
+                        {alreadySignedByMe
+                          ? 'Ya firmada por ti'
+                          : signing
+                          ? 'Firmando...'
+                          : 'Firmar acta'}
                       </button>
                     )}
-                    {isLeader && (
+                    {canDeleteActa && (
                       <button
                         type="button"
-                        onClick={() => handleDeleteActa(selectedActa)}
+                        onClick={() => setDeleteTarget(selectedActa)}
+                        aria-label="Eliminar acta"
                         title="Eliminar acta"
-                        className="rounded-xl p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
+                        className="min-h-[36px] min-w-[36px] inline-flex items-center justify-center rounded-xl text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
                       >
                         <Trash2 className="h-4 w-4" />
                       </button>
@@ -811,18 +751,17 @@ export function ActasModule({
                   </div>
                 </div>
 
-                {/* Asistente IA Institucional */}
                 {canEditSelected && (
-                  <div className="rounded-2xl border border-indigo-200 dark:border-indigo-900/50 bg-indigo-50/50 dark:bg-indigo-950/20 p-4 space-y-2.5">
+                  <div className="rounded-2xl border border-emerald-200 dark:border-emerald-900/50 bg-emerald-50/40 dark:bg-emerald-950/20 p-4 space-y-2.5">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="text-xs font-bold text-indigo-800 dark:text-indigo-300 flex items-center gap-1.5">
+                      <p className="text-xs font-bold text-emerald-800 dark:text-emerald-300 flex items-center gap-1.5">
                         <Sparkles className="h-4 w-4" /> Asistente de Redacción Institucional
                       </p>
                       <button
                         type="button"
                         disabled={generatingAi}
                         onClick={handleAiDraft}
-                        className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-60 cursor-pointer"
+                        className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-700 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-emerald-800 disabled:opacity-60 cursor-pointer whitespace-nowrap"
                       >
                         <Sparkles className="h-3.5 w-3.5" />
                         {generatingAi ? 'Redactando borrador...' : 'Redactar borrador con IA'}
@@ -832,13 +771,12 @@ export function ActasModule({
                       rows={2}
                       value={aiNotes}
                       onChange={(e) => setAiNotes(e.target.value)}
-                      placeholder="Notas breves de secretaría (puntos debatidos, acuerdos clave o intervenciones que quieras incluir en el borrador)..."
-                      className="w-full rounded-xl border border-indigo-200/80 dark:border-indigo-800/70 bg-white dark:bg-slate-900 px-3 py-2 text-xs"
+                      placeholder="Notas breves de secretaría (puntos debatidos, acuerdos clave o intervenciones)..."
+                      className="w-full rounded-xl border border-emerald-200/80 dark:border-emerald-800/70 bg-white dark:bg-slate-900 px-3 py-2 text-xs"
                     />
                   </div>
                 )}
 
-                {/* Formulario guiado */}
                 <div className="space-y-3">
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                     <div>
@@ -869,6 +807,7 @@ export function ActasModule({
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
                     <select
+                      aria-label="Sesión vinculada"
                       disabled={!canEditSelected}
                       value={editSessionId}
                       onChange={(e) => handleApplySessionData(e.target.value)}
@@ -882,6 +821,7 @@ export function ActasModule({
                       ))}
                     </select>
                     <select
+                      aria-label="Comisión vinculada"
                       disabled={!canEditSelected}
                       value={editCommissionId}
                       onChange={(e) => setEditCommissionId(e.target.value)}
@@ -928,7 +868,7 @@ export function ActasModule({
                         disabled={!canEditSelected}
                         value={editQuorumCount}
                         onChange={(e) => setEditQuorumCount(Number(e.target.value))}
-                        className="w-20 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-2.5 py-1.5 text-xs"
+                        className="w-20 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-2.5 py-1.5 text-xs font-mono-num"
                       />
                     </label>
                     <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
@@ -939,7 +879,7 @@ export function ActasModule({
                         disabled={!canEditSelected}
                         value={editQuorumRequired}
                         onChange={(e) => setEditQuorumRequired(Number(e.target.value))}
-                        className="w-20 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-2.5 py-1.5 text-xs"
+                        className="w-20 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-2.5 py-1.5 text-xs font-mono-num"
                       />
                     </label>
                   </div>
@@ -999,7 +939,6 @@ export function ActasModule({
                     />
                   </div>
 
-                  {/* Votaciones vinculadas */}
                   {votes.length > 0 && (
                     <div className="space-y-1.5">
                       <p className="text-[11px] font-bold uppercase text-slate-500 flex items-center gap-1">
@@ -1041,27 +980,29 @@ export function ActasModule({
                           type="button"
                           disabled={saving}
                           onClick={() => handleSaveActa('revision')}
-                          className="inline-flex items-center gap-1.5 rounded-xl border border-amber-300 bg-amber-50 dark:bg-amber-950/40 dark:border-amber-800 px-3.5 py-2 text-xs font-semibold text-amber-800 dark:text-amber-300 cursor-pointer"
+                          className="min-h-[38px] inline-flex items-center gap-1.5 rounded-xl border border-amber-300 bg-amber-50 dark:bg-amber-950/40 dark:border-amber-800 px-3.5 py-2 text-xs font-semibold text-amber-800 dark:text-amber-300 cursor-pointer whitespace-nowrap"
                         >
                           <Clock className="h-3.5 w-3.5" /> Enviar a revisión
                         </button>
                       )}
-                      {isLeader && (selectedActa.status === 'borrador' || selectedActa.status === 'revision') && (
-                        <button
-                          type="button"
-                          disabled={saving}
-                          onClick={() => handleSaveActa('aprobada')}
-                          className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-700 px-3.5 py-2 text-xs font-semibold text-white hover:bg-emerald-800 cursor-pointer"
-                        >
-                          <CheckCircle2 className="h-3.5 w-3.5" /> Aprobar acta
-                        </button>
-                      )}
-                      {isLeader && selectedActa.status === 'firmada' && (
+                      {canApproveActa &&
+                        (selectedActa.status === 'borrador' ||
+                          selectedActa.status === 'revision') && (
+                          <button
+                            type="button"
+                            disabled={saving}
+                            onClick={() => handleSaveActa('aprobada')}
+                            className="min-h-[38px] inline-flex items-center gap-1.5 rounded-xl bg-emerald-700 px-3.5 py-2 text-xs font-semibold text-white hover:bg-emerald-800 cursor-pointer whitespace-nowrap"
+                          >
+                            <CheckCircle2 className="h-3.5 w-3.5" /> Aprobar acta
+                          </button>
+                        )}
+                      {canApproveActa && selectedActa.status === 'firmada' && (
                         <button
                           type="button"
                           disabled={saving}
                           onClick={() => handleSaveActa('archivada')}
-                          className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-indigo-700 cursor-pointer"
+                          className="min-h-[38px] inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-indigo-700 cursor-pointer whitespace-nowrap"
                         >
                           <Archive className="h-3.5 w-3.5" /> Archivar definitivamente
                         </button>
@@ -1070,7 +1011,7 @@ export function ActasModule({
                         type="button"
                         disabled={saving}
                         onClick={() => handleSaveActa()}
-                        className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 px-4 py-2 text-xs font-semibold cursor-pointer disabled:opacity-60"
+                        className="min-h-[38px] inline-flex items-center gap-1.5 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 px-4 py-2 text-xs font-semibold cursor-pointer disabled:opacity-60 whitespace-nowrap"
                       >
                         <Save className="h-3.5 w-3.5" />
                         {saving ? 'Guardando...' : 'Guardar borrador'}
@@ -1080,171 +1021,31 @@ export function ActasModule({
                 </div>
               </div>
 
-              {/* Documento Oficial Previsualizable / Imprimible */}
-              <div className="rounded-3xl border border-slate-200 bg-white text-slate-900 p-6 sm:p-10 space-y-6 shadow-sm">
-                <div className="flex flex-wrap items-center justify-between gap-4 border-b-2 border-emerald-700 pb-4">
-                  <div className="flex items-center gap-3">
-                    <BrandLogo size="md" />
-                    <div>
-                      <p className="text-xs font-extrabold uppercase tracking-wider text-emerald-800">
-                        Consejo Municipal de Juventudes de Flandes, Tolima
-                      </p>
-                      <p className="text-[11px] text-slate-600">
-                        Ley Estatutaria 1622 de 2013 y Ley 1885 de 2018 · Documento Institucional
-                      </p>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <p className="font-mono-num text-sm font-extrabold text-slate-900">
-                      {editConsecutive}
-                    </p>
-                    <p className="text-[11px] uppercase font-bold text-emerald-700">
-                      Estado: {selectedActa.status}
-                    </p>
-                  </div>
-                </div>
+              {/* Previsualización e Impresión */}
+              <ActaDocumentPreview
+                acta={selectedActa}
+                editConsecutive={editConsecutive}
+                editTitle={editTitle}
+                editMeetingDate={editMeetingDate}
+                editTimeRange={editTimeRange}
+                editLocation={editLocation}
+                editQuorumCount={editQuorumCount}
+                editQuorumRequired={editQuorumRequired}
+                editAgenda={editAgenda}
+                editDevelopment={editDevelopment}
+                editPropositions={editPropositions}
+                editCommitmentsSummary={editCommitmentsSummary}
+                editLinkedVoteIds={editLinkedVoteIds}
+                attendanceList={attendanceList}
+                votes={votes}
+              />
 
-                <div className="space-y-1">
-                  <h3 className="text-lg font-extrabold text-slate-900">{editTitle}</h3>
-                  <p className="text-xs text-slate-600">
-                    Fecha: <strong>{editMeetingDate || 'Por definir'}</strong>{' '}
-                    {editTimeRange ? `(${editTimeRange})` : ''} · Lugar: <strong>{editLocation}</strong> ·
-                    Quórum: <strong>{editQuorumCount}/{editQuorumRequired}</strong>
-                  </p>
-                </div>
-
-                {attendanceList.length > 0 && (
-                  <div className="space-y-2">
-                    <h4 className="text-xs font-extrabold uppercase tracking-wider text-emerald-800">
-                      Verificación de Asistencia
-                    </h4>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      {attendanceList.map(({ councilor, status }) => (
-                        <div
-                          key={councilor.uid}
-                          className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs"
-                        >
-                          <div className="flex items-center gap-2 min-w-0">
-                            <AvatarBadge
-                              name={councilor.fullName}
-                              photoUrl={councilor.photoUrl}
-                              thumbUrl={councilor.photoThumbUrl}
-                              size="xs"
-                            />
-                            <div className="min-w-0">
-                              <p className="font-bold truncate">{councilor.fullName}</p>
-                              <p className="text-[10px] text-slate-500">{councilor.roleLabel}</p>
-                            </div>
-                          </div>
-                          <span className="font-semibold uppercase text-[10px] text-slate-700">
-                            {status.replace('_', ' ')}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                <div className="space-y-4 text-xs leading-relaxed">
-                  <div>
-                    <h4 className="font-extrabold uppercase tracking-wider text-emerald-800 mb-1">
-                      1. Orden del Día
-                    </h4>
-                    <p className="whitespace-pre-wrap text-slate-800">{editAgenda || 'Sin registrar.'}</p>
-                  </div>
-                  <div>
-                    <h4 className="font-extrabold uppercase tracking-wider text-emerald-800 mb-1">
-                      2. Desarrollo
-                    </h4>
-                    <p className="whitespace-pre-wrap text-slate-800">{editDevelopment || 'Sin registrar.'}</p>
-                  </div>
-                  <div>
-                    <h4 className="font-extrabold uppercase tracking-wider text-emerald-800 mb-1">
-                      3. Proposiciones y Decisiones
-                    </h4>
-                    <p className="whitespace-pre-wrap text-slate-800">{editPropositions || 'Sin registrar.'}</p>
-                  </div>
-                  <div>
-                    <h4 className="font-extrabold uppercase tracking-wider text-emerald-800 mb-1">
-                      4. Compromisos
-                    </h4>
-                    <p className="whitespace-pre-wrap text-slate-800">
-                      {editCommitmentsSummary || 'Sin registrar.'}
-                    </p>
-                  </div>
-                </div>
-
-                {editLinkedVoteIds.length > 0 && (
-                  <div className="space-y-2">
-                    <h4 className="text-xs font-extrabold uppercase tracking-wider text-emerald-800">
-                      Resultados de Votaciones Vinculadas
-                    </h4>
-                    <div className="space-y-1.5">
-                      {votes
-                        .filter((v) => editLinkedVoteIds.includes(v.id))
-                        .map((v) => (
-                          <div
-                            key={v.id}
-                            className="rounded-xl border border-slate-200 px-3 py-2 text-xs flex items-center justify-between gap-2"
-                          >
-                            <span className="font-bold">{v.title}</span>
-                            <span className="text-slate-600">{v.resultSummary || 'En curso'}</span>
-                          </div>
-                        ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Firmas y Código de Verificación */}
-                <div className="pt-4 border-t border-slate-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                  <div className="space-y-2 flex-1">
-                    <p className="text-xs font-extrabold uppercase tracking-wider text-emerald-800 flex items-center gap-1.5">
-                      <ShieldCheck className="h-4 w-4" /> Firmas Digitales y Verificación
-                    </p>
-                    {selectedActa.signatures.length === 0 ? (
-                      <p className="text-xs text-slate-500">
-                        Pendiente de firma digital por Presidencia / Secretaría.
-                      </p>
-                    ) : (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        {selectedActa.signatures.map((sig) => (
-                          <div
-                            key={sig.uid}
-                            className="rounded-xl border border-emerald-200 bg-emerald-50/50 px-3 py-2 text-[11px]"
-                          >
-                            <p className="font-bold text-slate-900">{sig.name}</p>
-                            <p className="text-emerald-800 font-semibold">{sig.roleLabel}</p>
-                            <p className="font-mono-num text-[10px] text-slate-600 mt-0.5">
-                              Sello: {sig.hash} · {new Date(sig.signedAt).toLocaleDateString('es-CO')}
-                            </p>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    {selectedActa.verificationHash && (
-                      <p className="font-mono-num text-[10px] text-slate-600">
-                        Hash de integridad documental: <strong>{selectedActa.verificationHash}</strong>
-                      </p>
-                    )}
-                  </div>
-
-                  {selectedActa.verificationHash && (
-                    <div className="flex flex-col items-center gap-1 shrink-0">
-                      <ActaQrSvg code={`${selectedActa.consecutive}:${selectedActa.verificationHash}`} />
-                      <span className="text-[9px] font-mono-num text-slate-500 flex items-center gap-1">
-                        <QrCode className="h-3 w-3" /> {selectedActa.verificationHash.slice(0, 10)}
-                      </span>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Observaciones e Historial (solo vista privada) */}
+              {/* Observaciones e Historial */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5 no-print">
-                <div className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 space-y-3">
+                <div className="cmj-card p-5 space-y-3">
                   <h4 className="text-sm font-bold flex items-center gap-1.5">
-                    <MessageSquare className="h-4 w-4 text-blue-600" /> Observaciones de Consejeros (
-                    {selectedActa.comments.length})
+                    <MessageSquare className="h-4 w-4 text-emerald-700 dark:text-emerald-400" />{' '}
+                    Observaciones de Consejeros ({selectedActa.comments.length})
                   </h4>
                   <form onSubmit={handleAddComment} className="flex gap-2">
                     <input
@@ -1258,23 +1059,20 @@ export function ActasModule({
                       type="submit"
                       disabled={sendingComment}
                       aria-label="Enviar observación"
-                      className="rounded-xl bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 cursor-pointer"
+                      className="rounded-xl bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-800 cursor-pointer"
                     >
                       <Send className="h-3.5 w-3.5" />
                     </button>
                   </form>
-                  <div className="space-y-2 max-h-52 overflow-y-auto">
+                  <div className="divide-y divide-slate-100 dark:divide-slate-800 max-h-52 overflow-y-auto">
                     {selectedActa.comments.length === 0 ? (
-                      <p className="text-xs text-slate-500">Sin observaciones registradas.</p>
+                      <p className="text-xs text-slate-500 py-2">Sin observaciones registradas.</p>
                     ) : (
                       selectedActa.comments.map((c) => (
-                        <div
-                          key={c.id}
-                          className="rounded-xl border border-slate-100 dark:border-slate-800 p-2.5 text-xs"
-                        >
+                        <div key={c.id} className="py-2.5 text-xs">
                           <p className="font-bold text-slate-900 dark:text-white">
                             {c.authorName}{' '}
-                            <span className="font-normal text-blue-600 dark:text-cyan-400">
+                            <span className="font-normal text-emerald-700 dark:text-emerald-400">
                               ({c.authorRoleLabel})
                             </span>
                           </p>
@@ -1285,17 +1083,14 @@ export function ActasModule({
                   </div>
                 </div>
 
-                <div className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 space-y-3">
+                <div className="cmj-card p-5 space-y-3">
                   <h4 className="text-sm font-bold flex items-center gap-1.5">
                     <History className="h-4 w-4 text-emerald-600" /> Trazabilidad de Cambios (
                     {selectedActa.history.length})
                   </h4>
-                  <div className="space-y-2 max-h-60 overflow-y-auto">
+                  <div className="divide-y divide-slate-100 dark:divide-slate-800 max-h-60 overflow-y-auto">
                     {selectedActa.history.map((h, i) => (
-                      <div
-                        key={i}
-                        className="rounded-xl border border-slate-100 dark:border-slate-800 px-3 py-2 text-xs flex items-start justify-between gap-2"
-                      >
+                      <div key={i} className="py-2 text-xs flex items-start justify-between gap-2">
                         <div>
                           <p className="font-semibold text-slate-900 dark:text-white">{h.action}</p>
                           <p className="text-[11px] text-slate-500">Por {h.actorName}</p>
@@ -1312,6 +1107,48 @@ export function ActasModule({
           )}
         </div>
       </div>
+
+      {/* Modal crear acta */}
+      <ActaCreateModal
+        open={creatingOpen && canCreateActa}
+        onClose={() => setCreatingOpen(false)}
+        sessions={sessions}
+        commissions={commissions}
+        newTemplateId={newTemplateId}
+        onTemplateChange={setNewTemplateId}
+        newSessionId={newSessionId}
+        onSessionSelect={(sid) => {
+          setNewSessionId(sid);
+          const sess = sessions.find((s) => s.id === sid);
+          if (sess) {
+            setNewTitle(`Acta — ${sess.title}`);
+            setNewDate(sess.dateIso);
+            setNewLocation(sess.location);
+          }
+        }}
+        newCommissionId={newCommissionId}
+        onCommissionChange={setNewCommissionId}
+        newYear={newYear}
+        onYearChange={setNewYear}
+        newTitle={newTitle}
+        onTitleChange={setNewTitle}
+        newDate={newDate}
+        onDateChange={setNewDate}
+        newLocation={newLocation}
+        onLocationChange={setNewLocation}
+        creating={creating}
+        onSubmit={handleCreateActa}
+      />
+
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title="Eliminar acta oficial"
+        description={`¿Confirmas eliminar ${deleteTarget?.consecutive || ''} ("${deleteTarget?.title || ''}")?`}
+        confirmLabel="Sí, eliminar acta"
+        loading={deleting}
+        onConfirm={handleConfirmDeleteActa}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   );
 }
