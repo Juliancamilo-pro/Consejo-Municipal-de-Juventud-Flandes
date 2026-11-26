@@ -260,6 +260,10 @@ export interface SessionUser {
   commissionId: string;
   phone: string;
   active: boolean;
+  verificado?: boolean;
+  verificadoAt?: string;
+  cargoDeclarado?: string;
+  coordDeclaradaPendiente?: boolean;
   mustChangePassword: boolean;
   fullName: string;
   coordinatorCommissionIds?: string[];

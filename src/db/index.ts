@@ -127,6 +127,11 @@ export async function ensureDatabaseTables(): Promise<void> {
           role_label TEXT NOT NULL DEFAULT 'Consejero',
           commission_id TEXT NOT NULL DEFAULT '',
           active BOOLEAN NOT NULL DEFAULT true,
+          verificado BOOLEAN NOT NULL DEFAULT false,
+          verificado_at TEXT NOT NULL DEFAULT '',
+          cargo_declarado TEXT NOT NULL DEFAULT '',
+          coord_declarada_pendiente BOOLEAN NOT NULL DEFAULT false,
+          coord_declarada_comision_id TEXT NOT NULL DEFAULT '',
           must_change_password BOOLEAN NOT NULL DEFAULT false,
           created_at TIMESTAMP NOT NULL DEFAULT NOW(),
           updated_at TIMESTAMP NOT NULL DEFAULT NOW()
@@ -196,6 +201,11 @@ export async function ensureDatabaseTables(): Promise<void> {
           instagram TEXT NOT NULL DEFAULT '',
           facebook TEXT NOT NULL DEFAULT '',
           active BOOLEAN NOT NULL DEFAULT true,
+          verificado BOOLEAN NOT NULL DEFAULT false,
+          verificado_at TEXT NOT NULL DEFAULT '',
+          cargo_declarado TEXT NOT NULL DEFAULT '',
+          coord_declarada_pendiente BOOLEAN NOT NULL DEFAULT false,
+          coord_declarada_comision_id TEXT NOT NULL DEFAULT '',
           display_order INTEGER NOT NULL DEFAULT 50,
           updated_at TIMESTAMP NOT NULL DEFAULT NOW()
         )`,
@@ -700,6 +710,16 @@ export async function ensureDatabaseTables(): Promise<void> {
           updated_at TIMESTAMP NOT NULL DEFAULT NOW()
         )`,
       ],
+      [
+        'auth_rate_limits',
+        `CREATE TABLE IF NOT EXISTS auth_rate_limits (
+          id TEXT PRIMARY KEY,
+          attempts INTEGER NOT NULL DEFAULT 0,
+          first_attempt_at TEXT NOT NULL DEFAULT '',
+          locked_until TEXT NOT NULL DEFAULT '',
+          updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )`,
+      ],
     ];
 
     try {
@@ -741,6 +761,16 @@ export async function ensureDatabaseTables(): Promise<void> {
         ['gallery_items.sort_order', `ALTER TABLE gallery_items ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0`],
         ['gallery_items.event_date', `ALTER TABLE gallery_items ADD COLUMN IF NOT EXISTS event_date TEXT NOT NULL DEFAULT ''`],
         ['gallery_items.mime_type', `ALTER TABLE gallery_items ADD COLUMN IF NOT EXISTS mime_type TEXT NOT NULL DEFAULT ''`],
+        ['users.verificado', `ALTER TABLE users ADD COLUMN IF NOT EXISTS verificado BOOLEAN NOT NULL DEFAULT false`],
+        ['users.verificado_at', `ALTER TABLE users ADD COLUMN IF NOT EXISTS verificado_at TEXT NOT NULL DEFAULT ''`],
+        ['users.cargo_declarado', `ALTER TABLE users ADD COLUMN IF NOT EXISTS cargo_declarado TEXT NOT NULL DEFAULT ''`],
+        ['users.coord_declarada_pendiente', `ALTER TABLE users ADD COLUMN IF NOT EXISTS coord_declarada_pendiente BOOLEAN NOT NULL DEFAULT false`],
+        ['users.coord_declarada_comision_id', `ALTER TABLE users ADD COLUMN IF NOT EXISTS coord_declarada_comision_id TEXT NOT NULL DEFAULT ''`],
+        ['public_councilors.verificado', `ALTER TABLE public_councilors ADD COLUMN IF NOT EXISTS verificado BOOLEAN NOT NULL DEFAULT false`],
+        ['public_councilors.verificado_at', `ALTER TABLE public_councilors ADD COLUMN IF NOT EXISTS verificado_at TEXT NOT NULL DEFAULT ''`],
+        ['public_councilors.cargo_declarado', `ALTER TABLE public_councilors ADD COLUMN IF NOT EXISTS cargo_declarado TEXT NOT NULL DEFAULT ''`],
+        ['public_councilors.coord_declarada_pendiente', `ALTER TABLE public_councilors ADD COLUMN IF NOT EXISTS coord_declarada_pendiente BOOLEAN NOT NULL DEFAULT false`],
+        ['public_councilors.coord_declarada_comision_id', `ALTER TABLE public_councilors ADD COLUMN IF NOT EXISTS coord_declarada_comision_id TEXT NOT NULL DEFAULT ''`],
       ];
 
       for (const [key, alterSql] of columnPatches) {

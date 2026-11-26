@@ -13,7 +13,7 @@ import {
   X,
 } from 'lucide-react';
 import { apiRequest, triggerPortalRefresh } from '../../lib/apiClient';
-import { hasPermission } from '../../lib/permissions';
+import { hasPermission, isGrantActive } from '../../lib/permissions';
 import type {
   AuditLog,
   CallOrSurvey,
@@ -46,6 +46,7 @@ import type {
   WorkPlanItem,
 } from '../../types/cmj';
 import { BrandLogo } from '../BrandLogo';
+import { VerifiedBadge } from '../VerifiedBadge';
 import { ModuleErrorBoundary } from '../ErrorBoundary';
 import { OfflineIndicator, PWAInstallButton } from '../PWAInstallButton';
 import { AvatarBadge } from '../public/AvatarBadge';
@@ -233,7 +234,7 @@ export function PrivatePortal({
   }, [commissions, coordinatorCommissionIds, uid]);
 
   const myActiveGrants = useMemo(
-    () => grantedPermissions.filter((g) => g.userUid === uid && g.active),
+    () => grantedPermissions.filter((g) => g.userUid === uid && isGrantActive(g)),
     [grantedPermissions, uid]
   );
 
@@ -885,7 +886,10 @@ export function PrivatePortal({
                 size="sm"
               />
               <div className="hidden sm:block text-left">
-                <p className="text-xs font-bold leading-none truncate max-w-[140px]">{fullName}</p>
+                <p className="text-xs font-bold leading-none flex items-center gap-1">
+                  <span className="truncate max-w-[130px]">{fullName}</span>
+                  {profile?.verificado && <VerifiedBadge size="xs" />}
+                </p>
                 <p
                   className={`text-[10px] font-semibold mt-0.5 ${
                     roleLabel === 'Consejero Departamental'

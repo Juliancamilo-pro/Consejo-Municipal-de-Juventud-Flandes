@@ -16,9 +16,24 @@ function disableViteClientWsPlugin(): Plugin {
     transform(code, id) {
       if (!isWsDisabled) return null;
       if (id.includes('vite/dist/client/client.mjs') || id.endsWith('/@vite/client')) {
+        return code
+          .replace(
+            'transport.connect(createHMRHandler(handleMessage));',
+            '/* WebSocket HMR disabled */'
+          )
+          .replace(
+            'else throw new SendBeforeConnectError("send was called before connect");',
+            'else return;'
+          )
+          .replace(
+            'else throw new SendBeforeConnectError("invoke was called before connect");',
+            'else return;'
+          );
+      }
+      if (id.includes('pwa-entry-point-loaded')) {
         return code.replace(
-          'transport.connect(createHMRHandler(handleMessage));',
-          '/* WebSocket HMR disabled */'
+          /import\.meta\.hot\.send\([^)]*\);?/g,
+          '/* HMR disabled: PWA SW se registra mediante virtual:pwa-register/react */'
         );
       }
       return null;

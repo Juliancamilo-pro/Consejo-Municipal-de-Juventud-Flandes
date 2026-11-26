@@ -136,6 +136,17 @@ export function registerCommissionsAndContentRoutes(app: express.Express) {
           patch.coordinatorUid = targetUser.uid;
           patch.coordinatorName = resolvedCoordName.slice(0, 120);
 
+          await Promise.all([
+            db
+              .update(users)
+              .set({ coordDeclaradaPendiente: false, coordDeclaradaComisionId: '', updatedAt: new Date() })
+              .where(eq(users.uid, targetUser.uid)),
+            db
+              .update(publicCouncilors)
+              .set({ coordDeclaradaPendiente: false, coordDeclaradaComisionId: '', updatedAt: new Date() })
+              .where(eq(publicCouncilors.uid, targetUser.uid)),
+          ]);
+
           if (existing.coordinatorUid !== targetUser.uid) {
             if (existing.coordinatorUid) {
               await createPortalNotification({

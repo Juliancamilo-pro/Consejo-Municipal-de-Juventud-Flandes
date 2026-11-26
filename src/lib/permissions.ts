@@ -1174,10 +1174,25 @@ export function getPermissionMeta(key: PermissionKey): PermissionCatalogItem {
   );
 }
 
-// Validación estricta de justificación (mínimo 100 caracteres, sin relleno repetitivo ni incoherente)
+// Normaliza espacios repetidos y saltos de línea vacíos para contar caracteres reales
+export function normalizeRealText(text: string): string {
+  return String(text || '')
+    .replace(/\r/g, '')
+    .split('\n')
+    .map((line) => line.trim().replace(/\s+/g, ' '))
+    .filter(Boolean)
+    .join('\n');
+}
+
+export function countRealJustificationChars(text: string): number {
+  return normalizeRealText(text).length;
+}
+
+// Validación estricta de justificación (mínimo 100 caracteres reales, sin relleno repetitivo ni incoherente)
 export interface JustificationValidationResult {
   valid: boolean;
   error?: string;
+  realCharCount?: number;
 }
 
 export function validatePermissionJustification(input: {
@@ -1187,23 +1202,30 @@ export function validatePermissionJustification(input: {
   durationType: PermissionDurationType;
   expiresAt?: string;
 }): JustificationValidationResult {
-  const reason = (input.reason || '').trim();
-  const purpose = (input.purpose || '').trim();
+  const reason = normalizeRealText(input.reason);
+  const realCharCount = reason.length;
+  const purpose = normalizeRealText(input.purpose);
   const targetModule = (input.targetModule || '').trim();
 
   if (!targetModule) {
-    return { valid: false, error: 'Debes indicar el módulo o alcance al que aplica la solicitud.' };
+    return {
+      valid: false,
+      realCharCount,
+      error: 'Debes indicar el módulo o alcance al que aplica la solicitud.',
+    };
   }
   if (purpose.length < 15) {
     return {
       valid: false,
-      error: 'Describe concretamente para qué necesitas este permiso (mínimo 15 caracteres).',
+      realCharCount,
+      error: 'Describe concretamente para qué necesitas este permiso (mínimo 15 caracteres reales).',
     };
   }
-  if (reason.length < 100) {
+  if (realCharCount < 100) {
     return {
       valid: false,
-      error: `La justificación debe tener al menos 100 caracteres reales (faltan ${100 - reason.length}).`,
+      realCharCount,
+      error: `La justificación debe tener al menos 100 caracteres reales (llevas ${realCharCount}, faltan ${100 - realCharCount}).`,
     };
   }
 
@@ -1211,6 +1233,7 @@ export function validatePermissionJustification(input: {
   if (/(.)\1{4,}/i.test(reason)) {
     return {
       valid: false,
+      realCharCount,
       error: 'La justificación contiene secuencias repetitivas no válidas. Explica el motivo real.',
     };
   }
@@ -1225,6 +1248,7 @@ export function validatePermissionJustification(input: {
   if (words.length < 12 || uniqueWords.size < 8) {
     return {
       valid: false,
+      realCharCount,
       error:
         'La justificación es demasiado repetitiva o carece de contexto suficiente (se requieren al menos 12 palabras con sentido).',
     };
@@ -1232,9 +1256,10 @@ export function validatePermissionJustification(input: {
 
   // Verificar proporción de letras reales frente a símbolos/números sin sentido
   const letterCount = (reason.match(/\p{L}/gu) || []).length;
-  if (letterCount / reason.length < 0.55) {
+  if (letterCount / realCharCount < 0.55) {
     return {
       valid: false,
+      realCharCount,
       error: 'La justificación debe estar redactada en texto claro y comprensible en español.',
     };
   }
@@ -1243,19 +1268,21 @@ export function validatePermissionJustification(input: {
     if (!input.expiresAt) {
       return {
         valid: false,
-        error: 'Los permisos temporales requieren una fecha de expiración obligatoria.',
+        realCharCount,
+        error: 'Los permisos temporales requieren una fecha y hora de expiración obligatoria.',
       };
     }
     const expMs = Date.parse(input.expiresAt);
-    if (Number.isNaN(expMs) || expMs <= Date.now() + 60 * 60 * 1000) {
+    if (Number.isNaN(expMs) || expMs <= Date.now() + 60 * 1000) {
       return {
         valid: false,
-        error: 'La fecha de expiración debe ser posterior al día y hora actual (mínimo +1 hora).',
+        realCharCount,
+        error: 'La fecha de expiración debe ser futura (posterior al día y hora actual).',
       };
     }
   }
 
-  return { valid: true };
+  return { valid: true, realCharCount };
 }
 
 export const AUDIT_COMPARISON_MATRIX: AuditComparisonRow[] = [

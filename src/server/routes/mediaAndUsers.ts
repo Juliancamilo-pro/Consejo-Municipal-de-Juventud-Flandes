@@ -610,7 +610,7 @@ export function registerMediaAndUsersRoutes(app: express.Express) {
         .where(eq(users.uid, targetUid))
         .limit(1);
 
-      // Anti-escalación estricta: nadie puede cambiar su propio cargo, tier o estado activo
+      // Anti-escalación estricta: nadie puede cambiar su propio cargo, tier, verificación o estado activo
       if (isSelf) {
         if (typeof body.roleLabel === 'string' && existingUser && body.roleLabel !== existingUser.roleLabel) {
           res.status(403).json({ error: 'Seguridad RBAC: no puedes modificar tu propio cargo o nivel de acceso.' });
@@ -618,6 +618,10 @@ export function registerMediaAndUsersRoutes(app: express.Express) {
         }
         if (typeof body.active === 'boolean' && existingUser && body.active !== existingUser.active) {
           res.status(403).json({ error: 'Seguridad RBAC: no puedes activar o suspender tu propia cuenta.' });
+          return;
+        }
+        if (typeof body.verificado === 'boolean') {
+          res.status(403).json({ error: 'Seguridad RBAC: no puedes verificar tu propio perfil.' });
           return;
         }
       }
@@ -770,6 +774,28 @@ export function registerMediaAndUsersRoutes(app: express.Express) {
           allowPatch.commissionId = cleanCommId;
           shouldUpdateAllow = true;
         }
+        if (typeof body.verificado === 'boolean') {
+          const verAt = body.verificado ? new Date().toISOString() : '';
+          pubPatch.verificado = body.verificado;
+          pubPatch.verificadoAt = verAt;
+          userPatch.verificado = body.verificado;
+          userPatch.verificadoAt = verAt;
+          await logServerAudit(
+            me,
+            body.verificado ? 'Verificó perfil de consejero' : 'Retiró verificación de perfil',
+            'Usuarios y Mesa',
+            existingPub?.fullName || existingUser?.email || targetUid
+          );
+        }
+        if (body.coordDeclaradaPendiente === false) {
+          pubPatch.coordDeclaradaPendiente = false;
+          pubPatch.coordDeclaradaComisionId = '';
+          userPatch.coordDeclaradaPendiente = false;
+          userPatch.coordDeclaradaComisionId = '';
+        }
+      } else if (typeof body.verificado === 'boolean' && !canEditUsers) {
+        sendPermissionDenied(res, 'usuarios.editar');
+        return;
       }
 
       if (typeof body.active === 'boolean' && !isSelf) {

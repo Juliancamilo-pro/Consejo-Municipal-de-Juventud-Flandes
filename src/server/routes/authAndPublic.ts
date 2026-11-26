@@ -4,6 +4,7 @@ import { db, hasDatabaseConfig } from '../../db/index.ts';
 import {
   actas,
   allowedAccounts,
+  authRateLimits,
   callsSurveys,
   commissions,
   contactMessages,
@@ -24,7 +25,9 @@ import {
   hashPasswordScrypt,
   roleLabelToAccessTier,
   SECRETARY_BOOTSTRAP_EMAIL,
+  sha256Hex,
   signSessionToken,
+  timingSafeEqualStrings,
   verifySecretHash,
 } from '../security.ts';
 import {
@@ -32,8 +35,10 @@ import {
   buildAuthedUserProfile,
   buildPrivatePayload,
   clearSessionCookie,
+  createPortalNotification,
   ensureMinimalStructure,
   getSecurityRecord,
+  logServerAudit,
   newId,
   normalizeAffiliationType,
   requireAuth,
@@ -42,6 +47,19 @@ import {
   setSessionCookie,
 } from '../helpers.ts';
 import type { RoleLabel } from '../../types/cmj.ts';
+
+function sanitizePlainText(input: unknown, maxLen: number): string {
+  return String(input || '')
+    .replace(/[\u0000-\u001F\u007F<>]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLen);
+}
+
+function getClientIp(req: express.Request): string {
+  const fwd = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+  return fwd || req.socket.remoteAddress || req.ip || 'unknown';
+}
 
 export function registerAuthAndPublicRoutes(app: express.Express) {
   app.get('/api/health', async (req, res) => {
@@ -222,6 +240,8 @@ export function registerAuthAndPublicRoutes(app: express.Express) {
             roleLabel,
             commissionId,
             active: true,
+            verificado: isBootstrap,
+            verificadoAt: isBootstrap ? new Date().toISOString() : '',
             mustChangePassword: !isBootstrap,
           })
           .onConflictDoNothing()
@@ -306,6 +326,8 @@ export function registerAuthAndPublicRoutes(app: express.Express) {
             photoUrl: pendingPub?.photoUrl || '',
             storagePath: pendingPub?.storagePath || '',
             active: true,
+            verificado: isBootstrap,
+            verificadoAt: isBootstrap ? new Date().toISOString() : '',
             displayOrder: isBootstrap
               ? 3
               : pendingPub?.displayOrder || roleDefaultDisplayOrder(roleLabel),
@@ -430,6 +452,8 @@ export function registerAuthAndPublicRoutes(app: express.Express) {
             roleLabel,
             commissionId,
             active: true,
+            verificado: isBootstrap,
+            verificadoAt: isBootstrap ? new Date().toISOString() : '',
             mustChangePassword: false,
           })
           .returning();
@@ -481,6 +505,8 @@ export function registerAuthAndPublicRoutes(app: express.Express) {
             photoUrl: pendingPub?.photoUrl || '',
             storagePath: pendingPub?.storagePath || '',
             active: true,
+            verificado: isBootstrap,
+            verificadoAt: isBootstrap ? new Date().toISOString() : '',
             displayOrder: isBootstrap
               ? 3
               : pendingPub?.displayOrder || roleDefaultDisplayOrder(roleLabel),
@@ -518,6 +544,330 @@ export function registerAuthAndPublicRoutes(app: express.Express) {
     } catch (error) {
       console.error('Activate/change password error:', error);
       res.status(500).json({ error: 'No fue posible actualizar la contraseña.' });
+    }
+  });
+
+  app.post('/api/auth/register', async (req, res) => {
+    try {
+      const ip = getClientIp(req);
+      const rateKey = `register:${sha256Hex(ip)}`;
+      const windowMs = 15 * 60 * 1000;
+      const nowMs = Date.now();
+
+      const [rateRow] = await db
+        .select()
+        .from(authRateLimits)
+        .where(eq(authRateLimits.id, rateKey))
+        .limit(1);
+
+      if (rateRow?.lockedUntil) {
+        const lockedMs = Date.parse(rateRow.lockedUntil);
+        if (!Number.isNaN(lockedMs) && lockedMs > nowMs) {
+          res.status(429).json({
+            error:
+              'Demasiados intentos fallidos desde esta dirección. Intenta nuevamente en 15 minutos.',
+          });
+          return;
+        }
+      }
+
+      const expectedCode = (process.env.CMJ_ACTIVATION_CODE || '').trim();
+      const expectedPassword = (process.env.CMJ_REGISTRATION_PASSWORD || '').trim();
+      if (!expectedCode || !expectedPassword) {
+        res.status(503).json({
+          error:
+            'El auto-registro público aún no está habilitado en este servidor. Solicita a la Secretaría que configure las variables de entorno de registro.',
+        });
+        return;
+      }
+
+      const body = req.body || {};
+      const fullName = sanitizePlainText(body.fullName, 120);
+      const cleanEmail = sanitizePlainText(body.email, 180).toLowerCase();
+      const cargoDeclarado = sanitizePlainText(body.cargo || 'Consejero', 80) || 'Consejero';
+      const commissionId = sanitizePlainText(body.commissionId, 64);
+      const isCoordinatorDeclared = body.isCoordinator === true || body.isCoordinator === 'si';
+      const initialPassword = typeof body.initialPassword === 'string' ? body.initialPassword.trim() : '';
+      const activationCode = typeof body.activationCode === 'string' ? body.activationCode.trim() : '';
+
+      if (fullName.length < 3) {
+        res.status(400).json({ error: 'Ingresa tu nombre completo (mínimo 3 caracteres).' });
+        return;
+      }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+        res.status(400).json({ error: 'Ingresa un correo electrónico válido.' });
+        return;
+      }
+      if (!initialPassword || !activationCode) {
+        res.status(400).json({
+          error: 'Debes ingresar tanto la contraseña inicial como el código de activación.',
+        });
+        return;
+      }
+
+      // Evaluar ambos secretos en tiempo constante antes de decidir fallo (sin filtrar cuál falló)
+      const codeOk = timingSafeEqualStrings(activationCode, expectedCode);
+      const pwdOk = timingSafeEqualStrings(initialPassword, expectedPassword);
+
+      if (!codeOk || !pwdOk) {
+        const firstMs = rateRow?.firstAttemptAt ? Date.parse(rateRow.firstAttemptAt) : 0;
+        const windowExpired = !firstMs || Number.isNaN(firstMs) || nowMs - firstMs > windowMs;
+        const nextAttempts = windowExpired ? 1 : (rateRow?.attempts || 0) + 1;
+        const nextFirstIso = windowExpired ? new Date(nowMs).toISOString() : rateRow!.firstAttemptAt;
+        const nextLockedUntil =
+          nextAttempts >= 5 ? new Date(nowMs + windowMs).toISOString() : '';
+
+        await db
+          .insert(authRateLimits)
+          .values({
+            id: rateKey,
+            attempts: nextAttempts,
+            firstAttemptAt: nextFirstIso,
+            lockedUntil: nextLockedUntil,
+            updatedAt: new Date(),
+          })
+          .onConflictDoUpdate({
+            target: authRateLimits.id,
+            set: {
+              attempts: nextAttempts,
+              firstAttemptAt: nextFirstIso,
+              lockedUntil: nextLockedUntil,
+              updatedAt: new Date(),
+            },
+          });
+
+        await logServerAudit(
+          { uid: 'public_register', fullName: fullName || cleanEmail, roleLabel: 'Consejero' },
+          nextAttempts >= 5
+            ? 'Intento fallido de auto-registro (bloqueo temporal IP 15m)'
+            : 'Intento fallido de auto-registro (credenciales inválidas)',
+          'Seguridad',
+          cleanEmail
+        );
+
+        res.status(nextAttempts >= 5 ? 429 : 401).json({
+          error:
+            nextAttempts >= 5
+              ? 'Demasiados intentos fallidos desde esta dirección. Intenta nuevamente en 15 minutos.'
+              : 'Código de activación o contraseña inicial incorrectos.',
+        });
+        return;
+      }
+
+      const emailH = hashEmail(cleanEmail);
+      const [existingUser, existingAllow] = await Promise.all([
+        db.select({ uid: users.uid }).from(users).where(eq(users.email, cleanEmail)).limit(1),
+        db
+          .select({ emailHash: allowedAccounts.emailHash })
+          .from(allowedAccounts)
+          .where(eq(allowedAccounts.emailHash, emailH))
+          .limit(1),
+      ]);
+
+      if (existingUser.length > 0 || existingAllow.length > 0) {
+        res.status(409).json({
+          error: 'Este correo electrónico ya está registrado en el portal. Inicia sesión o usa "Activar clave".',
+        });
+        return;
+      }
+
+      let commName = 'Sin comisión';
+      if (commissionId) {
+        const [commRow] = await db
+          .select()
+          .from(commissions)
+          .where(eq(commissions.id, commissionId))
+          .limit(1);
+        if (!commRow) {
+          res.status(400).json({ error: 'La comisión seleccionada no es válida.' });
+          return;
+        }
+        commName = commRow.name;
+      }
+
+      // Asignar SIEMPRE el rol base más bajo ('Consejero') independientemente del cargo declarado
+      const forcedRole: RoleLabel = 'Consejero';
+      const forcedTier = roleLabelToAccessTier(forcedRole);
+      const coordDeclaradaPendiente = Boolean(isCoordinatorDeclared && commissionId);
+      const coordDeclaradaComisionId = coordDeclaradaPendiente ? commissionId : '';
+      const uid = newId('uid');
+      const passwordHash = hashPasswordScrypt(initialPassword);
+
+      await db.insert(users).values({
+        uid,
+        email: cleanEmail,
+        passwordHash,
+        phone: '',
+        accessTier: forcedTier,
+        roleLabel: forcedRole,
+        commissionId,
+        active: true,
+        verificado: false,
+        verificadoAt: '',
+        cargoDeclarado,
+        coordDeclaradaPendiente,
+        coordDeclaradaComisionId,
+        mustChangePassword: true,
+      });
+
+      await db.insert(allowedAccounts).values({
+        emailHash: emailH,
+        email: cleanEmail,
+        active: true,
+        accessTier: forcedTier,
+        roleLabel: forcedRole,
+        commissionId,
+        affiliationType: '',
+        affiliationName: '',
+        accountProvisioned: true,
+        mustChangePassword: true,
+      });
+
+      await db.insert(publicCouncilors).values({
+        id: uid,
+        uid,
+        fullName,
+        roleLabel: forcedRole,
+        commissionId,
+        commissionName: commName,
+        affiliationType: '',
+        affiliationName: '',
+        email: cleanEmail,
+        phone: '',
+        bio: '',
+        photoUrl: '',
+        storagePath: '',
+        active: true,
+        verificado: false,
+        verificadoAt: '',
+        cargoDeclarado,
+        coordDeclaradaPendiente,
+        coordDeclaradaComisionId,
+        displayOrder: roleDefaultDisplayOrder(forcedRole),
+      });
+
+      await db.delete(authRateLimits).where(eq(authRateLimits.id, rateKey)).catch(() => undefined);
+
+      // Notificar a toda la Mesa Directiva activa (Presidente, Vicepresidente, Secretario)
+      const mesaMembers = await db
+        .select({ uid: users.uid })
+        .from(users)
+        .where(
+          and(
+            eq(users.active, true),
+            inArray(users.roleLabel, ['Presidente', 'Vicepresidente', 'Secretario'])
+          )
+        );
+      const coordNote = coordDeclaradaPendiente
+        ? ` Declaró coordinación en ${commName} (pendiente de confirmación).`
+        : '';
+      for (const m of mesaMembers) {
+        await createPortalNotification({
+          userUid: m.uid,
+          type: 'general',
+          title: 'Nuevo consejero auto-registrado (sin verificar)',
+          message: `${fullName} (${cleanEmail}) se registró declarando cargo "${cargoDeclarado}".${coordNote} Revisa y verifica su perfil en Usuarios y Mesa.`,
+          linkModule: 'usuarios',
+          relatedId: uid,
+        });
+      }
+
+      await logServerAudit(
+        { uid, fullName, roleLabel: forcedRole },
+        `Auto-registro completado (cargo declarado: ${cargoDeclarado}${coordDeclaradaPendiente ? ', coord. pendiente' : ''})`,
+        'Usuarios y Mesa',
+        `${fullName} (${cleanEmail})`
+      );
+
+      res.json({
+        ok: true,
+        email: cleanEmail,
+        message: 'Registro exitoso. Por seguridad cambia tu contraseña al ingresar al portal privado.',
+      });
+    } catch (error) {
+      console.error('Self-registration error:', error);
+      res.status(500).json({ error: 'No fue posible completar el registro.' });
+    }
+  });
+
+  app.post('/api/auth/change-password', requireAuth, async (req: AuthedRequest, res) => {
+    try {
+      const me = req.authUser!;
+      const currentPassword =
+        typeof req.body?.currentPassword === 'string' ? req.body.currentPassword : '';
+      const newPassword = typeof req.body?.newPassword === 'string' ? req.body.newPassword : '';
+      const confirmPassword =
+        typeof req.body?.confirmPassword === 'string' ? req.body.confirmPassword : '';
+
+      if (!currentPassword || !newPassword) {
+        res.status(400).json({ error: 'Completa tu contraseña actual y la nueva contraseña.' });
+        return;
+      }
+      if (newPassword.length < 8) {
+        res.status(400).json({
+          error: 'La nueva contraseña debe tener al menos 8 caracteres.',
+        });
+        return;
+      }
+      if (newPassword !== confirmPassword) {
+        res.status(400).json({ error: 'La confirmación no coincide con la nueva contraseña.' });
+        return;
+      }
+
+      const [userRow] = await db
+        .select()
+        .from(users)
+        .where(eq(users.uid, me.uid))
+        .limit(1);
+      if (!userRow) {
+        res.status(404).json({ error: 'Cuenta de usuario no encontrada.' });
+        return;
+      }
+
+      if (!verifySecretHash(currentPassword, userRow.passwordHash)) {
+        res.status(401).json({ error: 'La contraseña actual es incorrecta.' });
+        return;
+      }
+      if (currentPassword === newPassword) {
+        res.status(400).json({ error: 'La nueva contraseña debe ser diferente a la actual.' });
+        return;
+      }
+
+      const nextHash = hashPasswordScrypt(newPassword);
+      const [updated] = await db
+        .update(users)
+        .set({
+          passwordHash: nextHash,
+          mustChangePassword: false,
+          updatedAt: new Date(),
+        })
+        .where(eq(users.uid, me.uid))
+        .returning();
+
+      await db
+        .update(allowedAccounts)
+        .set({
+          mustChangePassword: false,
+          accountProvisioned: true,
+          updatedAt: new Date(),
+        })
+        .where(eq(allowedAccounts.emailHash, hashEmail(userRow.email)));
+
+      await logServerAudit(
+        me,
+        'Actualizó su contraseña personal',
+        'Seguridad',
+        userRow.email
+      );
+
+      const token = signSessionToken(updated.uid, updated.email);
+      setSessionCookie(req, res, token);
+      const userProfile = await buildAuthedUserProfile(updated);
+
+      res.json({ ok: true, token, user: userProfile });
+    } catch (error) {
+      console.error('Change own password error:', error);
+      res.status(500).json({ error: 'No fue posible actualizar tu contraseña.' });
     }
   });
 

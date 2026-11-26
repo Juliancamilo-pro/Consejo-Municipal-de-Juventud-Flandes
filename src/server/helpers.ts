@@ -118,6 +118,10 @@ export interface AuthedUser {
   commissionId: string;
   phone: string;
   active: boolean;
+  verificado: boolean;
+  verificadoAt: string;
+  cargoDeclarado: string;
+  coordDeclaradaPendiente: boolean;
   mustChangePassword: boolean;
   fullName: string;
   coordinatorCommissionIds: string[];
@@ -283,12 +287,39 @@ export async function buildAuthedUserProfile(userRow: typeof users.$inferSelect)
     commissionId: userRow.commissionId,
     phone: userRow.phone,
     active: userRow.active,
+    verificado: Boolean(userRow.verificado),
+    verificadoAt: userRow.verificadoAt || '',
+    cargoDeclarado: userRow.cargoDeclarado || '',
+    coordDeclaradaPendiente: Boolean(userRow.coordDeclaradaPendiente),
     mustChangePassword: userRow.mustChangePassword,
     fullName: pubRows[0]?.fullName || userRow.email.split('@')[0] || 'Consejero CMJ',
     coordinatorCommissionIds,
     grantedPermissions: activeGrants,
     effectivePermissions,
   };
+}
+
+export async function expireOutdatedGrantedPermissions(): Promise<void> {
+  try {
+    const activeTemporal = await db
+      .select()
+      .from(grantedPermissions)
+      .where(and(eq(grantedPermissions.active, true), eq(grantedPermissions.durationType, 'temporal')));
+
+    const nowMs = Date.now();
+    for (const g of activeTemporal) {
+      if (!g.expiresAt) continue;
+      const expMs = Date.parse(g.expiresAt);
+      if (!Number.isNaN(expMs) && expMs <= nowMs) {
+        await db
+          .update(grantedPermissions)
+          .set({ active: false })
+          .where(eq(grantedPermissions.id, g.id));
+      }
+    }
+  } catch (err) {
+    console.error('Expire outdated grants error:', err);
+  }
 }
 
 export async function resolveAuthUser(req: Request): Promise<AuthedUser | null> {
@@ -627,6 +658,19 @@ export async function ensureMinimalStructure() {
               })
               .where(eq(publicCouncilors.uid, u.uid));
           }
+          if (u.uid === 'uid_secretario_bootstrap' && !u.verificado) {
+            const nowIso = new Date().toISOString();
+            await db
+              .update(users)
+              .set({ verificado: true, verificadoAt: nowIso })
+              .where(eq(users.uid, u.uid));
+            if (pub) {
+              await db
+                .update(publicCouncilors)
+                .set({ verificado: true, verificadoAt: nowIso })
+                .where(eq(publicCouncilors.uid, u.uid));
+            }
+          }
         }
       }
     } catch (error) {
@@ -650,7 +694,7 @@ export async function getSecurityRecord() {
 
 export async function buildPrivatePayload(user: AuthedUser) {
   await ensureMinimalStructure();
-  await syncPendingReminders48h();
+  await Promise.all([syncPendingReminders48h(), expireOutdatedGrantedPermissions()]);
 
   const canViewUsers = userHasPermission(user, 'usuarios.ver');
   const canViewBuzon = userHasPermission(user, 'buzon.ver');
@@ -773,6 +817,11 @@ export async function buildPrivatePayload(user: AuthedUser) {
       roleLabel: u.roleLabel,
       commissionId: u.commissionId,
       active: u.active,
+      verificado: Boolean(u.verificado),
+      verificadoAt: u.verificadoAt || '',
+      cargoDeclarado: u.cargoDeclarado || '',
+      coordDeclaradaPendiente: Boolean(u.coordDeclaradaPendiente),
+      coordDeclaradaComisionId: u.coordDeclaradaComisionId || '',
       mustChangePassword: u.mustChangePassword,
       createdAt: u.createdAt,
       updatedAt: u.updatedAt,

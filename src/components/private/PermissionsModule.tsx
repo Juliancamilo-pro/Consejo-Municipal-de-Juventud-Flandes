@@ -6,6 +6,7 @@ import {
   Clock,
   Download,
   FileCheck2,
+  FileText,
   KeyRound,
   Paperclip,
   Send,
@@ -15,8 +16,10 @@ import {
 } from 'lucide-react';
 import { ApiRequestError, apiRequest } from '../../lib/apiClient';
 import { exportStyledWorkbook } from '../../lib/excelExport';
+import { downloadPermissionRequestDocx } from '../../lib/permissionDocxExport';
 import {
   PERMISSIONS_CATALOG,
+  countRealJustificationChars,
   getPermissionMeta,
   isGrantActive,
   validatePermissionJustification,
@@ -91,6 +94,66 @@ function isOverdue48h(req: PermissionRequest): boolean {
   return Date.now() - ref >= 48 * 60 * 60 * 1000;
 }
 
+type EffectiveRequestBadge = {
+  state: 'pendiente' | 'aprobada' | 'rechazada' | 'vencida' | 'revocado' | 'cancelada';
+  label: string;
+  badgeClass: string;
+};
+
+function getEffectiveRequestBadge(
+  req: PermissionRequest,
+  grants: GrantedPermission[]
+): EffectiveRequestBadge {
+  if (req.status.startsWith('pendiente_')) {
+    const meta = STATUS_META[req.status];
+    return {
+      state: 'pendiente',
+      label: `Pendiente · ${meta.label}`,
+      badgeClass: meta.badgeClass,
+    };
+  }
+  if (req.status === 'rechazada') {
+    return {
+      state: 'rechazada',
+      label: STATUS_META.rechazada.label,
+      badgeClass: STATUS_META.rechazada.badgeClass,
+    };
+  }
+  if (req.status === 'cancelada') {
+    return {
+      state: 'cancelada',
+      label: STATUS_META.cancelada.label,
+      badgeClass: STATUS_META.cancelada.badgeClass,
+    };
+  }
+  const linkedGrant = grants.find((g) => g.requestId === req.id);
+  if (linkedGrant?.revokedAt) {
+    return {
+      state: 'revocado',
+      label: 'Revocada',
+      badgeClass: 'bg-rose-100 text-rose-800 dark:bg-rose-950/50 dark:text-rose-300',
+    };
+  }
+  const isExpiredByGrant = linkedGrant ? !isGrantActive(linkedGrant) : false;
+  const expTs = req.expiresAt ? Date.parse(req.expiresAt) : NaN;
+  const isExpiredByDate =
+    req.durationType === 'temporal' &&
+    !Number.isNaN(expTs) &&
+    expTs <= Date.now();
+  if (isExpiredByGrant || isExpiredByDate) {
+    return {
+      state: 'vencida',
+      label: 'Vencida',
+      badgeClass: 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
+    };
+  }
+  return {
+    state: 'aprobada',
+    label: 'Aprobada',
+    badgeClass: STATUS_META.aprobada.badgeClass,
+  };
+}
+
 export function PermissionsModule({
   uid,
   roleLabel,
@@ -155,12 +218,14 @@ export function PermissionsModule({
   const [attachmentUrl, setAttachmentUrl] = useState('');
   const [attachmentName, setAttachmentName] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [lastSubmittedRequest, setLastSubmittedRequest] = useState<PermissionRequest | null>(null);
+  const [downloadingDocxId, setDownloadingDocxId] = useState<string | null>(null);
 
   // Filtros en bandeja de aprobaciones / historial
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'todas' | 'pendientes_mi' | 'en_curso' | 'aprobada' | 'rechazada'>(
-    canApproveAny ? 'pendientes_mi' : 'en_curso'
-  );
+  const [statusFilter, setStatusFilter] = useState<
+    'todas' | 'pendientes_mi' | 'en_curso' | 'aprobada' | 'rechazada' | 'vencida_revocada'
+  >(canApproveAny ? 'pendientes_mi' : 'en_curso');
   const [page, setPage] = useState(1);
 
   // Modales de decisión, delegación, revocación y cancelación
@@ -186,6 +251,7 @@ export function PermissionsModule({
   }, [prefill]);
 
   const selectedMeta = useMemo(() => getPermissionMeta(selectedPermKey), [selectedPermKey]);
+  const realReasonChars = useMemo(() => countRealJustificationChars(reason), [reason]);
   const liveValidation = useMemo(
     () =>
       validatePermissionJustification({
@@ -245,13 +311,27 @@ export function PermissionsModule({
     [grantedPermissions]
   );
 
+  const duplicatePendingRequest = useMemo(() => {
+    const scopeId = selectedMeta.commissionScoped ? targetCommissionId : '';
+    return myRequests.find(
+      (r) =>
+        r.permissionKey === selectedPermKey &&
+        (r.targetCommissionId || '') === scopeId &&
+        r.status.startsWith('pendiente_')
+    );
+  }, [myRequests, selectedPermKey, selectedMeta.commissionScoped, targetCommissionId]);
+
   const filteredRequests = useMemo(() => {
     const q = search.trim().toLowerCase();
     return permissionRequests.filter((r) => {
+      const eff = getEffectiveRequestBadge(r, grantedPermissions);
       if (statusFilter === 'pendientes_mi' && !isMyPendingTurn(r)) return false;
       if (statusFilter === 'en_curso' && !r.status.startsWith('pendiente_')) return false;
-      if (statusFilter === 'aprobada' && r.status !== 'aprobada') return false;
-      if (statusFilter === 'rechazada' && r.status !== 'rechazada') return false;
+      if (statusFilter === 'aprobada' && eff.state !== 'aprobada') return false;
+      if (statusFilter === 'rechazada' && eff.state !== 'rechazada') return false;
+      if (statusFilter === 'vencida_revocada' && eff.state !== 'vencida' && eff.state !== 'revocado') {
+        return false;
+      }
       if (!q) return true;
       return (
         r.requesterName.toLowerCase().includes(q) ||
@@ -261,7 +341,7 @@ export function PermissionsModule({
       );
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [permissionRequests, statusFilter, search, permissionApprovalSteps, uid]);
+  }, [permissionRequests, grantedPermissions, statusFilter, search, permissionApprovalSteps, uid]);
 
   const PAGE_SIZE = 6;
   const pagedRequests = filteredRequests.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -271,28 +351,63 @@ export function PermissionsModule({
     return publicCouncilors.filter((c) => c.active && (activeUids.size === 0 || activeUids.has(c.uid)));
   }, [publicCouncilors, privateCouncilors]);
 
+  const handleDownloadWord = async (req: PermissionRequest) => {
+    setDownloadingDocxId(req.id);
+    try {
+      const applicantPub = publicCouncilors.find((p) => p.uid === req.requesterUid);
+      const applicantPriv = privateCouncilors.find((p) => p.uid === req.requesterUid);
+      const eff = getEffectiveRequestBadge(req, grantedPermissions);
+      await downloadPermissionRequestDocx({
+        request: req,
+        applicantPosition:
+          applicantPub?.cargoDeclarado || applicantPriv?.cargoDeclarado || req.requesterRoleLabel,
+        applicantCommission:
+          applicantPub?.commissionName ||
+          req.targetCommissionName ||
+          'Sin comisión asignada',
+        steps: stepsByReq.get(req.id) || [],
+        effectiveStatusLabel: eff.label,
+      });
+      showToast('Plantilla Word (.docx) descargada correctamente.', 'success');
+    } catch {
+      showToast('No fue posible generar el documento Word.', 'error');
+    } finally {
+      setDownloadingDocxId(null);
+    }
+  };
+
   const handleSubmitRequest = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (duplicatePendingRequest) {
+      showToast('Ya tienes una solicitud pendiente en curso para este permiso.', 'error');
+      return;
+    }
     if (!liveValidation.valid) {
       showToast(liveValidation.error || 'Completa la justificación obligatoria.', 'error');
       return;
     }
     setSubmitting(true);
     try {
-      await apiRequest('/api/permissions/requests', {
-        method: 'POST',
-        body: {
-          permissionKey: selectedPermKey,
-          targetModule: selectedMeta.moduleLabel,
-          targetCommissionId: selectedMeta.commissionScoped ? targetCommissionId : '',
-          purpose: purpose.trim(),
-          reason: reason.trim(),
-          durationType,
-          expiresAt: durationType === 'temporal' ? new Date(expiresAt).toISOString() : '',
-          attachmentUrl,
-          attachmentName,
-        },
-      });
+      const res = await apiRequest<{ id: string; status: PermissionRequest['status']; request?: PermissionRequest; ok: boolean }>(
+        '/api/permissions/requests',
+        {
+          method: 'POST',
+          body: {
+            permissionKey: selectedPermKey,
+            targetModule: selectedMeta.moduleLabel,
+            targetCommissionId: selectedMeta.commissionScoped ? targetCommissionId : '',
+            purpose: purpose.trim(),
+            reason: reason.trim(),
+            durationType,
+            expiresAt: durationType === 'temporal' ? new Date(expiresAt).toISOString() : '',
+            attachmentUrl,
+            attachmentName,
+          },
+        }
+      );
+      if (res.request) {
+        setLastSubmittedRequest(res.request);
+      }
       showToast('Solicitud radicada en flujo secuencial (Presidente → Vicepresidente → Secretario).', 'success');
       setPurpose('');
       setReason('');
@@ -667,10 +782,10 @@ export function PermissionsModule({
                     </label>
                     <span
                       className={`text-[11px] font-bold font-mono-num ${
-                        reason.trim().length >= 100 ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-600'
+                        realReasonChars >= 100 ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-600'
                       }`}
                     >
-                      {reason.trim().length} / 100
+                      {realReasonChars} / 100 reales
                     </span>
                   </div>
                   <textarea
@@ -717,6 +832,18 @@ export function PermissionsModule({
                   )}
                 </div>
 
+                {duplicatePendingRequest && (
+                  <div className="rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 p-3 text-xs text-amber-800 dark:text-amber-200 flex items-start gap-2">
+                    <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-bold">Solicitud duplicada detectada</p>
+                      <p className="text-[11px] mt-0.5">
+                        Ya tienes una solicitud pendiente ({duplicatePendingRequest.id}) para este mismo permiso y alcance. Espera su decisión o cancélala en “Mis solicitudes” antes de radicar otra.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
                 <div className="space-y-2 pt-1">
                   <label className="text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center gap-1.5">
                     <Paperclip className="h-3.5 w-3.5" /> Documento o soporte opcional (PDF/imagen)
@@ -738,7 +865,7 @@ export function PermissionsModule({
                 <div className="pt-2 flex justify-end">
                   <button
                     type="submit"
-                    disabled={submitting || !liveValidation.valid}
+                    disabled={submitting || !liveValidation.valid || Boolean(duplicatePendingRequest)}
                     className="min-h-[42px] inline-flex items-center gap-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 px-5 py-2.5 text-xs font-bold text-white cursor-pointer whitespace-nowrap"
                   >
                     <Send className="h-3.5 w-3.5" />
@@ -785,6 +912,40 @@ export function PermissionsModule({
       {/* TAB 2: MIS SOLICITUDES Y PERMISOS ACTIVOS */}
       {tab === 'mis_solicitudes' && (
         <div className="space-y-6">
+          {lastSubmittedRequest && (
+            <div className="rounded-2xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50/80 dark:bg-emerald-950/30 p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="space-y-1">
+                <p className="text-sm font-bold text-emerald-900 dark:text-emerald-200 flex items-center gap-2">
+                  <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                  Solicitud radicada con éxito (Radicado: {lastSubmittedRequest.id})
+                </p>
+                <p className="text-xs text-emerald-800 dark:text-emerald-300">
+                  Puedes descargar ahora la plantilla oficial en Word con todos tus datos, justificación y espacios de firma.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  disabled={downloadingDocxId === lastSubmittedRequest.id}
+                  onClick={() => handleDownloadWord(lastSubmittedRequest)}
+                  className="min-h-[40px] inline-flex items-center gap-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 px-4 py-2 text-xs font-bold text-white cursor-pointer whitespace-nowrap disabled:opacity-60"
+                >
+                  <FileText className="h-4 w-4" />
+                  {downloadingDocxId === lastSubmittedRequest.id
+                    ? 'Generando Word...'
+                    : 'Descargar plantilla Word'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLastSubmittedRequest(null)}
+                  className="min-h-[40px] rounded-xl border border-emerald-300 dark:border-emerald-800 px-3 py-2 text-xs font-semibold text-emerald-800 dark:text-emerald-200 cursor-pointer"
+                >
+                  Ocultar
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 space-y-3">
             <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
               <ShieldCheck className="h-4 w-4 text-emerald-600" /> Mis permisos especiales vigentes ({myActiveGrants.length})
@@ -827,7 +988,7 @@ export function PermissionsModule({
               />
             ) : (
               myRequests.map((req) => {
-                const st = STATUS_META[req.status];
+                const eff = getEffectiveRequestBadge(req, grantedPermissions);
                 return (
                   <div
                     key={req.id}
@@ -839,8 +1000,8 @@ export function PermissionsModule({
                           <h4 className="text-sm font-bold text-slate-900 dark:text-white">
                             {req.permissionLabel}
                           </h4>
-                          <span className={`rounded-md px-2 py-0.5 text-[11px] font-bold ${st.badgeClass}`}>
-                            {st.label}
+                          <span className={`rounded-md px-2 py-0.5 text-[11px] font-bold ${eff.badgeClass}`}>
+                            {eff.label}
                           </span>
                           {isOverdue48h(req) && (
                             <span className="rounded-md bg-amber-600 text-white px-2 py-0.5 text-[10px] font-bold inline-flex items-center gap-1">
@@ -849,22 +1010,33 @@ export function PermissionsModule({
                           )}
                         </div>
                         <p className="text-xs text-slate-500 mt-1">
-                          Alcance: {req.targetModule}
+                          Radicado: <span className="font-mono-num">{req.id}</span> · Alcance: {req.targetModule}
                           {req.targetCommissionName ? ` (${req.targetCommissionName})` : ''} ·{' '}
                           {req.durationType === 'permanente'
                             ? 'Permanente'
                             : `Temporal hasta ${formatDateTime(req.expiresAt)}`}
                         </p>
                       </div>
-                      {req.status.startsWith('pendiente_') && (
+                      <div className="flex flex-wrap items-center gap-2">
                         <button
                           type="button"
-                          onClick={() => setCancelTarget(req)}
-                          className="min-h-[36px] rounded-xl border border-rose-200 dark:border-rose-900 px-3 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 cursor-pointer"
+                          disabled={downloadingDocxId === req.id}
+                          onClick={() => handleDownloadWord(req)}
+                          className="min-h-[36px] inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/70 dark:bg-emerald-950/30 px-3 py-1.5 text-xs font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 cursor-pointer whitespace-nowrap disabled:opacity-60"
                         >
-                          Cancelar solicitud
+                          <FileText className="h-3.5 w-3.5" />
+                          {downloadingDocxId === req.id ? 'Generando...' : 'Descargar plantilla Word'}
                         </button>
-                      )}
+                        {req.status.startsWith('pendiente_') && (
+                          <button
+                            type="button"
+                            onClick={() => setCancelTarget(req)}
+                            className="min-h-[36px] rounded-xl border border-rose-200 dark:border-rose-900 px-3 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 cursor-pointer"
+                          >
+                            Cancelar solicitud
+                          </button>
+                        )}
+                      </div>
                     </div>
                     <p className="text-xs text-slate-700 dark:text-slate-200 bg-slate-50 dark:bg-slate-950 rounded-xl p-3 border border-slate-100 dark:border-slate-800">
                       <strong>Finalidad:</strong> {req.purpose} — {req.reason}
@@ -904,6 +1076,7 @@ export function PermissionsModule({
                   ['en_curso', 'En curso'],
                   ['aprobada', 'Aprobadas'],
                   ['rechazada', 'Rechazadas'],
+                  ['vencida_revocada', 'Vencidas / Revocadas'],
                   ['todas', 'Todas'],
                 ] as const
               ).map(([val, lbl]) => (
@@ -935,7 +1108,7 @@ export function PermissionsModule({
           ) : (
             <div className="space-y-4">
               {pagedRequests.map((req) => {
-                const st = STATUS_META[req.status];
+                const eff = getEffectiveRequestBadge(req, grantedPermissions);
                 const myTurn = isMyPendingTurn(req);
                 const overdue = isOverdue48h(req);
                 return (
@@ -953,8 +1126,8 @@ export function PermissionsModule({
                           <h4 className="text-sm font-bold text-slate-900 dark:text-white">
                             {req.requesterName} ({req.requesterRoleLabel}) → {req.permissionLabel}
                           </h4>
-                          <span className={`rounded-md px-2 py-0.5 text-[11px] font-bold ${st.badgeClass}`}>
-                            {st.label}
+                          <span className={`rounded-md px-2 py-0.5 text-[11px] font-bold ${eff.badgeClass}`}>
+                            {eff.label}
                           </span>
                           {overdue && (
                             <span className="rounded-md bg-amber-600 text-white px-2 py-0.5 text-[10px] font-bold inline-flex items-center gap-1">
@@ -963,7 +1136,7 @@ export function PermissionsModule({
                           )}
                         </div>
                         <p className="text-xs text-slate-500">
-                          {req.requesterEmail} · Alcance: {req.targetModule}
+                          Radicado: <span className="font-mono-num">{req.id}</span> · {req.requesterEmail} · Alcance: {req.targetModule}
                           {req.targetCommissionName ? ` (${req.targetCommissionName})` : ''} ·{' '}
                           {req.durationType === 'permanente'
                             ? 'Permanente'
@@ -972,6 +1145,15 @@ export function PermissionsModule({
                       </div>
 
                       <div className="flex flex-wrap items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          disabled={downloadingDocxId === req.id}
+                          onClick={() => handleDownloadWord(req)}
+                          className="min-h-[38px] inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/70 dark:bg-emerald-950/30 px-3 py-2 text-xs font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 cursor-pointer whitespace-nowrap disabled:opacity-60"
+                        >
+                          <FileText className="h-3.5 w-3.5" />
+                          {downloadingDocxId === req.id ? 'Generando...' : 'Descargar plantilla Word'}
+                        </button>
                         {myTurn && (
                           <>
                             <button

@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import {
   AlertTriangle,
+  BadgeCheck,
   Camera,
   Check,
   Download,
@@ -9,6 +10,7 @@ import {
   KeyRound,
   Plus,
   Shield,
+  ShieldOff,
   Trash2,
   UserCheck,
   UserX,
@@ -28,6 +30,7 @@ import type {
   RoleLabel,
 } from '../../types/cmj';
 import { MediaUploader, type UploadedFileInfo } from '../MediaUploader';
+import { VerifiedBadge } from '../VerifiedBadge';
 import { AvatarBadge } from '../public/AvatarBadge';
 import { useToast } from '../ToastProvider';
 import {
@@ -431,6 +434,30 @@ export function UsersAndBoardModule({
     } catch (err) {
       const msg =
         err instanceof ApiRequestError ? err.message : 'No se pudo cambiar el estado';
+      showToast(msg, 'error');
+    }
+  };
+
+  const handleToggleVerified = async (pub: PublicCouncilor) => {
+    if (pub.uid === uid) {
+      showToast('No puedes verificar tu propio perfil.', 'error');
+      return;
+    }
+    const nextVerified = !pub.verificado;
+    try {
+      await apiRequest(`/api/councilors/${encodeURIComponent(pub.uid)}`, {
+        method: 'PATCH',
+        body: { verificado: nextVerified },
+      });
+      showToast(
+        nextVerified
+          ? `${pub.fullName} verificado con insignia oficial`
+          : `Se retiró la verificación de ${pub.fullName}`,
+        nextVerified ? 'success' : 'info'
+      );
+    } catch (err) {
+      const msg =
+        err instanceof ApiRequestError ? err.message : 'No se pudo actualizar la verificación';
       showToast(msg, 'error');
     }
   };
@@ -847,9 +874,12 @@ export function UsersAndBoardModule({
                             size="md"
                           />
                           <div className="min-w-0">
-                            <p className="text-sm font-bold text-slate-900 dark:text-white truncate">
-                              {pub.fullName}
-                            </p>
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <p className="text-sm font-bold text-slate-900 dark:text-white truncate">
+                                {pub.fullName}
+                              </p>
+                              {pub.verificado && <VerifiedBadge size="xs" />}
+                            </div>
                             <p className="text-xs text-slate-500 dark:text-slate-400">
                               {pub.roleLabel} · {pub.active ? 'Activo' : 'Inactivo'}
                             </p>
@@ -866,6 +896,16 @@ export function UsersAndBoardModule({
                           {pub.commissionName || 'Sin comisión'} ·{' '}
                           {formatAffiliation(pub.affiliationType, pub.affiliationName)}
                         </p>
+                        {pub.cargoDeclarado && pub.cargoDeclarado !== pub.roleLabel && (
+                          <p className="text-[11px] font-medium text-blue-700 dark:text-cyan-300">
+                            Cargo declarado al registrarse: {pub.cargoDeclarado}
+                          </p>
+                        )}
+                        {pub.coordDeclaradaPendiente && (
+                          <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-900/60 px-2 py-0.5 text-[10px] font-semibold text-amber-800 dark:text-amber-300">
+                            Coordinación declarada, pendiente de confirmación
+                          </span>
+                        )}
                       </div>
 
                       <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-100 dark:border-slate-800">
@@ -885,6 +925,27 @@ export function UsersAndBoardModule({
                             >
                               <Edit3 className="h-3.5 w-3.5" /> Editar
                             </button>
+                            {pub.uid !== uid && (
+                              <button
+                                type="button"
+                                onClick={() => handleToggleVerified(pub)}
+                                className={`min-h-[38px] inline-flex items-center gap-1 rounded-xl border px-2.5 py-1.5 text-xs font-semibold cursor-pointer ${
+                                  pub.verificado
+                                    ? 'border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/70 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300'
+                                    : 'border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200'
+                                }`}
+                              >
+                                {pub.verificado ? (
+                                  <>
+                                    <ShieldOff className="h-3.5 w-3.5" /> Quitar verificación
+                                  </>
+                                ) : (
+                                  <>
+                                    <BadgeCheck className="h-3.5 w-3.5 text-emerald-600" /> Verificar
+                                  </>
+                                )}
+                              </button>
+                            )}
                           </>
                         )}
                         {pub.uid !== uid && (
@@ -986,7 +1047,10 @@ export function UsersAndBoardModule({
                             statusIndicator={pub.active ? 'active' : 'inactive'}
                             size="sm"
                           />
-                          <span className="truncate max-w-[180px]">{pub.fullName}</span>
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="truncate max-w-[170px]">{pub.fullName}</span>
+                            {pub.verificado && <VerifiedBadge size="xs" />}
+                          </div>
                         </div>
                       )}
                     </td>
@@ -1056,6 +1120,19 @@ export function UsersAndBoardModule({
                                 Coord. Com. {c.number}
                               </span>
                             ))}
+                          {pub.cargoDeclarado && pub.cargoDeclarado !== pub.roleLabel && (
+                            <span className="inline-block rounded-md bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                              Declaró: {pub.cargoDeclarado}
+                            </span>
+                          )}
+                          {pub.coordDeclaradaPendiente && (
+                            <span
+                              title="Declaró coordinación al auto-registrarse. Confirmar en el módulo Comisiones."
+                              className="inline-block rounded-md bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-900/60 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:text-amber-300"
+                            >
+                              Coordinación declarada, pendiente de confirmación
+                            </span>
+                          )}
                           {(() => {
                             const userGrants = grantedPermissions.filter(
                               (g) => g.userUid === pub.uid && isGrantActive(g)
@@ -1188,6 +1265,29 @@ export function UsersAndBoardModule({
                                 >
                                   <Edit3 className="h-3.5 w-3.5" />
                                 </button>
+                                {pub.uid !== uid && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleToggleVerified(pub)}
+                                    title={pub.verificado ? 'Quitar verificación' : 'Verificar consejero'}
+                                    aria-label={
+                                      pub.verificado
+                                        ? `Quitar verificación a ${pub.fullName}`
+                                        : `Verificar a ${pub.fullName}`
+                                    }
+                                    className={`rounded-lg p-1.5 cursor-pointer ${
+                                      pub.verificado
+                                        ? 'text-emerald-600 bg-emerald-50/70 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-950/70'
+                                        : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-emerald-600'
+                                    }`}
+                                  >
+                                    {pub.verificado ? (
+                                      <ShieldOff className="h-3.5 w-3.5" />
+                                    ) : (
+                                      <BadgeCheck className="h-3.5 w-3.5" />
+                                    )}
+                                  </button>
+                                )}
                               </>
                             )}
                             {pub.uid !== uid && (

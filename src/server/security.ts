@@ -66,6 +66,13 @@ export function verifySecretHash(candidate: string, storedHash: string): boolean
   return false;
 }
 
+export function timingSafeEqualStrings(candidate: string, expected: string): boolean {
+  if (!candidate || !expected) return false;
+  const a = crypto.createHash('sha256').update(candidate, 'utf8').digest();
+  const b = crypto.createHash('sha256').update(expected, 'utf8').digest();
+  return crypto.timingSafeEqual(a, b);
+}
+
 export function getInitialSecurityHashesFromEnvOrDefaults(): {
   inviteCodeHash: string;
   initialPasswordHash: string;

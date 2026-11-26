@@ -47,6 +47,11 @@ export interface PublicCouncilor {
   instagram?: string;
   facebook?: string;
   active: boolean;
+  verificado?: boolean;
+  verificadoAt?: string;
+  cargoDeclarado?: string;
+  coordDeclaradaPendiente?: boolean;
+  coordDeclaradaComisionId?: string;
   displayOrder?: number;
   updatedAt?: unknown;
 }
@@ -59,6 +64,11 @@ export interface CouncilorPrivate {
   roleLabel: RoleLabel;
   commissionId: string;
   active?: boolean;
+  verificado?: boolean;
+  verificadoAt?: string;
+  cargoDeclarado?: string;
+  coordDeclaradaPendiente?: boolean;
+  coordDeclaradaComisionId?: string;
   mustChangePassword: boolean;
   createdAt?: unknown;
   updatedAt?: unknown;

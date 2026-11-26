@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   AlertCircle,
+  CheckCircle2,
   Eye,
   EyeOff,
   KeyRound,
@@ -9,6 +10,7 @@ import {
   Lock,
   Mail,
   ShieldCheck,
+  UserPlus,
   X,
 } from 'lucide-react';
 import {
@@ -18,15 +20,27 @@ import {
   setAuthTokenInMemory,
   type SessionUser,
 } from '../lib/apiClient';
+import { STRUCTURAL_COMMISSIONS } from '../lib/seedData';
+import type { Commission } from '../types/cmj';
 import { BrandLogo } from './BrandLogo';
 import { useToast } from './ToastProvider';
 
-type AuthTab = 'login' | 'activate' | 'help';
+type AuthTab = 'login' | 'register' | 'activate' | 'help';
+
+const SELF_REG_CARGOS = [
+  'Consejero',
+  'Consejero Departamental',
+  'Presidente',
+  'Vicepresidente',
+  'Secretario',
+  'Delegado / Otro',
+];
 
 export function AuthModal({
   open,
   initialTab = 'login',
   currentUser,
+  commissions = [],
   onClose,
   onAuthenticated,
   onSessionInitialSecret,
@@ -34,6 +48,7 @@ export function AuthModal({
   open: boolean;
   initialTab?: 'login' | 'change_password';
   currentUser: SessionUser | null;
+  commissions?: Commission[];
   onClose: () => void;
   onAuthenticated: (user: SessionUser) => void;
   onSessionInitialSecret?: (secret: string) => void;
@@ -55,12 +70,28 @@ export function AuthModal({
   const [errorHint, setErrorHint] = useState<string | null>(null);
   const [suggestActivate, setSuggestActivate] = useState(false);
 
+  // Estado de auto-registro
+  const [regFullName, setRegFullName] = useState('');
+  const [regEmail, setRegEmail] = useState('');
+  const [regCargo, setRegCargo] = useState('Consejero');
+  const [regCommissionId, setRegCommissionId] = useState('');
+  const [regIsCoordinator, setRegIsCoordinator] = useState<'no' | 'si'>('no');
+  const [regInitialPassword, setRegInitialPassword] = useState('');
+  const [regActivationCode, setRegActivationCode] = useState('');
+  const [showRegPass, setShowRegPass] = useState(false);
+  const [showRegCode, setShowRegCode] = useState(false);
+  const [regSuccessMsg, setRegSuccessMsg] = useState<string | null>(null);
+
+  const availableCommissions =
+    commissions.length > 0 ? commissions : STRUCTURAL_COMMISSIONS;
+
   useEffect(() => {
     if (open) {
       setTab(initialTab === 'change_password' ? 'activate' : 'login');
       setErrorMsg(null);
       setErrorHint(null);
       setSuggestActivate(false);
+      setRegSuccessMsg(null);
     }
   }, [open, initialTab]);
 
@@ -68,6 +99,7 @@ export function AuthModal({
     setErrorMsg(null);
     setErrorHint(null);
     setSuggestActivate(false);
+    setRegSuccessMsg(null);
   };
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -103,6 +135,69 @@ export function AuthModal({
         }
       } else {
         setErrorMsg('No fue posible iniciar sesión. Verifica tu conexión.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSelfRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    clearFeedback();
+
+    const cleanName = regFullName.trim();
+    const cleanEmail = regEmail.trim().toLowerCase();
+
+    if (cleanName.length < 3) {
+      setErrorMsg('Ingresa tu nombre completo (mínimo 3 caracteres).');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      setErrorMsg('Ingresa un correo electrónico válido.');
+      return;
+    }
+    if (!regInitialPassword.trim() || !regActivationCode.trim()) {
+      setErrorMsg('Debes ingresar tanto la contraseña inicial como el código de activación.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await apiRequest<{ ok: boolean; email: string; message: string }>(
+        '/api/auth/register',
+        {
+          method: 'POST',
+          body: {
+            fullName: cleanName,
+            email: cleanEmail,
+            cargo: regCargo,
+            commissionId: regCommissionId,
+            isCoordinator: regIsCoordinator === 'si',
+            initialPassword: regInitialPassword,
+            activationCode: regActivationCode,
+          },
+          skipRefresh: true,
+        }
+      );
+
+      setRegSuccessMsg(
+        res.message ||
+          'Registro exitoso. Por seguridad cambia tu contraseña al ingresar al portal privado.'
+      );
+      setEmail(cleanEmail);
+      setRegInitialPassword('');
+      setRegActivationCode('');
+      setRegFullName('');
+      setRegEmail('');
+      setRegCommissionId('');
+      setRegIsCoordinator('no');
+      showToast('Registro completado correctamente', 'success');
+    } catch (err) {
+      if (err instanceof ApiRequestError) {
+        setErrorMsg(err.message);
+        setErrorHint(err.hint || null);
+      } else {
+        setErrorMsg('No fue posible completar el registro. Verifica tu conexión.');
       }
     } finally {
       setLoading(false);
@@ -181,7 +276,7 @@ export function AuthModal({
             exit={{ opacity: 0, scale: 0.95, y: 12 }}
             transition={{ duration: 0.2 }}
             onClick={(e) => e.stopPropagation()}
-            className="w-full sm:max-w-md h-[100dvh] sm:h-auto sm:max-h-[90dvh] overflow-y-auto rounded-none sm:rounded-3xl border-0 sm:border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 sm:p-7 pb-safe-bottom shadow-2xl my-0 sm:my-auto"
+            className="w-full sm:max-w-lg h-[100dvh] sm:h-auto sm:max-h-[92dvh] overflow-y-auto rounded-none sm:rounded-3xl border-0 sm:border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 sm:p-7 pb-safe-bottom shadow-2xl my-0 sm:my-auto"
           >
             <div className="flex items-start justify-between gap-4">
               <div className="flex items-center gap-3">
@@ -193,6 +288,8 @@ export function AuthModal({
                   <h2 className="mt-0.5 text-xl font-bold text-slate-900 dark:text-white">
                     {tab === 'login'
                       ? 'Iniciar sesión'
+                      : tab === 'register'
+                      ? 'Registrarme como consejero'
                       : tab === 'activate'
                       ? currentUser
                         ? 'Cambiar mi contraseña'
@@ -211,7 +308,7 @@ export function AuthModal({
               </button>
             </div>
 
-            <div className="mt-5 grid grid-cols-3 gap-1 rounded-xl bg-slate-100 dark:bg-slate-800/80 p-1">
+            <div className="mt-5 grid grid-cols-2 sm:grid-cols-4 gap-1 rounded-xl bg-slate-100 dark:bg-slate-800/80 p-1">
               <button
                 type="button"
                 onClick={() => {
@@ -225,6 +322,20 @@ export function AuthModal({
                 }`}
               >
                 Iniciar sesión
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setTab('register');
+                  clearFeedback();
+                }}
+                className={`rounded-lg py-2 px-1.5 text-[11px] sm:text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
+                  tab === 'register'
+                    ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                Registrarme
               </button>
               <button
                 type="button"
@@ -355,6 +466,206 @@ export function AuthModal({
                   Ingreso directo solo con correo y contraseña, sin verificación en dos pasos ni códigos SMS.
                 </p>
               </form>
+            )}
+
+            {tab === 'register' && (
+              <div className="mt-5">
+                {regSuccessMsg ? (
+                  <div className="rounded-2xl border border-emerald-200 dark:border-emerald-900/60 bg-emerald-50 dark:bg-emerald-950/30 p-4 space-y-3">
+                    <div className="flex items-start gap-2.5 text-emerald-800 dark:text-emerald-200">
+                      <CheckCircle2 className="h-5 w-5 shrink-0 mt-0.5 text-emerald-600 dark:text-emerald-400" />
+                      <div className="space-y-1 text-xs">
+                        <p className="font-bold leading-relaxed">{regSuccessMsg}</p>
+                        <p className="text-[11px] text-emerald-700/90 dark:text-emerald-300/90 leading-relaxed">
+                          Tu cuenta quedó creada con rol inicial <strong>Consejero</strong> y pendiente de verificación institucional por la Mesa Directiva.
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTab('login');
+                        setRegSuccessMsg(null);
+                      }}
+                      className="w-full min-h-[42px] inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-700 py-2.5 text-xs font-semibold text-white hover:bg-emerald-800 transition-colors cursor-pointer"
+                    >
+                      Iniciar sesión ahora
+                    </button>
+                  </div>
+                ) : (
+                  <form onSubmit={handleSelfRegister} className="space-y-3.5">
+                    <div className="rounded-xl border border-blue-200/80 dark:border-blue-900/60 bg-blue-50/70 dark:bg-blue-950/30 px-3 py-2 text-[11px] text-blue-800 dark:text-blue-200 leading-relaxed">
+                      Todo auto-registro inicia con el perfil base <strong>Consejero</strong>. Si declaras otro cargo o coordinación de comisión, la Mesa Directiva confirmará tu asignación y verificará tu perfil.
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                          Nombre completo *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          minLength={3}
+                          value={regFullName}
+                          onChange={(e) => setRegFullName(e.target.value)}
+                          placeholder="Nombres y apellidos"
+                          className="w-full min-h-[40px] rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                          Correo electrónico *
+                        </label>
+                        <input
+                          type="email"
+                          required
+                          autoComplete="email"
+                          value={regEmail}
+                          onChange={(e) => setRegEmail(e.target.value)}
+                          placeholder="consejero@correo.com"
+                          className="w-full min-h-[40px] rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                          Cargo *
+                        </label>
+                        <select
+                          value={regCargo}
+                          onChange={(e) => setRegCargo(e.target.value)}
+                          className="w-full min-h-[40px] rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                          {SELF_REG_CARGOS.map((cargoOpt) => (
+                            <option key={cargoOpt} value={cargoOpt}>
+                              {cargoOpt}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                          Comisión
+                        </label>
+                        <select
+                          value={regCommissionId}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setRegCommissionId(val);
+                            if (!val) setRegIsCoordinator('no');
+                          }}
+                          className="w-full min-h-[40px] rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                          <option value="">Sin comisión asignada</option>
+                          {availableCommissions.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                        ¿Eres coordinador/a de la comisión?
+                      </label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setRegIsCoordinator('no')}
+                          className={`min-h-[38px] rounded-xl border px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer ${
+                            regIsCoordinator === 'no'
+                              ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-cyan-300'
+                              : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400'
+                          }`}
+                        >
+                          No
+                        </button>
+                        <button
+                          type="button"
+                          disabled={!regCommissionId}
+                          onClick={() => setRegIsCoordinator('si')}
+                          className={`min-h-[38px] rounded-xl border px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50 ${
+                            regIsCoordinator === 'si'
+                              ? 'border-amber-500 bg-amber-50 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300'
+                              : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400'
+                          }`}
+                        >
+                          Sí (requiere confirmación)
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                          Contraseña inicial *
+                        </label>
+                        <div className="relative">
+                          <Lock className="h-3.5 w-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                          <input
+                            type={showRegPass ? 'text' : 'password'}
+                            required
+                            autoComplete="new-password"
+                            value={regInitialPassword}
+                            onChange={(e) => setRegInitialPassword(e.target.value)}
+                            placeholder="Clave inicial CMJ"
+                            className="w-full min-h-[40px] rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 pl-8 pr-9 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowRegPass((v) => !v)}
+                            aria-label="Mostrar u ocultar contraseña inicial"
+                            className="absolute right-1 top-1/2 -translate-y-1/2 min-h-[34px] min-w-[34px] flex items-center justify-center rounded-lg text-slate-400 hover:text-slate-600 cursor-pointer"
+                          >
+                            {showRegPass ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                          </button>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                          Código de activación *
+                        </label>
+                        <div className="relative">
+                          <ShieldCheck className="h-3.5 w-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                          <input
+                            type={showRegCode ? 'text' : 'password'}
+                            required
+                            value={regActivationCode}
+                            onChange={(e) => setRegActivationCode(e.target.value)}
+                            placeholder="Código institucional"
+                            className="w-full min-h-[40px] rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 pl-8 pr-9 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowRegCode((v) => !v)}
+                            aria-label="Mostrar u ocultar código de activación"
+                            className="absolute right-1 top-1/2 -translate-y-1/2 min-h-[34px] min-w-[34px] flex items-center justify-center rounded-lg text-slate-400 hover:text-slate-600 cursor-pointer"
+                          >
+                            {showRegCode ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={loading}
+                      className="w-full min-h-[42px] inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-700 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800 disabled:opacity-60 transition-colors cursor-pointer"
+                    >
+                      {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
+                      {loading ? 'Validando registro...' : 'Registrarme en el portal'}
+                    </button>
+                  </form>
+                )}
+              </div>
             )}
 
             {tab === 'activate' && (

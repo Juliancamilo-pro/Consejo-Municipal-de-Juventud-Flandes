@@ -29,6 +29,7 @@ import {
 } from 'lucide-react';
 import type { Commission, PortalSettings, PublicCouncilor, PublicSection } from '../../types/cmj';
 import { BrandLogo } from '../BrandLogo';
+import { VerifiedBadge } from '../VerifiedBadge';
 import {
   AnimatedCounter,
   EmptyState,
@@ -495,8 +496,9 @@ export function IdentityAndDirectorySection({
                         >
                           {c.roleLabel}
                         </p>
-                        <h3 className="mt-0.5 text-base font-bold text-slate-900 dark:text-white leading-snug text-balance">
-                          {c.fullName}
+                        <h3 className="mt-0.5 text-base font-bold text-slate-900 dark:text-white leading-snug text-balance flex items-center gap-1.5">
+                          <span className="min-w-0 truncate">{c.fullName}</span>
+                          {c.verificado && <VerifiedBadge size="sm" />}
                         </h3>
                         <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400 truncate">
                           {c.commissionName || 'Sin comisión asignada'}
@@ -713,8 +715,9 @@ export function IdentityAndDirectorySection({
                   >
                     {selectedCouncilor.roleLabel}
                   </p>
-                  <h3 className="mt-1 text-xl font-extrabold text-slate-900 dark:text-white text-balance">
-                    {selectedCouncilor.fullName}
+                  <h3 className="mt-1 text-xl font-extrabold text-slate-900 dark:text-white text-balance flex items-center gap-2">
+                    <span>{selectedCouncilor.fullName}</span>
+                    {selectedCouncilor.verificado && <VerifiedBadge size="md" />}
                   </h3>
                   <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
                     {selectedCouncilor.commissionName || 'Sin comisión asignada'}
@@ -850,11 +853,17 @@ export function IdentityAndDirectorySection({
               )}
             </div>
 
-            <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 pt-1">
               <span className="inline-flex items-center gap-1.5">
                 <UserCheck className="h-3.5 w-3.5 text-emerald-600" />
                 Consejero Municipal de Juventud · Flandes, Tolima
               </span>
+              {selectedCouncilor.verificado && (
+                <span className="inline-flex items-center gap-1.5 font-semibold text-emerald-700 dark:text-emerald-400">
+                  <VerifiedBadge size="xs" />
+                  Consejero verificado del CMJ Flandes
+                </span>
+              )}
             </div>
           </div>
         </div>

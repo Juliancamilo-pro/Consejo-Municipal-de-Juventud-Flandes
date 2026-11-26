@@ -19,6 +19,11 @@ export const users = pgTable('users', {
   roleLabel: text('role_label').notNull().default('Consejero'),
   commissionId: text('commission_id').notNull().default(''),
   active: boolean('active').notNull().default(true),
+  verificado: boolean('verificado').notNull().default(false),
+  verificadoAt: text('verificado_at').notNull().default(''),
+  cargoDeclarado: text('cargo_declarado').notNull().default(''),
+  coordDeclaradaPendiente: boolean('coord_declarada_pendiente').notNull().default(false),
+  coordDeclaradaComisionId: text('coord_declarada_comision_id').notNull().default(''),
   mustChangePassword: boolean('must_change_password').notNull().default(false),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
@@ -84,6 +89,11 @@ export const publicCouncilors = pgTable('public_councilors', {
   instagram: text('instagram').notNull().default(''),
   facebook: text('facebook').notNull().default(''),
   active: boolean('active').notNull().default(true),
+  verificado: boolean('verificado').notNull().default(false),
+  verificadoAt: text('verificado_at').notNull().default(''),
+  cargoDeclarado: text('cargo_declarado').notNull().default(''),
+  coordDeclaradaPendiente: boolean('coord_declarada_pendiente').notNull().default(false),
+  coordDeclaradaComisionId: text('coord_declarada_comision_id').notNull().default(''),
   displayOrder: integer('display_order').notNull().default(50),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
@@ -601,4 +611,11 @@ export const sessionAgendaProposals = pgTable('session_agenda_proposals', {
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
 
-
+// Control persistente de intentos fallidos por IP en registro / autenticación
+export const authRateLimits = pgTable('auth_rate_limits', {
+  id: text('id').primaryKey(),
+  attempts: integer('attempts').notNull().default(0),
+  firstAttemptAt: text('first_attempt_at').notNull().default(''),
+  lockedUntil: text('locked_until').notNull().default(''),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});

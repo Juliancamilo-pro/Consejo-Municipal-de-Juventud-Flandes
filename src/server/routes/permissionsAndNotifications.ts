@@ -12,12 +12,14 @@ import {
 } from '../../db/schema.ts';
 import {
   getPermissionMeta,
+  normalizeRealText,
   PERMISSION_CATALOG_MAP,
   validatePermissionJustification,
 } from '../../lib/permissions.ts';
 import {
   type AuthedRequest,
   createPortalNotification,
+  expireOutdatedGrantedPermissions,
   isSafeUrl,
   logServerAudit,
   newId,
@@ -51,7 +53,7 @@ export function registerPermissionsAndNotificationsRoutes(app: express.Express) 
   // Listado de solicitudes, pasos de aprobación y permisos otorgados
   app.get('/api/permissions/requests', requireAuth, async (req: AuthedRequest, res) => {
     try {
-      await syncPendingReminders48h();
+      await Promise.all([syncPendingReminders48h(), expireOutdatedGrantedPermissions()]);
 
       const me = req.authUser!;
       const isApproverOrLeader =
@@ -123,8 +125,8 @@ export function registerPermissionsAndNotificationsRoutes(app: express.Express) 
       const targetModule = String(body.targetModule || catalogItem.moduleLabel).trim().slice(0, 120);
       const targetCommissionId =
         typeof body.targetCommissionId === 'string' ? body.targetCommissionId.trim().slice(0, 64) : '';
-      const purpose = String(body.purpose || '').trim().slice(0, 240);
-      const reason = String(body.reason || '').trim().slice(0, 2500);
+      const purpose = normalizeRealText(String(body.purpose || '')).slice(0, 240);
+      const reason = normalizeRealText(String(body.reason || '')).slice(0, 2500);
       const attachmentUrl =
         typeof body.attachmentUrl === 'string' && isSafeUrl(body.attachmentUrl)
           ? body.attachmentUrl.trim()
@@ -245,28 +247,31 @@ export function registerPermissionsAndNotificationsRoutes(app: express.Express) 
       const initialStatus: PermissionRequestStatus =
         STEP_TO_REQUEST_STATUS[firstPendingOrder] || 'pendiente_presidente';
 
-      await db.insert(permissionRequests).values({
-        id: requestId,
-        requesterUid: me.uid,
-        requesterName: me.fullName,
-        requesterEmail: me.email,
-        requesterRoleLabel: me.roleLabel,
-        permissionKey,
-        permissionLabel: catalogItem.label,
-        targetModule,
-        targetCommissionId,
-        targetCommissionName,
-        reason,
-        purpose,
-        durationType,
-        expiresAt: durationType === 'temporal' ? expiresAt : '',
-        attachmentUrl,
-        attachmentName,
-        status: initialStatus,
-        currentStepOrder: firstPendingOrder,
-        rejectionReason: '',
-        decidedByName: '',
-      });
+      const [createdRequest] = await db
+        .insert(permissionRequests)
+        .values({
+          id: requestId,
+          requesterUid: me.uid,
+          requesterName: me.fullName,
+          requesterEmail: me.email,
+          requesterRoleLabel: me.roleLabel,
+          permissionKey,
+          permissionLabel: catalogItem.label,
+          targetModule,
+          targetCommissionId,
+          targetCommissionName,
+          reason,
+          purpose,
+          durationType,
+          expiresAt: durationType === 'temporal' ? expiresAt : '',
+          attachmentUrl,
+          attachmentName,
+          status: initialStatus,
+          currentStepOrder: firstPendingOrder,
+          rejectionReason: '',
+          decidedByName: '',
+        })
+        .returning();
 
       await db.insert(permissionApprovalSteps).values(stepsToInsert);
 
@@ -304,7 +309,7 @@ export function registerPermissionsAndNotificationsRoutes(app: express.Express) 
         `${me.fullName} → ${catalogItem.label}`
       );
 
-      res.json({ id: requestId, status: initialStatus, ok: true });
+      res.json({ id: requestId, status: initialStatus, request: createdRequest, ok: true });
     } catch (error) {
       console.error('Create permission request failed:', error);
       res.status(500).json({ error: 'No fue posible radicar la solicitud de permiso.' });

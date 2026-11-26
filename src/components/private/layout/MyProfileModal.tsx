@@ -1,6 +1,21 @@
 import React, { useEffect, useState } from 'react';
-import { Trash2, UserCheck } from 'lucide-react';
-import { ApiRequestError, apiRequest } from '../../../lib/apiClient';
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Eye,
+  EyeOff,
+  KeyRound,
+  Lock,
+  Trash2,
+  UserCheck,
+} from 'lucide-react';
+import {
+  ApiRequestError,
+  apiRequest,
+  setAuthTokenInMemory,
+  triggerPortalRefresh,
+  type SessionUser,
+} from '../../../lib/apiClient';
 import { deleteStorageFile } from '../../../lib/storageUtils';
 import { useUnsavedChangesGuard } from '../../../lib/unsavedChanges';
 import type {
@@ -11,6 +26,7 @@ import type {
 } from '../../../types/cmj';
 import { MediaUploader, type UploadedFileInfo } from '../../MediaUploader';
 import { useToast } from '../../ToastProvider';
+import { VerifiedBadge } from '../../VerifiedBadge';
 import { AvatarBadge } from '../../public/AvatarBadge';
 import { ResponsiveModal } from '../../ui/DataTableUI';
 
@@ -54,6 +70,16 @@ export function MyProfileModal({
   const [formError, setFormError] = useState('');
   const [savingProfile, setSavingProfile] = useState(false);
 
+  // Cambio de contraseña personal
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showCurPass, setShowCurPass] = useState(false);
+  const [showNewPass, setShowNewPass] = useState(false);
+  const [changingPassword, setChangingPassword] = useState(false);
+  const [pwdError, setPwdError] = useState('');
+  const [pwdSuccess, setPwdSuccess] = useState('');
+
   useEffect(() => {
     if (open) {
       setEditName(fullName);
@@ -66,6 +92,11 @@ export function MyProfileModal({
       setEditAffiliationType(profile?.affiliationType || '');
       setEditAffiliationName(profile?.affiliationName || '');
       setFormError('');
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setPwdError('');
+      setPwdSuccess('');
     }
   }, [open, fullName, profile, privateRecord, email, commissionId]);
 
@@ -173,6 +204,53 @@ export function MyProfileModal({
     }
   };
 
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPwdError('');
+    setPwdSuccess('');
+
+    if (!currentPassword || !newPassword) {
+      setPwdError('Completa tu contraseña actual y la nueva contraseña.');
+      return;
+    }
+    if (newPassword.length < 8) {
+      setPwdError('La nueva contraseña debe tener al menos 8 caracteres.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPwdError('La confirmación no coincide con la nueva contraseña.');
+      return;
+    }
+
+    setChangingPassword(true);
+    try {
+      const res = await apiRequest<{ ok: boolean; token?: string; user?: SessionUser }>(
+        '/api/auth/change-password',
+        {
+          method: 'POST',
+          body: {
+            currentPassword,
+            newPassword,
+            confirmPassword,
+          },
+        }
+      );
+      if (res.token) setAuthTokenInMemory(res.token);
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setPwdSuccess('Contraseña personal actualizada correctamente.');
+      showToast('Contraseña actualizada con éxito', 'success');
+      triggerPortalRefresh();
+    } catch (err) {
+      const msg =
+        err instanceof ApiRequestError ? err.message : 'No fue posible cambiar la contraseña';
+      setPwdError(msg);
+    } finally {
+      setChangingPassword(false);
+    }
+  };
+
   return (
     <ResponsiveModal
       open={open}
@@ -181,6 +259,20 @@ export function MyProfileModal({
       subtitle="Información visible en el directorio público del CMJ Flandes"
       maxWidthClass="sm:max-w-lg"
     >
+      <div className="space-y-6">
+        {privateRecord?.mustChangePassword && (
+          <div className="rounded-2xl border border-amber-200 dark:border-amber-900/60 bg-amber-50 dark:bg-amber-950/40 p-3 text-xs text-amber-900 dark:text-amber-200 flex items-start gap-2.5">
+            <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+            <div className="leading-relaxed">
+              <p className="font-bold">Recomendación de seguridad</p>
+              <p className="text-[11px] opacity-90">
+                Estás usando la contraseña inicial institucional. Por seguridad, actualízala en la sección{' '}
+                <strong>Cambiar mi contraseña</strong> más abajo.
+              </p>
+            </div>
+          </div>
+        )}
+
       <form onSubmit={handleSaveMyProfile} className="space-y-4">
         <div className="flex items-center gap-3 pb-3 border-b border-slate-100 dark:border-slate-800">
           <AvatarBadge
@@ -192,11 +284,20 @@ export function MyProfileModal({
             statusIndicator={inSession ? 'in_session' : 'active'}
             size="md"
           />
-          <div className="min-w-0">
-            <p className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5 flex-wrap">
               <UserCheck className="h-4 w-4 text-emerald-700 dark:text-emerald-400 shrink-0" />
-              <span className="truncate">{editName || fullName}</span>
-            </p>
+              <span className="text-sm font-bold text-slate-900 dark:text-white truncate">
+                {editName || fullName}
+              </span>
+              {profile?.verificado ? (
+                <VerifiedBadge size="sm" />
+              ) : (
+                <span className="inline-flex items-center rounded-md bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 dark:text-slate-300">
+                  Pendiente de verificación
+                </span>
+              )}
+            </div>
             <p className="text-xs text-slate-500 truncate">{editEmail || email}</p>
           </div>
         </div>
@@ -374,6 +475,115 @@ export function MyProfileModal({
           {savingProfile ? 'Guardando perfil...' : 'Guardar perfil'}
         </button>
       </form>
+
+      <form
+        onSubmit={handleChangePassword}
+        className="pt-5 border-t border-slate-200 dark:border-slate-800 space-y-3"
+      >
+        <div className="flex items-center gap-2">
+          <KeyRound className="h-4 w-4 text-blue-600 dark:text-cyan-400 shrink-0" />
+          <div>
+            <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+              Cambiar mi contraseña
+            </h3>
+            <p className="text-[11px] text-slate-500">
+              Usa una clave personal de al menos 8 caracteres para proteger tu cuenta.
+            </p>
+          </div>
+        </div>
+
+        {pwdError && (
+          <div className="rounded-xl border border-rose-200 dark:border-rose-900 bg-rose-50 dark:bg-rose-950/50 px-3 py-2 text-xs font-semibold text-rose-700 dark:text-rose-300">
+            {pwdError}
+          </div>
+        )}
+        {pwdSuccess && (
+          <div className="rounded-xl border border-emerald-200 dark:border-emerald-900 bg-emerald-50 dark:bg-emerald-950/50 px-3 py-2 text-xs font-semibold text-emerald-700 dark:text-emerald-300 flex items-center gap-1.5">
+            <CheckCircle2 className="h-4 w-4 shrink-0" />
+            <span>{pwdSuccess}</span>
+          </div>
+        )}
+
+        <div>
+          <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
+            Contraseña actual *
+          </label>
+          <div className="relative">
+            <Lock className="h-3.5 w-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type={showCurPass ? 'text' : 'password'}
+              required
+              autoComplete="current-password"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              placeholder="Tu contraseña actual"
+              className="w-full min-h-[40px] rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 pl-8 pr-9 py-2 text-xs"
+            />
+            <button
+              type="button"
+              onClick={() => setShowCurPass((v) => !v)}
+              aria-label="Mostrar u ocultar contraseña actual"
+              className="absolute right-1 top-1/2 -translate-y-1/2 min-h-[34px] min-w-[34px] flex items-center justify-center rounded-lg text-slate-400 hover:text-slate-600 cursor-pointer"
+            >
+              {showCurPass ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+          <div>
+            <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
+              Nueva contraseña *
+            </label>
+            <div className="relative">
+              <KeyRound className="h-3.5 w-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type={showNewPass ? 'text' : 'password'}
+                required
+                minLength={8}
+                autoComplete="new-password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="Mínimo 8 caracteres"
+                className="w-full min-h-[40px] rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 pl-8 pr-9 py-2 text-xs"
+              />
+              <button
+                type="button"
+                onClick={() => setShowNewPass((v) => !v)}
+                aria-label="Mostrar u ocultar nueva contraseña"
+                className="absolute right-1 top-1/2 -translate-y-1/2 min-h-[34px] min-w-[34px] flex items-center justify-center rounded-lg text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                {showNewPass ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
+              Confirmar nueva contraseña *
+            </label>
+            <input
+              type={showNewPass ? 'text' : 'password'}
+              required
+              minLength={8}
+              autoComplete="new-password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              placeholder="Repite la nueva clave"
+              className="w-full min-h-[40px] rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3.5 py-2 text-xs"
+            />
+          </div>
+        </div>
+
+        <button
+          type="submit"
+          disabled={changingPassword}
+          className="w-full min-h-[42px] rounded-xl bg-blue-600 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-60 cursor-pointer"
+        >
+          {changingPassword ? 'Actualizando contraseña...' : 'Actualizar contraseña'}
+        </button>
+      </form>
+      </div>
     </ResponsiveModal>
   );
 }

@@ -215,6 +215,8 @@ function PortalOrchestrator() {
           prev.roleLabel !== nextUser.roleLabel ||
           prev.commissionId !== nextUser.commissionId ||
           prev.mustChangePassword !== nextUser.mustChangePassword ||
+          prev.verificado !== nextUser.verificado ||
+          prev.coordDeclaradaPendiente !== nextUser.coordDeclaradaPendiente ||
           prev.fullName !== nextUser.fullName ||
           prevPerms !== nextPerms ||
           prevCoords !== nextCoords
@@ -553,6 +555,7 @@ function PortalOrchestrator() {
             open={authModalOpen}
             initialTab={authModalTab}
             currentUser={authUser}
+            commissions={commissions}
             onClose={() => setAuthModalOpen(false)}
             onAuthenticated={(user) => {
               setAuthUser(user);
