@@ -62,12 +62,12 @@ export function GlobalSearchModal({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg border border-slate-200 dark:border-slate-700 px-2 py-1 text-[11px] font-semibold text-slate-500 hover:text-slate-800 dark:hover:text-white cursor-pointer"
+            className="min-h-[40px] sm:min-h-[28px] rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1 text-[11px] font-semibold text-slate-500 hover:text-slate-800 dark:hover:text-white cursor-pointer shrink-0"
           >
             Esc
           </button>
         </div>
-        <div className="max-h-[65vh] sm:max-h-80 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
+        <div className="max-h-[70dvh] sm:max-h-80 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800 pb-safe-bottom">
           {hits.length === 0 ? (
             <p className="p-8 text-center text-xs text-slate-500">
               No se encontraron resultados para "{query}".

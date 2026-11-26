@@ -506,3 +506,99 @@ export const notifications = pgTable('notifications', {
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
+// Propuestas ante la administración y concertación juvenil (Consejero Departamental)
+export const deptProposals = pgTable('dept_proposals', {
+  id: text('id').primaryKey(),
+  title: text('title').notNull(),
+  targetEntity: text('target_entity').notNull(),
+  thematicAxis: text('thematic_axis').notNull().default('Política Pública de Juventud'),
+  commissionId: text('commission_id').notNull().default(''),
+  summary: text('summary').notNull(),
+  justification: text('justification').notNull().default(''),
+  status: text('status').notNull().default('borrador'),
+  visibility: text('visibility').notNull().default('privado'),
+  publicationStatus: text('publication_status').notNull().default('privado'),
+  publicApproved: boolean('public_approved').notNull().default(false),
+  rejectionReason: text('rejection_reason').notNull().default(''),
+  approvedByUid: text('approved_by_uid').notNull().default(''),
+  approvedByName: text('approved_by_name').notNull().default(''),
+  approvedAt: text('approved_at').notNull().default(''),
+  attachmentUrl: text('attachment_url').notNull().default(''),
+  attachmentName: text('attachment_name').notNull().default(''),
+  authorUid: text('author_uid').notNull(),
+  authorName: text('author_name').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+// Registros de veeduría y control social sobre políticas de juventud
+export const deptOversight = pgTable('dept_oversight', {
+  id: text('id').primaryKey(),
+  title: text('title').notNull(),
+  watchedEntity: text('watched_entity').notNull(),
+  policyOrPlan: text('policy_or_plan').notNull(),
+  commissionId: text('commission_id').notNull().default(''),
+  findings: text('findings').notNull(),
+  recommendations: text('recommendations').notNull().default(''),
+  riskLevel: text('risk_level').notNull().default('medio'),
+  status: text('status').notNull().default('en_seguimiento'),
+  visibility: text('visibility').notNull().default('privado'),
+  publicationStatus: text('publication_status').notNull().default('privado'),
+  publicApproved: boolean('public_approved').notNull().default(false),
+  rejectionReason: text('rejection_reason').notNull().default(''),
+  approvedByUid: text('approved_by_uid').notNull().default(''),
+  approvedByName: text('approved_by_name').notNull().default(''),
+  approvedAt: text('approved_at').notNull().default(''),
+  evidenceUrl: text('evidence_url').notNull().default(''),
+  evidenceName: text('evidence_name').notNull().default(''),
+  authorUid: text('author_uid').notNull(),
+  authorName: text('author_name').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+// Informes periódicos de interlocución departamental (CDJ Tolima)
+export const deptReports = pgTable('dept_reports', {
+  id: text('id').primaryKey(),
+  title: text('title').notNull(),
+  reportPeriod: text('report_period').notNull(),
+  sessionDate: text('session_date').notNull().default(''),
+  departamentalSpace: text('departamental_space').notNull().default('Consejo Departamental de Juventud del Tolima'),
+  commissionId: text('commission_id').notNull().default(''),
+  summary: text('summary').notNull(),
+  agreements: text('agreements').notNull().default(''),
+  participationStrategies: text('participation_strategies').notNull().default(''),
+  visibility: text('visibility').notNull().default('privado'),
+  publicationStatus: text('publication_status').notNull().default('privado'),
+  publicApproved: boolean('public_approved').notNull().default(false),
+  rejectionReason: text('rejection_reason').notNull().default(''),
+  approvedByUid: text('approved_by_uid').notNull().default(''),
+  approvedByName: text('approved_by_name').notNull().default(''),
+  approvedAt: text('approved_at').notNull().default(''),
+  attachmentUrl: text('attachment_url').notNull().default(''),
+  attachmentName: text('attachment_name').notNull().default(''),
+  authorUid: text('author_uid').notNull(),
+  authorName: text('author_name').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+// Propuestas de puntos al orden del día en sesiones plenarias
+export const sessionAgendaProposals = pgTable('session_agenda_proposals', {
+  id: text('id').primaryKey(),
+  sessionId: text('session_id').notNull(),
+  title: text('title').notNull(),
+  justification: text('justification').notNull(),
+  proposerUid: text('proposer_uid').notNull(),
+  proposerName: text('proposer_name').notNull(),
+  proposerRoleLabel: text('proposer_role_label').notNull(),
+  status: text('status').notNull().default('pendiente'),
+  decisionNotes: text('decision_notes').notNull().default(''),
+  decidedByUid: text('decided_by_uid').notNull().default(''),
+  decidedByName: text('decided_by_name').notNull().default(''),
+  decidedAt: text('decided_at').notNull().default(''),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+

@@ -20,6 +20,7 @@ import type {
   PortalDocument,
   PortalSettings,
   PublicCouncilor,
+  PublicDepartamentalBundle,
   PublicSection,
 } from '../../types/cmj';
 import { BrandLogo } from '../BrandLogo';
@@ -56,6 +57,7 @@ export function PublicPortal({
   galleryAlbums = [],
   documents,
   actas = [],
+  publicDepartamental = { proposals: [], oversight: [], reports: [] },
   callsSurveys,
   isAuthenticated,
   darkMode,
@@ -71,6 +73,7 @@ export function PublicPortal({
   galleryAlbums?: GalleryAlbum[];
   documents: PortalDocument[];
   actas?: PortalActa[];
+  publicDepartamental?: PublicDepartamentalBundle;
   callsSurveys: CallOrSurvey[];
   isAuthenticated: boolean;
   darkMode: boolean;
@@ -91,14 +94,20 @@ export function PublicPortal({
     }
   };
 
+  const publicDeptCount =
+    publicDepartamental.proposals.length +
+    publicDepartamental.oversight.length +
+    publicDepartamental.reports.length;
+
   const publishedCount =
     newsEvents.filter((n) => n.status === 'publicado').length +
     documents.filter((d) => d.visibility === 'publico').length +
-    actas.length;
+    actas.length +
+    publicDeptCount;
   const openCallsCount = callsSurveys.filter((c) => c.status === 'abierta').length;
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-[#090D16] text-slate-900 dark:text-slate-100">
+    <div className="min-h-screen overflow-x-clip bg-slate-50 dark:bg-[#090D16] text-slate-900 dark:text-slate-100">
       {activeTheme.ribbonText && (
         <div className={`${activeTheme.bannerBg} px-4 py-2 text-center text-xs font-semibold`}>
           <span className="inline-flex items-center gap-2">
@@ -110,18 +119,18 @@ export function PublicPortal({
 
       {/* Barra de navegación de 3 zonas */}
       <header className="sticky top-0 z-40 border-b border-slate-200/80 dark:border-slate-800/80 bg-white/95 dark:bg-[#090D16]/95 backdrop-blur-md">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
+        <div className="mx-auto max-w-7xl px-3 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-2 sm:gap-4">
           <button
             type="button"
             onClick={() => scrollToSection('inicio')}
-            className="flex items-center gap-3 text-left cursor-pointer shrink-0"
+            className="flex items-center gap-2.5 sm:gap-3 text-left cursor-pointer min-w-0"
           >
             <BrandLogo size="md" />
             <div className="min-w-0">
-              <p className="text-sm font-extrabold tracking-tight text-slate-900 dark:text-white leading-none">
+              <p className="text-sm font-extrabold tracking-tight text-slate-900 dark:text-white leading-none truncate">
                 CMJ Flandes
               </p>
-              <p className="text-[11px] font-medium text-emerald-700 dark:text-emerald-400 mt-0.5 truncate">
+              <p className="hidden xs:block sm:block text-[11px] font-medium text-emerald-700 dark:text-emerald-400 mt-0.5 truncate">
                 Consejo Municipal de Juventudes
               </p>
             </div>
@@ -140,13 +149,13 @@ export function PublicPortal({
             ))}
           </nav>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-1 sm:gap-2 shrink-0">
             <PWAInstallButton compact />
             <button
               type="button"
               onClick={onToggleDarkMode}
               aria-label="Cambiar modo claro u oscuro"
-              className="rounded-xl p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              className="min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0 flex items-center justify-center rounded-xl p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
             >
               {darkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </button>
@@ -155,19 +164,21 @@ export function PublicPortal({
               <button
                 type="button"
                 onClick={onEnterPrivatePortal}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-700 px-3.5 py-2 text-xs font-semibold text-white hover:bg-emerald-800 transition-colors cursor-pointer whitespace-nowrap"
+                className="min-h-[40px] inline-flex items-center gap-1.5 rounded-xl bg-emerald-700 px-3 sm:px-3.5 py-2 text-xs font-semibold text-white hover:bg-emerald-800 transition-colors cursor-pointer whitespace-nowrap"
               >
-                <LayoutDashboard className="h-3.5 w-3.5" />
-                Portal Privado
+                <LayoutDashboard className="h-3.5 w-3.5 shrink-0" />
+                <span className="hidden sm:inline">Portal Privado</span>
+                <span className="sm:hidden">Portal</span>
               </button>
             ) : (
               <button
                 type="button"
                 onClick={onOpenAuth}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 dark:bg-white px-3.5 py-2 text-xs font-semibold text-white dark:text-slate-900 hover:opacity-90 transition-opacity cursor-pointer whitespace-nowrap"
+                className="min-h-[40px] inline-flex items-center gap-1.5 rounded-xl bg-slate-900 dark:bg-white px-3 sm:px-3.5 py-2 text-xs font-semibold text-white dark:text-slate-900 hover:opacity-90 transition-opacity cursor-pointer whitespace-nowrap"
               >
-                <Lock className="h-3.5 w-3.5" />
-                Acceso Consejeros
+                <Lock className="h-3.5 w-3.5 shrink-0" />
+                <span className="hidden sm:inline">Acceso Consejeros</span>
+                <span className="sm:hidden">Acceso</span>
               </button>
             )}
 
@@ -175,7 +186,7 @@ export function PublicPortal({
               type="button"
               onClick={() => setMobileMenuOpen((v) => !v)}
               aria-label="Abrir menú de navegación"
-              className="lg:hidden rounded-xl p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              className="lg:hidden min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
             >
               {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
             </button>
@@ -225,6 +236,7 @@ export function PublicPortal({
           galleryAlbums={galleryAlbums}
           documents={documents}
           actas={actas}
+          publicDepartamental={publicDepartamental}
           callsSurveys={callsSurveys}
           isAuthenticated={isAuthenticated}
           onEnterPrivatePortal={onEnterPrivatePortal}

@@ -10,6 +10,9 @@ import {
   commissionTasks,
   commitments,
   contactMessages,
+  deptOversight,
+  deptProposals,
+  deptReports,
   documents,
   galleryAlbums,
   galleryItems,
@@ -23,6 +26,7 @@ import {
   portalSecurity,
   portalSettings,
   publicCouncilors,
+  sessionAgendaProposals,
   sessions,
   users,
   votes,
@@ -148,6 +152,7 @@ export function roleDefaultDisplayOrder(roleLabel: RoleLabel): number {
   if (roleLabel === 'Presidente') return 1;
   if (roleLabel === 'Vicepresidente') return 2;
   if (roleLabel === 'Secretario') return 3;
+  if (roleLabel === 'Consejero Departamental') return 4;
   return 20;
 }
 
@@ -650,6 +655,9 @@ export async function buildPrivatePayload(user: AuthedUser) {
   const canViewUsers = userHasPermission(user, 'usuarios.ver');
   const canViewBuzon = userHasPermission(user, 'buzon.ver');
   const canViewAudit = userHasPermission(user, 'auditoria.ver');
+  const canViewDept =
+    userHasPermission(user, 'departamental.ver') ||
+    userHasPermission(user, 'departamental.publicacion_aprobar');
   const isApproverOrLeader =
     isLeadershipTier(user.accessTier) ||
     userHasPermission(user, 'permisos.aprobar_presidencia') ||
@@ -670,6 +678,7 @@ export async function buildPrivatePayload(user: AuthedUser) {
     surveyRows,
     contactRows,
     sessionRows,
+    agendaPropRows,
     actaRows,
     voteRows,
     commitmentRows,
@@ -681,6 +690,9 @@ export async function buildPrivatePayload(user: AuthedUser) {
     permStepRows,
     grantRows,
     notifRows,
+    deptProposalRows,
+    deptOversightRows,
+    deptReportRows,
   ] = await Promise.all([
     db.select().from(portalSettings).where(eq(portalSettings.id, 'site_content')).limit(1),
     db.select().from(commissions),
@@ -696,6 +708,7 @@ export async function buildPrivatePayload(user: AuthedUser) {
       ? db.select().from(contactMessages).orderBy(desc(contactMessages.createdAt))
       : Promise.resolve([]),
     db.select().from(sessions).orderBy(desc(sessions.createdAt)),
+    db.select().from(sessionAgendaProposals).orderBy(desc(sessionAgendaProposals.createdAt)),
     db.select().from(actas).orderBy(desc(actas.year), desc(actas.createdAt)),
     db.select().from(votes).orderBy(desc(votes.createdAt)),
     db.select().from(commitments).orderBy(desc(commitments.createdAt)),
@@ -720,6 +733,15 @@ export async function buildPrivatePayload(user: AuthedUser) {
       .where(eq(notifications.userUid, user.uid))
       .orderBy(desc(notifications.createdAt))
       .limit(80),
+    canViewDept
+      ? db.select().from(deptProposals).orderBy(desc(deptProposals.createdAt))
+      : Promise.resolve([]),
+    canViewDept
+      ? db.select().from(deptOversight).orderBy(desc(deptOversight.createdAt))
+      : Promise.resolve([]),
+    canViewDept
+      ? db.select().from(deptReports).orderBy(desc(deptReports.createdAt))
+      : Promise.resolve([]),
   ]);
 
   const sortedGallery = [...galleryRows].sort((a, b) => {
@@ -762,6 +784,7 @@ export async function buildPrivatePayload(user: AuthedUser) {
     callsSurveys: surveyRows,
     contactMessages: contactRows,
     sessions: sessionRows,
+    sessionAgendaProposals: agendaPropRows,
     actas: actaRows,
     votes: voteRows.map((v) =>
       v.voteMode === 'secreto' ? { ...v, nominalBallots: {} } : v
@@ -775,6 +798,9 @@ export async function buildPrivatePayload(user: AuthedUser) {
     permissionApprovalSteps: visibleSteps,
     grantedPermissions: grantRows,
     portalNotifications: notifRows,
+    deptProposals: deptProposalRows,
+    deptOversight: deptOversightRows,
+    deptReports: deptReportRows,
     effectivePermissions: user.effectivePermissions,
     coordinatorCommissionIds: user.coordinatorCommissionIds,
   };

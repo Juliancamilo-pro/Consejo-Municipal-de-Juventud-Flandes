@@ -3,6 +3,7 @@ import { ImageOff, Palette, Sparkles } from 'lucide-react';
 import { apiRequest } from '../../../lib/apiClient';
 import { FESTIVE_THEMES } from '../../../lib/seedData';
 import { deleteStorageFile } from '../../../lib/storageUtils';
+import { useUnsavedChangesGuard } from '../../../lib/unsavedChanges';
 import type { FestiveThemeId, PortalSettings, RoleLabel } from '../../../types/cmj';
 import { MediaUploader, type UploadedFileInfo } from '../../MediaUploader';
 import { useToast } from '../../ToastProvider';
@@ -41,6 +42,17 @@ export function PortalSettingsTab({
     setContactAddress(settings.contactAddress || '');
     setActiveTheme(settings.activeTheme);
   }, [settings]);
+
+  const isDirtySettings =
+    heroTitle !== settings.heroTitle ||
+    heroSubtitle !== settings.heroSubtitle ||
+    aboutText !== (settings.aboutText || '') ||
+    missionText !== (settings.missionText || '') ||
+    visionText !== (settings.visionText || '') ||
+    contactEmail !== (settings.contactEmail || '') ||
+    contactAddress !== (settings.contactAddress || '') ||
+    activeTheme !== settings.activeTheme;
+  useUnsavedChangesGuard('portal-settings-tab', isDirtySettings);
 
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();

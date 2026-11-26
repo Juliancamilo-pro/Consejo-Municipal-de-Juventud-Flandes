@@ -608,6 +608,7 @@ export function UsersAndBoardModule({
               className="min-h-[42px] rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2 text-sm"
             >
               <option value="Consejero">Consejero</option>
+              <option value="Consejero Departamental">Consejero Departamental</option>
               {canAssignPres && <option value="Presidente">Presidente</option>}
               <option value="Vicepresidente">Vicepresidente</option>
               <option value="Secretario">Secretario</option>
@@ -775,6 +776,7 @@ export function UsersAndBoardModule({
                           className="min-h-[40px] rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2.5 py-2 text-xs disabled:opacity-60"
                         >
                           <option value="Consejero">Consejero</option>
+                          <option value="Consejero Departamental">Consejero Departamental</option>
                           {(canAssignPres || pub.roleLabel === 'Presidente') && (
                             <option value="Presidente">Presidente</option>
                           )}
@@ -1026,6 +1028,7 @@ export function UsersAndBoardModule({
                           className="rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-2 py-1 text-xs disabled:opacity-60"
                         >
                           <option value="Consejero">Consejero</option>
+                          <option value="Consejero Departamental">Consejero Departamental</option>
                           {(canAssignPres || pub.roleLabel === 'Presidente') && (
                             <option value="Presidente">Presidente</option>
                           )}
@@ -1034,7 +1037,13 @@ export function UsersAndBoardModule({
                         </select>
                       ) : (
                         <div className="flex flex-col items-start gap-1">
-                          <span className="inline-block rounded-md bg-blue-50 dark:bg-blue-950/60 px-2 py-0.5 font-semibold text-blue-700 dark:text-cyan-300 whitespace-nowrap">
+                          <span
+                            className={`inline-block rounded-md px-2 py-0.5 font-semibold whitespace-nowrap ${
+                              pub.roleLabel === 'Consejero Departamental'
+                                ? 'bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300'
+                                : 'bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-cyan-300'
+                            }`}
+                          >
                             {pub.roleLabel}
                           </span>
                           {commissions

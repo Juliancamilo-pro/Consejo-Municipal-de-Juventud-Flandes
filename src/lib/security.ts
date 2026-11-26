@@ -10,6 +10,8 @@ export function roleLabelToAccessTier(roleLabel: RoleLabel): AccessTier {
       return 'tier_2_vp';
     case 'Secretario':
       return 'tier_3_sec';
+    case 'Consejero Departamental':
+      return 'tier_5_dept';
     default:
       return 'tier_4_member';
   }

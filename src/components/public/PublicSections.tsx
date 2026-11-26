@@ -420,6 +420,7 @@ export function IdentityAndDirectorySection({
                 <option value="Presidente">Presidente</option>
                 <option value="Vicepresidente">Vicepresidente</option>
                 <option value="Secretario">Secretario</option>
+                <option value="Consejero Departamental">Consejero Departamental</option>
                 <option value="Consejero">Consejero</option>
               </select>
               <select
@@ -485,7 +486,9 @@ export function IdentityAndDirectorySection({
                       <div className="min-w-0 flex-1">
                         <p
                           className={`text-[11px] font-bold uppercase tracking-wider ${
-                            isBoard
+                            c.roleLabel === 'Consejero Departamental'
+                              ? 'text-purple-700 dark:text-purple-400'
+                              : isBoard
                               ? 'text-emerald-700 dark:text-emerald-400'
                               : 'text-blue-600 dark:text-cyan-400'
                           }`}
@@ -680,12 +683,12 @@ export function IdentityAndDirectorySection({
       {/* Modal Ficha Completa del Consejero */}
       {selectedCouncilor && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 backdrop-blur-sm p-4"
+          className="fixed inset-0 z-50 flex items-stretch sm:items-center justify-center bg-slate-950/75 backdrop-blur-sm p-0 sm:p-4"
           onClick={() => setSelectedCouncilor(null)}
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 sm:p-7 shadow-2xl space-y-5"
+            className="w-full sm:max-w-lg h-[100dvh] sm:h-auto sm:max-h-[90dvh] overflow-y-auto rounded-none sm:rounded-3xl border-0 sm:border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 sm:p-7 pb-safe-bottom shadow-2xl space-y-5"
           >
             <div className="flex items-start justify-between gap-4">
               <div className="flex items-start gap-4 min-w-0">
@@ -701,7 +704,13 @@ export function IdentityAndDirectorySection({
                   size="xl"
                 />
                 <div className="min-w-0">
-                  <p className="text-xs font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
+                  <p
+                    className={`text-xs font-bold uppercase tracking-wider ${
+                      selectedCouncilor.roleLabel === 'Consejero Departamental'
+                        ? 'text-purple-700 dark:text-purple-400'
+                        : 'text-emerald-700 dark:text-emerald-400'
+                    }`}
+                  >
                     {selectedCouncilor.roleLabel}
                   </p>
                   <h3 className="mt-1 text-xl font-extrabold text-slate-900 dark:text-white text-balance">
@@ -716,7 +725,7 @@ export function IdentityAndDirectorySection({
                 type="button"
                 onClick={() => setSelectedCouncilor(null)}
                 aria-label="Cerrar ficha"
-                className="rounded-xl p-2 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer shrink-0"
+                className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer shrink-0"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -854,12 +863,12 @@ export function IdentityAndDirectorySection({
       {/* Modal Detalle de Comisión */}
       {selectedCommission && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 backdrop-blur-sm p-4"
+          className="fixed inset-0 z-50 flex items-stretch sm:items-center justify-center bg-slate-950/75 backdrop-blur-sm p-0 sm:p-4"
           onClick={() => setSelectedCommission(null)}
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 sm:p-7 shadow-2xl space-y-5"
+            className="w-full sm:max-w-xl h-[100dvh] sm:h-auto sm:max-h-[90dvh] overflow-y-auto rounded-none sm:rounded-3xl border-0 sm:border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 sm:p-7 pb-safe-bottom shadow-2xl space-y-5"
           >
             <div className="flex items-start justify-between gap-4">
               <div>
@@ -877,7 +886,7 @@ export function IdentityAndDirectorySection({
                 type="button"
                 onClick={() => setSelectedCommission(null)}
                 aria-label="Cerrar comisión"
-                className="rounded-xl p-2 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer shrink-0"
               >
                 <X className="h-4 w-4" />
               </button>

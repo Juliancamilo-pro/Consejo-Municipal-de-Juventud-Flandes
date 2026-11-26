@@ -19,6 +19,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { ApiRequestError, apiRequest } from '../../lib/apiClient';
+import { useUnsavedChangesGuard } from '../../lib/unsavedChanges';
 import type {
   AccessTier,
   AttendanceStatus,
@@ -26,6 +27,7 @@ import type {
   CouncilSession,
   PublicCouncilor,
   RoleLabel,
+  SessionAgendaProposal,
 } from '../../types/cmj';
 import { MediaUploader, type UploadedFileInfo } from '../MediaUploader';
 import { AvatarBadge } from '../public/AvatarBadge';
@@ -46,6 +48,7 @@ export function SessionsModule({
   sessions,
   publicCouncilors,
   commissions = [],
+  sessionAgendaProposals = [],
   onOpenActas,
 }: {
   uid: string;
@@ -55,6 +58,7 @@ export function SessionsModule({
   sessions: CouncilSession[];
   publicCouncilors: PublicCouncilor[];
   commissions?: Commission[];
+  sessionAgendaProposals?: SessionAgendaProposal[];
   onOpenActas?: (sessionId: string) => void;
 }) {
   const { showToast } = useToast();
@@ -63,6 +67,7 @@ export function SessionsModule({
   const canEditSession = can('sesiones.editar');
   const canDeleteSession = can('sesiones.eliminar');
   const canManageAttendance = can('sesiones.asistencia_gestionar');
+  const canProposeAgenda = can('sesiones.proponer_agenda');
   const activeCouncilors = useMemo(
     () =>
       publicCouncilors
@@ -124,6 +129,22 @@ export function SessionsModule({
   const [editLocation, setEditLocation] = useState('');
   const [editQuorum, setEditQuorum] = useState(1);
   const [editAgenda, setEditAgenda] = useState('');
+
+  // Propuestas al Orden del Día (Consejero Departamental / consejeros con permiso)
+  const [proposeAgendaOpen, setProposeAgendaOpen] = useState(false);
+  const [agendaPropTitle, setAgendaPropTitle] = useState('');
+  const [agendaPropJust, setAgendaPropJust] = useState('');
+  const [submittingAgendaProp, setSubmittingAgendaProp] = useState(false);
+  const [rejectProposalId, setRejectProposalId] = useState<string | null>(null);
+  const [rejectProposalNote, setRejectProposalNote] = useState('');
+  const [decidingProposalId, setDecidingProposalId] = useState<string | null>(null);
+
+  useUnsavedChangesGuard(
+    'sessions-editor',
+    showCreateForm ||
+      editingSession ||
+      Boolean(proposeAgendaOpen && (agendaPropTitle.trim() || agendaPropJust.trim()))
+  );
 
   useEffect(() => {
     const id = window.setInterval(() => setNowTick(Date.now()), 1000);
@@ -432,6 +453,86 @@ export function SessionsModule({
       setDeleting(false);
     }
   };
+
+  const handleProposeAgenda = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedSession) return;
+    if (agendaPropTitle.trim().length < 4 || agendaPropJust.trim().length < 10) {
+      showToast(
+        'Completa título (mín. 4 caracteres) y justificación (mín. 10 caracteres)',
+        'error'
+      );
+      return;
+    }
+    setSubmittingAgendaProp(true);
+    try {
+      await apiRequest(
+        `/api/sessions/${encodeURIComponent(selectedSession.id)}/agenda-proposals`,
+        {
+          method: 'POST',
+          body: {
+            title: agendaPropTitle.trim(),
+            justification: agendaPropJust.trim(),
+          },
+        }
+      );
+      setAgendaPropTitle('');
+      setAgendaPropJust('');
+      setProposeAgendaOpen(false);
+      showToast('Propuesta enviada al Orden del Día de Mesa Directiva', 'success');
+    } catch (err) {
+      const msg =
+        err instanceof ApiRequestError
+          ? err.message
+          : 'No se pudo enviar la propuesta al Orden del Día';
+      showToast(msg, 'error');
+    } finally {
+      setSubmittingAgendaProp(false);
+    }
+  };
+
+  const handleDecideAgendaProposal = async (
+    proposal: SessionAgendaProposal,
+    status: 'aprobada' | 'rechazada',
+    notes?: string
+  ) => {
+    if (!selectedSession) return;
+    setDecidingProposalId(proposal.id);
+    try {
+      await apiRequest(
+        `/api/sessions/${encodeURIComponent(selectedSession.id)}/agenda-proposals/${encodeURIComponent(proposal.id)}`,
+        {
+          method: 'PATCH',
+          body: {
+            status,
+            ...(notes?.trim() ? { decisionNotes: notes.trim() } : {}),
+          },
+        }
+      );
+      setRejectProposalId(null);
+      setRejectProposalNote('');
+      showToast(
+        status === 'aprobada'
+          ? 'Punto incorporado al Orden del Día de la sesión'
+          : 'Propuesta marcada como no incluida',
+        status === 'aprobada' ? 'success' : 'info'
+      );
+    } catch (err) {
+      const msg =
+        err instanceof ApiRequestError ? err.message : 'No se pudo decidir la propuesta';
+      showToast(msg, 'error');
+    } finally {
+      setDecidingProposalId(null);
+    }
+  };
+
+  const selectedAgendaProposals = useMemo(
+    () =>
+      selectedSession
+        ? sessionAgendaProposals.filter((p) => p.sessionId === selectedSession.id)
+        : [],
+    [sessionAgendaProposals, selectedSession]
+  );
 
   // Estadísticas y filtros analíticos
   const filteredSessionsForStats = useMemo(() => {
@@ -1026,6 +1127,184 @@ export function SessionsModule({
                   </div>
                 )}
               </div>
+
+              {/* Propuestas al Orden del Día */}
+              {(selectedAgendaProposals.length > 0 ||
+                (canProposeAgenda && selectedSession.status !== 'finalizada')) && (
+                <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950/60 p-4 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-200">
+                        Propuestas al Orden del Día ({selectedAgendaProposals.length})
+                      </h4>
+                      <p className="text-[11px] text-slate-500">
+                        Puntos sugeridos para incorporar en la agenda de esta sesión. La Mesa Directiva aprueba su inclusión.
+                      </p>
+                    </div>
+                    {canProposeAgenda && selectedSession.status !== 'finalizada' && (
+                      <button
+                        type="button"
+                        onClick={() => setProposeAgendaOpen((v) => !v)}
+                        className="min-h-[38px] inline-flex items-center gap-1.5 rounded-xl bg-purple-700 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-purple-800 cursor-pointer whitespace-nowrap"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        {proposeAgendaOpen ? 'Cerrar propuesta' : 'Proponer punto al Orden del Día'}
+                      </button>
+                    )}
+                  </div>
+
+                  {proposeAgendaOpen && canProposeAgenda && (
+                    <form
+                      onSubmit={handleProposeAgenda}
+                      className="rounded-xl border border-purple-200 dark:border-purple-900/60 bg-purple-50/40 dark:bg-purple-950/20 p-3.5 space-y-2.5"
+                    >
+                      <input
+                        type="text"
+                        required
+                        minLength={4}
+                        value={agendaPropTitle}
+                        onChange={(e) => setAgendaPropTitle(e.target.value)}
+                        placeholder="Título del punto a incluir en el Orden del Día..."
+                        className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs"
+                      />
+                      <textarea
+                        rows={2}
+                        required
+                        minLength={10}
+                        value={agendaPropJust}
+                        onChange={(e) => setAgendaPropJust(e.target.value)}
+                        placeholder="Justificación e impacto juvenil (ej: concertación departamental, informe de veeduría)..."
+                        className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs"
+                      />
+                      <div className="flex flex-wrap justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setProposeAgendaOpen(false)}
+                          className="min-h-[36px] rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-1.5 text-xs font-semibold cursor-pointer"
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={submittingAgendaProp}
+                          className="min-h-[36px] rounded-xl bg-purple-700 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-purple-800 disabled:opacity-60 cursor-pointer"
+                        >
+                          {submittingAgendaProp ? 'Enviando...' : 'Enviar propuesta'}
+                        </button>
+                      </div>
+                    </form>
+                  )}
+
+                  {selectedAgendaProposals.length > 0 && (
+                    <div className="space-y-2">
+                      {selectedAgendaProposals.map((p) => {
+                        const statusCls =
+                          p.status === 'aprobada'
+                            ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300'
+                            : p.status === 'rechazada'
+                            ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300'
+                            : 'bg-amber-50 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300';
+                        const isDeciding = decidingProposalId === p.id;
+                        return (
+                          <div
+                            key={p.id}
+                            className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900 p-3 space-y-2"
+                          >
+                            <div className="flex flex-wrap items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <p className="text-xs font-bold text-slate-900 dark:text-white">
+                                  {p.title}
+                                </p>
+                                <p className="text-[11px] text-slate-500 mt-0.5">
+                                  Propone: <strong className="text-slate-700 dark:text-slate-300">{p.proposerName}</strong> · {p.proposerRoleLabel}
+                                </p>
+                              </div>
+                              <span className={`rounded-lg px-2 py-0.5 text-[10px] font-bold uppercase shrink-0 ${statusCls}`}>
+                                {p.status}
+                              </span>
+                            </div>
+
+                            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                              {p.justification}
+                            </p>
+
+                            {p.decisionNotes && (
+                              <p className="text-[11px] text-slate-500 italic">
+                                Nota Mesa Directiva: {p.decisionNotes}
+                                {p.decidedByName ? ` (${p.decidedByName})` : ''}
+                              </p>
+                            )}
+
+                            {canEditSession && p.status === 'pendiente' && (
+                              <div className="pt-1 space-y-2">
+                                {rejectProposalId === p.id ? (
+                                  <div className="flex flex-col sm:flex-row gap-2">
+                                    <input
+                                      type="text"
+                                      value={rejectProposalNote}
+                                      onChange={(e) => setRejectProposalNote(e.target.value)}
+                                      placeholder="Motivo breve (opcional)"
+                                      className="flex-1 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-1.5 text-xs"
+                                    />
+                                    <div className="flex gap-1.5">
+                                      <button
+                                        type="button"
+                                        disabled={isDeciding}
+                                        onClick={() =>
+                                          handleDecideAgendaProposal(
+                                            p,
+                                            'rechazada',
+                                            rejectProposalNote
+                                          )
+                                        }
+                                        className="min-h-[36px] rounded-xl bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white cursor-pointer disabled:opacity-60"
+                                      >
+                                        Confirmar no incluir
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setRejectProposalId(null);
+                                          setRejectProposalNote('');
+                                        }}
+                                        className="min-h-[36px] rounded-xl border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 text-xs cursor-pointer"
+                                      >
+                                        Cancelar
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="flex flex-wrap gap-2">
+                                    <button
+                                      type="button"
+                                      disabled={isDeciding}
+                                      onClick={() => handleDecideAgendaProposal(p, 'aprobada')}
+                                      className="min-h-[36px] inline-flex items-center gap-1 rounded-xl bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-800 disabled:opacity-60 cursor-pointer"
+                                    >
+                                      <CheckCircle2 className="h-3.5 w-3.5" /> Incluir en agenda
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={isDeciding}
+                                      onClick={() => {
+                                        setRejectProposalId(p.id);
+                                        setRejectProposalNote('');
+                                      }}
+                                      className="min-h-[36px] rounded-xl border border-rose-200 dark:border-rose-900 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 disabled:opacity-60 cursor-pointer"
+                                    >
+                                      No incluir
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Llamado a Lista */}
               <div className="space-y-3">

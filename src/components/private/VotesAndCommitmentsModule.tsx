@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { ApiRequestError, apiRequest } from '../../lib/apiClient';
 import { exportStyledWorkbook } from '../../lib/excelExport';
+import { useUnsavedChangesGuard } from '../../lib/unsavedChanges';
 import type {
   AccessTier,
   Commission,
@@ -118,6 +119,11 @@ export function VotesAndCommitmentsModule({
     const id = window.setInterval(() => setNowTick(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, []);
+
+  useUnsavedChangesGuard(
+    'votes-editor',
+    (showCreateForm && Boolean(voteTitle.trim() || voteDesc.trim())) || Boolean(editingVoteId)
+  );
 
   const triggerConfetti = () => {
     setConfettiActive(true);

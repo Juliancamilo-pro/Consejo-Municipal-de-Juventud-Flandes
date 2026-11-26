@@ -282,9 +282,13 @@ export function registerMediaAndUsersRoutes(app: express.Express) {
         return;
       }
 
-      const validRole: RoleLabel = ['Presidente', 'Vicepresidente', 'Secretario', 'Consejero'].includes(
-        roleLabel
-      )
+      const validRole: RoleLabel = [
+        'Presidente',
+        'Vicepresidente',
+        'Secretario',
+        'Consejero Departamental',
+        'Consejero',
+      ].includes(roleLabel)
         ? roleLabel
         : 'Consejero';
       if (validRole === 'Presidente' && !userHasPermission(req.authUser!, 'usuarios.asignar_presidencia')) {
@@ -452,9 +456,13 @@ export function registerMediaAndUsersRoutes(app: express.Express) {
         const cleanName = String(row.fullName || '').trim();
         if (!cleanEmail || !cleanEmail.includes('@') || !cleanName) continue;
 
-        let validRole: RoleLabel = ['Presidente', 'Vicepresidente', 'Secretario', 'Consejero'].includes(
-          row.roleLabel
-        )
+        let validRole: RoleLabel = [
+          'Presidente',
+          'Vicepresidente',
+          'Secretario',
+          'Consejero Departamental',
+          'Consejero',
+        ].includes(row.roleLabel)
           ? row.roleLabel
           : 'Consejero';
         if (validRole === 'Presidente' && !canAssignPres) {
@@ -711,7 +719,13 @@ export function registerMediaAndUsersRoutes(app: express.Express) {
       if (canEditUsers && !isSelf) {
         if (
           typeof body.roleLabel === 'string' &&
-          ['Presidente', 'Vicepresidente', 'Secretario', 'Consejero'].includes(body.roleLabel)
+          [
+            'Presidente',
+            'Vicepresidente',
+            'Secretario',
+            'Consejero Departamental',
+            'Consejero',
+          ].includes(body.roleLabel)
         ) {
           const validRole = body.roleLabel as RoleLabel;
           const touchesPresidency =

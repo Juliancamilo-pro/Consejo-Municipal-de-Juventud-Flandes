@@ -46,5 +46,11 @@ service firebase.storage {
       allow create, update: if isSignedIn() && isAllowedMedia() && isUnderSizeLimit(150);
       allow delete: if isSignedIn();
     }
+
+    match /departamental/{allPaths=**} {
+      allow read: if true;
+      allow create, update: if isSignedIn() && isAllowedMedia() && isUnderSizeLimit(50);
+      allow delete: if isSignedIn();
+    }
   }
 }

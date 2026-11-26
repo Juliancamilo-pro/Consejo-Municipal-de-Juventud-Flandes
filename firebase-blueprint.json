@@ -8,11 +8,11 @@
         "active": { "type": "boolean" },
         "accessTier": {
           "type": "string",
-          "enum": ["tier_1_pres", "tier_2_vp", "tier_3_sec", "tier_4_member"]
+          "enum": ["tier_1_pres", "tier_2_vp", "tier_3_sec", "tier_5_dept", "tier_4_member"]
         },
         "roleLabel": {
           "type": "string",
-          "enum": ["Presidente", "Vicepresidente", "Secretario", "Consejero"]
+          "enum": ["Presidente", "Vicepresidente", "Secretario", "Consejero Departamental", "Consejero"]
         },
         "commissionId": { "type": "string", "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
         "accountProvisioned": { "type": "boolean" },
@@ -54,11 +54,11 @@
         "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
         "accessTier": {
           "type": "string",
-          "enum": ["tier_1_pres", "tier_2_vp", "tier_3_sec", "tier_4_member"]
+          "enum": ["tier_1_pres", "tier_2_vp", "tier_3_sec", "tier_5_dept", "tier_4_member"]
         },
         "roleLabel": {
           "type": "string",
-          "enum": ["Presidente", "Vicepresidente", "Secretario", "Consejero"]
+          "enum": ["Presidente", "Vicepresidente", "Secretario", "Consejero Departamental", "Consejero"]
         },
         "emailHash": { "type": "string", "maxLength": 128 },
         "active": { "type": "boolean" },
@@ -75,7 +75,7 @@
         "fullName": { "type": "string", "maxLength": 120 },
         "roleLabel": {
           "type": "string",
-          "enum": ["Presidente", "Vicepresidente", "Secretario", "Consejero"]
+          "enum": ["Presidente", "Vicepresidente", "Secretario", "Consejero Departamental", "Consejero"]
         },
         "commissionId": { "type": "string", "maxLength": 64 },
         "commissionName": { "type": "string", "maxLength": 120 },
@@ -100,11 +100,11 @@
         "phone": { "type": "string", "maxLength": 40 },
         "accessTier": {
           "type": "string",
-          "enum": ["tier_1_pres", "tier_2_vp", "tier_3_sec", "tier_4_member"]
+          "enum": ["tier_1_pres", "tier_2_vp", "tier_3_sec", "tier_5_dept", "tier_4_member"]
         },
         "roleLabel": {
           "type": "string",
-          "enum": ["Presidente", "Vicepresidente", "Secretario", "Consejero"]
+          "enum": ["Presidente", "Vicepresidente", "Secretario", "Consejero Departamental", "Consejero"]
         },
         "commissionId": { "type": "string", "maxLength": 64 },
         "active": { "type": "boolean" },
@@ -384,7 +384,7 @@
         "actorName": { "type": "string", "maxLength": 120 },
         "actorRoleLabel": {
           "type": "string",
-          "enum": ["Presidente", "Vicepresidente", "Secretario", "Consejero"]
+          "enum": ["Presidente", "Vicepresidente", "Secretario", "Consejero Departamental", "Consejero"]
         },
         "action": { "type": "string", "maxLength": 180 },
         "module": { "type": "string", "maxLength": 80 },
@@ -414,6 +414,78 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["heroTitle", "heroSubtitle", "activeTheme", "updatedAt"]
+    },
+    "DeptProposal": {
+      "title": "DeptProposal",
+      "description": "Youth policy or administration proposal managed by Consejero Departamental.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 180 },
+        "targetEntity": { "type": "string", "maxLength": 180 },
+        "thematicAxis": { "type": "string", "maxLength": 120 },
+        "summary": { "type": "string", "maxLength": 2500 },
+        "status": { "type": "string", "enum": ["borrador", "radicada", "en_concertacion", "aprobada", "archivada"] },
+        "visibility": { "type": "string", "enum": ["privado", "publico"] },
+        "publicationStatus": { "type": "string", "enum": ["privado", "pendiente_presidencia", "publicado", "rechazado"] },
+        "publicApproved": { "type": "boolean" },
+        "authorUid": { "type": "string", "maxLength": 128 },
+        "authorName": { "type": "string", "maxLength": 120 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "targetEntity", "summary", "status", "visibility", "publicationStatus", "publicApproved", "authorUid", "authorName", "updatedAt"]
+    },
+    "DeptOversightRecord": {
+      "title": "DeptOversightRecord",
+      "description": "Youth social oversight (veeduría) record over youth plans and public policies.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 180 },
+        "watchedEntity": { "type": "string", "maxLength": 180 },
+        "policyOrPlan": { "type": "string", "maxLength": 220 },
+        "findings": { "type": "string", "maxLength": 3000 },
+        "riskLevel": { "type": "string", "enum": ["bajo", "medio", "alto"] },
+        "status": { "type": "string", "enum": ["en_seguimiento", "alerta", "subsanada", "cerrada"] },
+        "visibility": { "type": "string", "enum": ["privado", "publico"] },
+        "publicationStatus": { "type": "string", "enum": ["privado", "pendiente_presidencia", "publicado", "rechazado"] },
+        "publicApproved": { "type": "boolean" },
+        "authorUid": { "type": "string", "maxLength": 128 },
+        "authorName": { "type": "string", "maxLength": 120 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "watchedEntity", "policyOrPlan", "findings", "riskLevel", "status", "visibility", "publicationStatus", "publicApproved", "authorUid", "authorName", "updatedAt"]
+    },
+    "DeptInterlocutionReport": {
+      "title": "DeptInterlocutionReport",
+      "description": "Periodic departmental representation report before CDJ Tolima.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 180 },
+        "reportPeriod": { "type": "string", "maxLength": 80 },
+        "departamentalSpace": { "type": "string", "maxLength": 180 },
+        "summary": { "type": "string", "maxLength": 3000 },
+        "visibility": { "type": "string", "enum": ["privado", "publico"] },
+        "publicationStatus": { "type": "string", "enum": ["privado", "pendiente_presidencia", "publicado", "rechazado"] },
+        "publicApproved": { "type": "boolean" },
+        "authorUid": { "type": "string", "maxLength": 128 },
+        "authorName": { "type": "string", "maxLength": 120 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "reportPeriod", "departamentalSpace", "summary", "visibility", "publicationStatus", "publicApproved", "authorUid", "authorName", "updatedAt"]
+    },
+    "SessionAgendaProposal": {
+      "title": "SessionAgendaProposal",
+      "description": "Session agenda item proposed for Mesa Directiva approval.",
+      "type": "object",
+      "properties": {
+        "sessionId": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 180 },
+        "justification": { "type": "string", "maxLength": 1500 },
+        "proposerUid": { "type": "string", "maxLength": 128 },
+        "proposerName": { "type": "string", "maxLength": 120 },
+        "status": { "type": "string", "enum": ["pendiente", "aprobada", "rechazada"] },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["sessionId", "title", "justification", "proposerUid", "proposerName", "status", "updatedAt"]
     }
   },
   "firestore": {
@@ -504,6 +576,22 @@
     "/portal_settings/{settingId}": {
       "schema": { "$ref": "#/entities/PortalSettings" },
       "description": "Public portal settings and festive theme."
+    },
+    "/dept_proposals/{itemId}": {
+      "schema": { "$ref": "#/entities/DeptProposal" },
+      "description": "Proposals addressed to municipal or departmental authorities (public only if approved by Presidente)."
+    },
+    "/dept_oversight/{itemId}": {
+      "schema": { "$ref": "#/entities/DeptOversightRecord" },
+      "description": "Youth oversight records over plans and public policies."
+    },
+    "/dept_reports/{itemId}": {
+      "schema": { "$ref": "#/entities/DeptInterlocutionReport" },
+      "description": "Periodic departmental interlocution reports before CDJ Tolima."
+    },
+    "/session_agenda_proposals/{proposalId}": {
+      "schema": { "$ref": "#/entities/SessionAgendaProposal" },
+      "description": "Agenda items proposed for plenary sessions subject to Mesa Directiva approval."
     }
   }
 }

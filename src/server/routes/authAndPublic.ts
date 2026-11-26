@@ -1,5 +1,5 @@
 import type express from 'express';
-import { desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { db, hasDatabaseConfig } from '../../db/index.ts';
 import {
   actas,
@@ -7,6 +7,9 @@ import {
   callsSurveys,
   commissions,
   contactMessages,
+  deptOversight,
+  deptProposals,
+  deptReports,
   documents,
   galleryAlbums,
   galleryItems,
@@ -536,6 +539,9 @@ export function registerAuthAndPublicRoutes(app: express.Express) {
         docRows,
         surveyRows,
         publicActaRows,
+        publicDeptProposals,
+        publicDeptOversight,
+        publicDeptReports,
       ] = await Promise.all([
         db.select().from(portalSettings).where(eq(portalSettings.id, 'site_content')).limit(1),
         db.select().from(commissions),
@@ -566,6 +572,21 @@ export function registerAuthAndPublicRoutes(app: express.Express) {
           .from(actas)
           .where(inArray(actas.status, ['aprobada', 'firmada', 'archivada']))
           .orderBy(desc(actas.year), desc(actas.createdAt)),
+        db
+          .select()
+          .from(deptProposals)
+          .where(and(eq(deptProposals.publicApproved, true), eq(deptProposals.visibility, 'publico')))
+          .orderBy(desc(deptProposals.createdAt)),
+        db
+          .select()
+          .from(deptOversight)
+          .where(and(eq(deptOversight.publicApproved, true), eq(deptOversight.visibility, 'publico')))
+          .orderBy(desc(deptOversight.createdAt)),
+        db
+          .select()
+          .from(deptReports)
+          .where(and(eq(deptReports.publicApproved, true), eq(deptReports.visibility, 'publico')))
+          .orderBy(desc(deptReports.createdAt)),
       ]);
 
       const sortedGallery = [...galleryRows].sort((a, b) => {
@@ -590,6 +611,11 @@ export function registerAuthAndPublicRoutes(app: express.Express) {
         documents: docRows,
         callsSurveys: surveyRows,
         actas: publicActas,
+        publicDepartamental: {
+          proposals: publicDeptProposals.map(({ authorUid: _uid, ...rest }) => rest),
+          oversight: publicDeptOversight.map(({ authorUid: _uid, ...rest }) => rest),
+          reports: publicDeptReports.map(({ authorUid: _uid, ...rest }) => rest),
+        },
       });
     } catch (error) {
       console.error('Public state fetch failed:', error);

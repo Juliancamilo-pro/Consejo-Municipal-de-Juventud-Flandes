@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { CheckCircle2, Edit3, Newspaper, Plus, Save, Trash2 } from 'lucide-react';
 import { ApiRequestError, apiRequest } from '../../../lib/apiClient';
 import { deleteStorageFile } from '../../../lib/storageUtils';
+import { useUnsavedChangesGuard } from '../../../lib/unsavedChanges';
 import type { Commission, NewsEvent, RoleLabel } from '../../../types/cmj';
 import { MediaUploader } from '../../MediaUploader';
 import { useToast } from '../../ToastProvider';
@@ -66,6 +67,13 @@ export function NewsEventsTab({
   // Eliminar
   const [deleteTarget, setDeleteTarget] = useState<NewsEvent | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  useUnsavedChangesGuard(
+    'news-events-tab',
+    (showCreateForm &&
+      Boolean(newsTitle.trim() || newsSummary.trim() || newsContent.trim())) ||
+      Boolean(editingNewsId)
+  );
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();

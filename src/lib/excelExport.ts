@@ -538,6 +538,7 @@ export async function parseCouncilorImportFile(
     if (normalizedRole === 'presidente') roleLabel = 'Presidente';
     else if (normalizedRole === 'vicepresidente') roleLabel = 'Vicepresidente';
     else if (normalizedRole === 'secretario') roleLabel = 'Secretario';
+    else if (normalizedRole.includes('departamental')) roleLabel = 'Consejero Departamental';
     else if (rawRole && normalizedRole !== 'consejero') {
       warnings.push(`Cargo "${rawRole}" ajustado a Consejero`);
     }

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Trash2, UserCheck } from 'lucide-react';
 import { ApiRequestError, apiRequest } from '../../../lib/apiClient';
 import { deleteStorageFile } from '../../../lib/storageUtils';
+import { useUnsavedChangesGuard } from '../../../lib/unsavedChanges';
 import type {
   AffiliationType,
   Commission,
@@ -67,6 +68,19 @@ export function MyProfileModal({
       setFormError('');
     }
   }, [open, fullName, profile, privateRecord, email, commissionId]);
+
+  const isDirtyProfile =
+    open &&
+    (editName !== fullName ||
+      editEmail !== (profile?.email || privateRecord?.email || email) ||
+      editPhone !== (privateRecord?.phone || profile?.phone || '') ||
+      editBio !== (profile?.bio || '') ||
+      editIg !== (profile?.instagram || '') ||
+      editFb !== (profile?.facebook || '') ||
+      editAffiliationType !== (profile?.affiliationType || '') ||
+      editAffiliationName !== (profile?.affiliationName || '') ||
+      (canEditCommission && editCommissionId !== commissionId));
+  useUnsavedChangesGuard('my-profile-modal', isDirtyProfile);
 
   const handleAvatarUpload = async (files: UploadedFileInfo[]) => {
     const first = files[0];

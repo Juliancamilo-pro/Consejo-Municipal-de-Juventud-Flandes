@@ -12,6 +12,7 @@ import {
 } from './lib/apiClient';
 import { EMPTY_PORTAL_SETTINGS, STRUCTURAL_COMMISSIONS } from './lib/seedData';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { PWAUpdatePrompt } from './components/PWAUpdatePrompt';
 import { ToastProvider, useToast } from './components/ToastProvider';
 import { SkeletonBlock } from './components/ui/AnimatedPrimitives';
 import type {
@@ -24,6 +25,9 @@ import type {
   CouncilSession,
   CouncilVote,
   CouncilorPrivate,
+  DeptInterlocutionReport,
+  DeptOversightRecord,
+  DeptProposal,
   GalleryAlbum,
   GalleryItem,
   GrantedPermission,
@@ -38,6 +42,8 @@ import type {
   PortalNotification,
   PortalSettings,
   PublicCouncilor,
+  PublicDepartamentalBundle,
+  SessionAgendaProposal,
   WorkPlanItem,
 } from './types/cmj';
 
@@ -56,6 +62,7 @@ interface PublicStateResponse {
   galleryAlbums?: GalleryAlbum[];
   documents: PortalDocument[];
   actas?: PortalActa[];
+  publicDepartamental?: PublicDepartamentalBundle;
   callsSurveys: CallOrSurvey[];
 }
 
@@ -74,6 +81,10 @@ interface PrivateStateResponse extends PublicStateResponse {
   permissionApprovalSteps?: PermissionApprovalStep[];
   grantedPermissions?: GrantedPermission[];
   portalNotifications?: PortalNotification[];
+  deptProposals?: DeptProposal[];
+  deptOversight?: DeptOversightRecord[];
+  deptReports?: DeptInterlocutionReport[];
+  sessionAgendaProposals?: SessionAgendaProposal[];
   effectivePermissions?: PermissionKey[];
   coordinatorCommissionIds?: string[];
 }
@@ -137,6 +148,15 @@ function PortalOrchestrator() {
   const [permissionApprovalSteps, setPermissionApprovalSteps] = useState<PermissionApprovalStep[]>([]);
   const [grantedPermissions, setGrantedPermissions] = useState<GrantedPermission[]>([]);
   const [portalNotifications, setPortalNotifications] = useState<PortalNotification[]>([]);
+  const [publicDepartamental, setPublicDepartamental] = useState<PublicDepartamentalBundle>({
+    proposals: [],
+    oversight: [],
+    reports: [],
+  });
+  const [deptProposals, setDeptProposals] = useState<DeptProposal[]>([]);
+  const [deptOversight, setDeptOversight] = useState<DeptOversightRecord[]>([]);
+  const [deptReports, setDeptReports] = useState<DeptInterlocutionReport[]>([]);
+  const [sessionAgendaProposals, setSessionAgendaProposals] = useState<SessionAgendaProposal[]>([]);
   const [effectivePermissions, setEffectivePermissions] = useState<PermissionKey[]>([]);
   const [coordinatorCommissionIds, setCoordinatorCommissionIds] = useState<string[]>([]);
 
@@ -166,6 +186,9 @@ function PortalOrchestrator() {
       setGalleryAlbums(data.galleryAlbums || []);
       setDocuments(data.documents || []);
       setActas(data.actas || []);
+      setPublicDepartamental(
+        data.publicDepartamental || { proposals: [], oversight: [], reports: [] }
+      );
       setCallsSurveys(data.callsSurveys || []);
     } catch {
       // Silencioso en carga inicial pública
@@ -254,6 +277,11 @@ function PortalOrchestrator() {
       setPermissionApprovalSteps(data.permissionApprovalSteps || []);
       setGrantedPermissions(data.grantedPermissions || []);
       setPortalNotifications(data.portalNotifications || []);
+      setDeptProposals(data.deptProposals || []);
+      setDeptOversight(data.deptOversight || []);
+      setDeptReports(data.deptReports || []);
+      setSessionAgendaProposals(data.sessionAgendaProposals || []);
+      if (data.publicDepartamental) setPublicDepartamental(data.publicDepartamental);
       if (Array.isArray(data.effectivePermissions)) {
         setEffectivePermissions(data.effectivePermissions);
       }
@@ -431,6 +459,10 @@ function PortalOrchestrator() {
     setPermissionApprovalSteps([]);
     setGrantedPermissions([]);
     setPortalNotifications([]);
+    setDeptProposals([]);
+    setDeptOversight([]);
+    setDeptReports([]);
+    setSessionAgendaProposals([]);
     setEffectivePermissions([]);
     setCoordinatorCommissionIds([]);
     setViewMode('public');
@@ -468,6 +500,10 @@ function PortalOrchestrator() {
           permissionApprovalSteps={permissionApprovalSteps}
           grantedPermissions={grantedPermissions}
           portalNotifications={portalNotifications}
+          deptProposals={deptProposals}
+          deptOversight={deptOversight}
+          deptReports={deptReports}
+          sessionAgendaProposals={sessionAgendaProposals}
           coordinatorCommissionIds={
             coordinatorCommissionIds.length > 0
               ? coordinatorCommissionIds
@@ -498,6 +534,7 @@ function PortalOrchestrator() {
           galleryAlbums={galleryAlbums}
           documents={documents}
           actas={actas}
+          publicDepartamental={publicDepartamental}
           callsSurveys={callsSurveys}
           isAuthenticated={Boolean(authUser)}
           darkMode={darkMode}
@@ -534,6 +571,7 @@ export default function App() {
       <ErrorBoundary>
         <ToastProvider>
           <PortalOrchestrator />
+          <PWAUpdatePrompt />
         </ToastProvider>
       </ErrorBoundary>
     </MotionConfig>

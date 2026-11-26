@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import {
+  Building2,
   Calendar,
   Download,
   FileText,
@@ -29,6 +30,7 @@ import type {
   PortalActa,
   PortalDocument,
   PortalSettings,
+  PublicDepartamentalBundle,
 } from '../../types/cmj';
 import { BrandLogo } from '../BrandLogo';
 import { MediaPreviewModal, type PreviewMediaPayload } from '../MediaPreviewModal';
@@ -43,6 +45,7 @@ export function PublicMediaAndCivic({
   galleryAlbums = [],
   documents,
   actas = [],
+  publicDepartamental = { proposals: [], oversight: [], reports: [] },
   callsSurveys,
   isAuthenticated,
   onEnterPrivatePortal,
@@ -54,6 +57,7 @@ export function PublicMediaAndCivic({
   galleryAlbums?: GalleryAlbum[];
   documents: PortalDocument[];
   actas?: PortalActa[];
+  publicDepartamental?: PublicDepartamentalBundle;
   callsSurveys: CallOrSurvey[];
   isAuthenticated: boolean;
   onEnterPrivatePortal: () => void;
@@ -70,7 +74,9 @@ export function PublicMediaAndCivic({
   const [galCommFilter, setGalCommFilter] = useState<string>('todas');
 
   // Filtros de documentos y actas
-  const [transparencyTab, setTransparencyTab] = useState<'documentos' | 'actas'>('documentos');
+  const [transparencyTab, setTransparencyTab] = useState<'documentos' | 'actas' | 'departamental'>(
+    'documentos'
+  );
   const [docSearch, setDocSearch] = useState('');
   const [docCategory, setDocCategory] = useState('todas');
 
@@ -156,6 +162,45 @@ export function PublicMediaAndCivic({
       Array.from(new Set(documents.filter((d) => d.visibility === 'publico').map((d) => d.category))),
     [documents]
   );
+
+  const filteredDeptProposals = useMemo(() => {
+    const q = docSearch.trim().toLowerCase();
+    return (publicDepartamental.proposals || []).filter(
+      (p) =>
+        !q ||
+        p.title.toLowerCase().includes(q) ||
+        p.targetEntity.toLowerCase().includes(q) ||
+        p.thematicAxis.toLowerCase().includes(q) ||
+        p.summary.toLowerCase().includes(q)
+    );
+  }, [publicDepartamental.proposals, docSearch]);
+
+  const filteredDeptOversight = useMemo(() => {
+    const q = docSearch.trim().toLowerCase();
+    return (publicDepartamental.oversight || []).filter(
+      (o) =>
+        !q ||
+        o.title.toLowerCase().includes(q) ||
+        o.watchedEntity.toLowerCase().includes(q) ||
+        o.policyOrPlan.toLowerCase().includes(q) ||
+        o.findings.toLowerCase().includes(q)
+    );
+  }, [publicDepartamental.oversight, docSearch]);
+
+  const filteredDeptReports = useMemo(() => {
+    const q = docSearch.trim().toLowerCase();
+    return (publicDepartamental.reports || []).filter(
+      (r) =>
+        !q ||
+        r.title.toLowerCase().includes(q) ||
+        r.reportPeriod.toLowerCase().includes(q) ||
+        r.departamentalSpace.toLowerCase().includes(q) ||
+        r.summary.toLowerCase().includes(q)
+    );
+  }, [publicDepartamental.reports, docSearch]);
+
+  const publicDeptTotal =
+    filteredDeptProposals.length + filteredDeptOversight.length + filteredDeptReports.length;
 
   const handleSubmitSurvey = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -485,11 +530,11 @@ export function PublicMediaAndCivic({
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              <div className="inline-flex rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-1">
+              <div className="inline-flex flex-wrap gap-1 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-1">
                 <button
                   type="button"
                   onClick={() => setTransparencyTab('documentos')}
-                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold cursor-pointer ${
+                  className={`min-h-[36px] rounded-lg px-3 py-1.5 text-xs font-semibold cursor-pointer ${
                     transparencyTab === 'documentos'
                       ? 'bg-emerald-700 text-white'
                       : 'text-slate-600 dark:text-slate-300'
@@ -500,7 +545,7 @@ export function PublicMediaAndCivic({
                 <button
                   type="button"
                   onClick={() => setTransparencyTab('actas')}
-                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold cursor-pointer ${
+                  className={`min-h-[36px] rounded-lg px-3 py-1.5 text-xs font-semibold cursor-pointer ${
                     transparencyTab === 'actas'
                       ? 'bg-emerald-700 text-white'
                       : 'text-slate-600 dark:text-slate-300'
@@ -508,15 +553,27 @@ export function PublicMediaAndCivic({
                 >
                   Actas Oficiales ({publicActas.length})
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setTransparencyTab('departamental')}
+                  className={`min-h-[36px] inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold cursor-pointer ${
+                    transparencyTab === 'departamental'
+                      ? 'bg-purple-700 text-white'
+                      : 'text-slate-600 dark:text-slate-300'
+                  }`}
+                >
+                  <Building2 className="h-3.5 w-3.5" />
+                  Gestión Departamental ({publicDeptTotal})
+                </button>
               </div>
-              <div className="relative">
+              <div className="relative w-full sm:w-auto">
                 <Search className="h-4 w-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="search"
                   value={docSearch}
                   onChange={(e) => setDocSearch(e.target.value)}
-                  placeholder="Buscar acta o documento..."
-                  className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 pl-9 pr-3 py-2 text-xs"
+                  placeholder="Buscar acta, informe o documento..."
+                  className="w-full sm:w-56 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 pl-9 pr-3 py-2 text-xs"
                 />
               </div>
               {transparencyTab === 'documentos' && (
@@ -524,7 +581,7 @@ export function PublicMediaAndCivic({
                   value={docCategory}
                   onChange={(e) => setDocCategory(e.target.value)}
                   aria-label="Categoría de documento"
-                  className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs"
+                  className="w-full sm:w-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs"
                 >
                   <option value="todas">Todas las categorías</option>
                   {docCategories.map((cat) => (
@@ -537,7 +594,151 @@ export function PublicMediaAndCivic({
             </div>
           </div>
 
-          {transparencyTab === 'actas' ? (
+          {transparencyTab === 'departamental' ? (
+            publicDeptTotal === 0 ? (
+              <EmptyState
+                title="No hay publicaciones departamentales visibles aún"
+                description="Las propuestas ante autoridades, acciones de veeduría juvenil e informes de interlocución aprobados por la Presidencia del CMJ aparecerán aquí."
+              />
+            ) : (
+              <div className="space-y-6">
+                {filteredDeptProposals.length > 0 && (
+                  <div className="space-y-3">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-purple-700 dark:text-purple-400">
+                      Propuestas de Planes y Programas Juveniles ({filteredDeptProposals.length})
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {filteredDeptProposals.map((p) => (
+                        <div
+                          key={p.id}
+                          className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 flex flex-col gap-2.5"
+                        >
+                          <div className="flex items-center justify-between gap-2 text-[11px]">
+                            <span className="font-bold uppercase text-purple-700 dark:text-purple-400 truncate">
+                              {p.thematicAxis}
+                            </span>
+                            <span className="font-semibold text-emerald-700 dark:text-emerald-400 shrink-0">
+                              Aprobado Presidencia
+                            </span>
+                          </div>
+                          <h4 className="text-sm font-bold text-slate-900 dark:text-white line-clamp-2">
+                            {p.title}
+                          </h4>
+                          <p className="text-[11px] font-medium text-slate-500">
+                            Entidad: {p.targetEntity} · Por {p.authorName}
+                          </p>
+                          <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed line-clamp-4 flex-1">
+                            {p.summary}
+                          </p>
+                          {p.attachmentUrl && (
+                            <a
+                              href={p.attachmentUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="mt-auto inline-flex items-center gap-1.5 text-xs font-semibold text-purple-700 dark:text-purple-400 hover:underline pt-2 border-t border-slate-100 dark:border-slate-800"
+                            >
+                              <Download className="h-3.5 w-3.5" />
+                              {p.attachmentName || 'Descargar documento'}
+                            </a>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {filteredDeptOversight.length > 0 && (
+                  <div className="space-y-3">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-purple-700 dark:text-purple-400">
+                      Veeduría y Control Social ({filteredDeptOversight.length})
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {filteredDeptOversight.map((o) => (
+                        <div
+                          key={o.id}
+                          className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 flex flex-col gap-2.5"
+                        >
+                          <div className="flex items-center justify-between gap-2 text-[11px]">
+                            <span className="font-bold uppercase text-purple-700 dark:text-purple-400 truncate">
+                              {o.watchedEntity}
+                            </span>
+                            <span className="font-semibold text-emerald-700 dark:text-emerald-400 shrink-0">
+                              Aprobado Presidencia
+                            </span>
+                          </div>
+                          <h4 className="text-sm font-bold text-slate-900 dark:text-white line-clamp-2">
+                            {o.title}
+                          </h4>
+                          <p className="text-[11px] font-medium text-slate-500">
+                            Política / Plan: {o.policyOrPlan}
+                          </p>
+                          <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed line-clamp-4 flex-1">
+                            {o.findings}
+                          </p>
+                          {o.evidenceUrl && (
+                            <a
+                              href={o.evidenceUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="mt-auto inline-flex items-center gap-1.5 text-xs font-semibold text-purple-700 dark:text-purple-400 hover:underline pt-2 border-t border-slate-100 dark:border-slate-800"
+                            >
+                              <Download className="h-3.5 w-3.5" />
+                              {o.evidenceName || 'Ver evidencia'}
+                            </a>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {filteredDeptReports.length > 0 && (
+                  <div className="space-y-3">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-purple-700 dark:text-purple-400">
+                      Informes de Interlocución Departamental ({filteredDeptReports.length})
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {filteredDeptReports.map((r) => (
+                        <div
+                          key={r.id}
+                          className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 flex flex-col gap-2.5"
+                        >
+                          <div className="flex items-center justify-between gap-2 text-[11px]">
+                            <span className="font-mono-num font-bold text-purple-700 dark:text-purple-400">
+                              {r.reportPeriod}
+                            </span>
+                            <span className="font-semibold text-emerald-700 dark:text-emerald-400 shrink-0">
+                              {r.sessionDate}
+                            </span>
+                          </div>
+                          <h4 className="text-sm font-bold text-slate-900 dark:text-white line-clamp-2">
+                            {r.title}
+                          </h4>
+                          <p className="text-[11px] font-medium text-slate-500 truncate">
+                            {r.departamentalSpace} · {r.authorName}
+                          </p>
+                          <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed line-clamp-4 flex-1">
+                            {r.summary}
+                          </p>
+                          {r.attachmentUrl && (
+                            <a
+                              href={r.attachmentUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="mt-auto inline-flex items-center gap-1.5 text-xs font-semibold text-purple-700 dark:text-purple-400 hover:underline pt-2 border-t border-slate-100 dark:border-slate-800"
+                            >
+                              <Download className="h-3.5 w-3.5" />
+                              {r.attachmentName || 'Descargar informe'}
+                            </a>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
+          ) : transparencyTab === 'actas' ? (
             publicActas.length === 0 ? (
               <EmptyState
                 title="No hay actas oficiales publicadas aún"
@@ -854,17 +1055,17 @@ export function PublicMediaAndCivic({
       {/* Modal Acta Pública */}
       {selectedPublicActa && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 backdrop-blur-sm p-4"
+          className="fixed inset-0 z-50 flex items-stretch sm:items-center justify-center bg-slate-950/75 backdrop-blur-sm p-0 sm:p-4"
           onClick={() => setSelectedPublicActa(null)}
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-3xl max-h-[88vh] overflow-y-auto rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 sm:p-8 shadow-2xl space-y-5"
+            className="w-full sm:max-w-3xl h-[100dvh] sm:h-auto sm:max-h-[90dvh] overflow-y-auto rounded-none sm:rounded-3xl border-0 sm:border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 sm:p-8 pb-safe-bottom shadow-2xl space-y-5"
           >
             <div className="flex items-start justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-4">
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 min-w-0">
                 <BrandLogo size="sm" />
-                <div>
+                <div className="min-w-0">
                   <span className="font-mono-num text-xs font-bold text-emerald-700 dark:text-emerald-400">
                     {selectedPublicActa.consecutive} · {selectedPublicActa.status.toUpperCase()}
                   </span>
@@ -881,14 +1082,15 @@ export function PublicMediaAndCivic({
                 <button
                   type="button"
                   onClick={() => window.print()}
-                  className="no-print inline-flex items-center gap-1 rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-1.5 text-xs font-semibold cursor-pointer"
+                  className="no-print min-h-[40px] inline-flex items-center gap-1 rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-1.5 text-xs font-semibold cursor-pointer"
                 >
                   <Printer className="h-3.5 w-3.5" /> Imprimir
                 </button>
                 <button
                   type="button"
                   onClick={() => setSelectedPublicActa(null)}
-                  className="no-print rounded-xl p-2 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                  aria-label="Cerrar acta"
+                  className="no-print min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
                 >
                   <X className="h-4 w-4" />
                 </button>
@@ -961,12 +1163,12 @@ export function PublicMediaAndCivic({
       {/* Modal detalle de noticia */}
       {selectedNews && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 backdrop-blur-sm p-4"
+          className="fixed inset-0 z-50 flex items-stretch sm:items-center justify-center bg-slate-950/75 backdrop-blur-sm p-0 sm:p-4"
           onClick={() => setSelectedNews(null)}
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 sm:p-8 shadow-2xl space-y-4"
+            className="w-full sm:max-w-2xl h-[100dvh] sm:h-auto sm:max-h-[90dvh] overflow-y-auto rounded-none sm:rounded-3xl border-0 sm:border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 sm:p-8 pb-safe-bottom shadow-2xl space-y-4"
           >
             <div className="flex items-start justify-between gap-4">
               <div>
@@ -985,7 +1187,7 @@ export function PublicMediaAndCivic({
                 type="button"
                 onClick={() => setSelectedNews(null)}
                 aria-label="Cerrar noticia"
-                className="rounded-xl p-2 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer shrink-0"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -1008,13 +1210,13 @@ export function PublicMediaAndCivic({
       {/* Modal participar encuesta */}
       {activeSurvey && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 backdrop-blur-sm p-4"
+          className="fixed inset-0 z-50 flex items-stretch sm:items-center justify-center bg-slate-950/75 backdrop-blur-sm p-0 sm:p-4"
           onClick={() => setActiveSurvey(null)}
         >
           <form
             onSubmit={handleSubmitSurvey}
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 shadow-2xl space-y-4"
+            className="w-full sm:max-w-md h-[100dvh] sm:h-auto sm:max-h-[90dvh] overflow-y-auto rounded-none sm:rounded-3xl border-0 sm:border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 sm:p-6 pb-safe-bottom shadow-2xl space-y-4"
           >
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -1029,7 +1231,7 @@ export function PublicMediaAndCivic({
                 type="button"
                 onClick={() => setActiveSurvey(null)}
                 aria-label="Cerrar encuesta"
-                className="rounded-xl p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer shrink-0"
               >
                 <X className="h-4 w-4" />
               </button>

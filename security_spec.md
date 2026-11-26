@@ -6,6 +6,7 @@
    - **`Presidente`**: full operational, approval, signature, presidential assignment (`usuarios.asignar_presidencia`), credential rotation, sample purge, and audit oversight.
    - **`Vicepresidente`**: full commission supervision, validations, commitments, votes, portal moderation, and approval step 2/3. Cannot assign `Presidente`, cannot purge database samples, and cannot modify audit logs.
    - **`Secretario`**: sessions, attendance, actas drafting/publishing, official letter templates, surveys, citizen inbox responses, documents, and final approval step 3/3. Cannot assign `Presidente` or rotate credentials unless granted.
+   - **`Consejero Departamental` (`tier_5_dept`)**: non-leadership municipal representative before the Consejo Departamental de Juventud del Tolima (Ley 1622 de 2013 y Ley 1885 de 2018). Can create/manage departmental proposals (`departamental.propuestas_crear`), youth oversight records (`departamental.veeduria_gestionar`), interlocution reports (`departamental.informes_gestionar`), and propose plenary session agenda points (`sesiones.proponer_agenda`, subject to Mesa Directiva approval). Cannot approve public visibility (`departamental.publicacion_aprobar` is strictly Presidencia-only), cannot manage users, cannot sign/approve actas, and cannot close votes.
    - **`Consejero`**: self-check-in attendance, voting (1 ballot per open vote), own commitments, bank of ideas, own profile, and special permission requests.
    - **Dynamic Commission Coordinator (`commissions.coordinatorUid`)**: any active councilor assigned as coordinator inherits scoped privileges (`comision.editar_propia`, `comision.miembros_gestionar`, `comision.tareas_gestionar`, `comision.reportes_exportar`, `plan_trabajo.editar`, `documentos.subir`, `galeria.gestionar`) strictly scoped to their `commissionId`.
 3. **Sequential 3-Step Special Permission Workflow**:
@@ -13,11 +14,11 @@
    - Mandatory non-gibberish justification (>= 100 chars, anti-repetition check, coherent word diversity).
    - **Anti-Self-Escalation & Anti-Self-Approval**: users cannot edit their own role/tier, cannot approve/decide/delegate/revoke their own request or step (`decidedByUid != requesterUid`), and automatic grants are written server-side into `granted_permissions` with automatic deactivation when `expiresAt` passes or when user is suspended/deleted.
 4. **Immutable Audit Trail**: `audit_logs` is strictly append-only (`update`/`delete` blocked) with server-verified `actorUid`.
-5. **Storage Rules**: Authenticated uploads bounded by strict size and MIME type limits (`image/*` <= 15 MB, `video/*` <= 150 MB, documents <= 30 MB).
+5. **Storage Rules**: Authenticated uploads bounded by strict size and MIME type limits (`image/*` <= 15 MB, `video/*` <= 150 MB, documents <= 50 MB).
 
 ## 2. Adversarial Payloads Verified Blocked
-1. Unauthenticated access to `/api/private/state`, `/api/permissions/*`, or `/api/survey-responses` -> `401`/`403`
-2. `Consejero` calling privileged routes (`POST /api/councilors`, `PATCH /api/portal-settings`, `PATCH /api/actas/:id` status `aprobada`) -> `403 PERMISSION_DENIED_REQUESTABLE`
+1. Unauthenticated access to `/api/private/state`, `/api/permissions/*`, `/api/departamental/*`, or `/api/survey-responses` -> `401`/`403`
+2. `Consejero` or `Consejero Departamental` calling privileged routes (`POST /api/councilors`, `PATCH /api/portal-settings`, `PATCH /api/actas/:id` status `aprobada`) -> `403 PERMISSION_DENIED_REQUESTABLE`
 3. User attempting self-role escalation (`PATCH /api/councilors/:ownUid` with `roleLabel` or `active`) -> `403`
 4. `Vicepresidente`/`Secretario` attempting to create/edit/delete a `Presidente` account -> `403`
 5. Approver attempting to approve or delegate their own `permission_requests` item -> `403`
@@ -26,4 +27,6 @@
 8. Spoofed `actorUid` or modifying/deleting `audit_logs` -> Blocked
 9. Suspended/deleted user retaining commission coordinator privileges or active `granted_permissions` -> Auto-revoked on suspension/deletion
 10. Temporal grant past `expiresAt` -> Auto-deactivated during session resolution
+11. `Consejero Departamental` (or `Vicepresidente`/`Secretario`) attempting to set `publicApproved=true` or call `POST /api/departamental/:kind/:id/publish-decision` -> `403` (Presidencia-only)
+12. `Consejero Departamental` attempting to edit session directly instead of proposing an agenda item (`PATCH /api/sessions/:id`) -> `403`
 

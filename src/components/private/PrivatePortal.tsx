@@ -24,6 +24,9 @@ import type {
   CouncilSession,
   CouncilVote,
   CouncilorPrivate,
+  DeptInterlocutionReport,
+  DeptOversightRecord,
+  DeptProposal,
   GalleryAlbum,
   GalleryItem,
   GrantedPermission,
@@ -39,6 +42,7 @@ import type {
   PortalSettings,
   PrivateModule,
   PublicCouncilor,
+  SessionAgendaProposal,
   WorkPlanItem,
 } from '../../types/cmj';
 import { BrandLogo } from '../BrandLogo';
@@ -100,6 +104,9 @@ const RoleGuideModule = lazy(() =>
 const PermissionsModule = lazy(() =>
   import('./PermissionsModule').then((m) => ({ default: m.PermissionsModule }))
 );
+const DepartamentalModule = lazy(() =>
+  import('./DepartamentalModule').then((m) => ({ default: m.DepartamentalModule }))
+);
 
 function ModuleLoadingFallback() {
   return (
@@ -150,6 +157,10 @@ export function PrivatePortal({
   permissionApprovalSteps = [],
   grantedPermissions = [],
   portalNotifications = [],
+  deptProposals = [],
+  deptOversight = [],
+  deptReports = [],
+  sessionAgendaProposals = [],
   coordinatorCommissionIds = [],
   effectivePermissions = [],
   settings,
@@ -185,6 +196,10 @@ export function PrivatePortal({
   permissionApprovalSteps?: PermissionApprovalStep[];
   grantedPermissions?: GrantedPermission[];
   portalNotifications?: PortalNotification[];
+  deptProposals?: DeptProposal[];
+  deptOversight?: DeptOversightRecord[];
+  deptReports?: DeptInterlocutionReport[];
+  sessionAgendaProposals?: SessionAgendaProposal[];
   coordinatorCommissionIds?: string[];
   effectivePermissions?: PermissionKey[];
   settings: PortalSettings;
@@ -281,6 +296,9 @@ export function PrivatePortal({
         items: group.items.filter((item) => {
           if (item.id === 'usuarios') return can('usuarios.ver');
           if (item.id === 'auditoria') return can('auditoria.ver');
+          if (item.id === 'departamental') {
+            return can('departamental.ver') || can('departamental.publicacion_aprobar');
+          }
           return true;
         }),
       })).filter((group) => group.items.length > 0),
@@ -395,6 +413,22 @@ export function PrivatePortal({
       }
     }
 
+    if (can('departamental.publicacion_aprobar')) {
+      const pendingDeptCount =
+        deptProposals.filter((p) => p.publicationStatus === 'pendiente_presidencia').length +
+        deptOversight.filter((o) => o.publicationStatus === 'pendiente_presidencia').length +
+        deptReports.filter((r) => r.publicationStatus === 'pendiente_presidencia').length;
+      if (pendingDeptCount > 0) {
+        list.push({
+          id: 'pending-dept-pub',
+          title: `${pendingDeptCount} publicación(es) departamentales por aprobar`,
+          detail:
+            'Propuestas, veedurías o informes del Consejero Departamental esperan revisión de Presidencia.',
+          module: 'departamental',
+        });
+      }
+    }
+
     return list;
   }, [
     portalNotifications,
@@ -408,6 +442,9 @@ export function PrivatePortal({
     can,
     newsEvents,
     contactMessages,
+    deptProposals,
+    deptOversight,
+    deptReports,
   ]);
 
   const searchHits = useMemo<GlobalSearchHit[]>(() => {
@@ -513,6 +550,42 @@ export function PrivatePortal({
       }
     });
 
+    if (can('departamental.ver') || can('departamental.publicacion_aprobar')) {
+      deptProposals.forEach((p) => {
+        if (!q || p.title.toLowerCase().includes(q) || p.targetEntity.toLowerCase().includes(q)) {
+          hits.push({
+            id: `dp-${p.id}`,
+            title: p.title,
+            subtitle: `Propuesta Dept. · ${p.targetEntity}`,
+            module: 'departamental',
+            badge: 'Departamental',
+          });
+        }
+      });
+      deptOversight.forEach((o) => {
+        if (!q || o.title.toLowerCase().includes(q) || o.watchedEntity.toLowerCase().includes(q)) {
+          hits.push({
+            id: `do-${o.id}`,
+            title: o.title,
+            subtitle: `Veeduría · ${o.watchedEntity}`,
+            module: 'departamental',
+            badge: 'Departamental',
+          });
+        }
+      });
+      deptReports.forEach((r) => {
+        if (!q || r.title.toLowerCase().includes(q) || r.reportPeriod.toLowerCase().includes(q)) {
+          hits.push({
+            id: `dr-${r.id}`,
+            title: r.title,
+            subtitle: `Informe · ${r.reportPeriod}`,
+            module: 'departamental',
+            badge: 'Departamental',
+          });
+        }
+      });
+    }
+
     return hits.slice(0, 16);
   }, [
     searchQuery,
@@ -523,6 +596,9 @@ export function PrivatePortal({
     votes,
     documents,
     newsEvents,
+    deptProposals,
+    deptOversight,
+    deptReports,
     can,
   ]);
 
@@ -615,7 +691,13 @@ export function PrivatePortal({
             <BrandLogo size="sm" />
             <div className="min-w-0">
               <p className="text-sm font-extrabold truncate">CMJ Flandes</p>
-              <p className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 truncate">
+              <p
+                className={`text-[11px] font-semibold truncate ${
+                  roleLabel === 'Consejero Departamental'
+                    ? 'text-purple-700 dark:text-purple-400'
+                    : 'text-emerald-700 dark:text-emerald-400'
+                }`}
+              >
                 {roleLabel}
               </p>
             </div>
@@ -650,13 +732,13 @@ export function PrivatePortal({
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col min-w-0">
-        <header className="sticky top-0 z-30 h-16 border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md px-4 sm:px-6 flex items-center justify-between gap-3 no-print">
-          <div className="flex items-center gap-2.5 min-w-0">
+        <header className="sticky top-0 z-30 h-16 border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md px-3 sm:px-6 flex items-center justify-between gap-2 sm:gap-3 no-print">
+          <div className="flex items-center gap-2 min-w-0">
             <button
               type="button"
               onClick={() => setMobileSidebarOpen(true)}
               aria-label="Abrir menú lateral"
-              className="lg:hidden min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              className="lg:hidden min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer shrink-0"
             >
               <Menu className="h-5 w-5" />
             </button>
@@ -670,15 +752,15 @@ export function PrivatePortal({
             </div>
           </div>
 
-          <div className="flex items-center gap-1 sm:gap-2 relative">
+          <div className="flex items-center gap-1 sm:gap-2 relative shrink-0">
             <button
               type="button"
               onClick={() => setSearchOpen(true)}
               title="Búsqueda global (Ctrl+K)"
               aria-label="Búsqueda global"
-              className="min-h-[40px] inline-flex items-center gap-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 px-2.5 py-1.5 text-xs text-slate-500 hover:border-emerald-600 cursor-pointer"
+              className="min-h-[44px] min-w-[44px] sm:min-h-[40px] sm:min-w-0 inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 px-2.5 py-1.5 text-xs text-slate-500 hover:border-emerald-600 cursor-pointer"
             >
-              <Search className="h-3.5 w-3.5" />
+              <Search className="h-4 w-4 sm:h-3.5 sm:w-3.5" />
               <span className="hidden md:inline">Buscar...</span>
               <kbd className="hidden lg:inline rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-1.5 py-0.5 text-[10px] font-mono-num">
                 Ctrl+K
@@ -693,7 +775,7 @@ export function PrivatePortal({
                 type="button"
                 onClick={() => setNotificationsOpen((v) => !v)}
                 aria-label="Abrir notificaciones"
-                className="relative min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                className="relative min-h-[44px] min-w-[44px] sm:min-h-[40px] sm:min-w-[40px] flex items-center justify-center rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
               >
                 <Bell className="h-4 w-4" />
                 {notifications.length > 0 && (
@@ -704,7 +786,7 @@ export function PrivatePortal({
               </button>
 
               {notificationsOpen && (
-                <div className="absolute right-0 mt-2 w-80 max-w-[90vw] rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-2xl p-3 space-y-2 z-50">
+                <div className="absolute right-0 mt-2 w-[min(20rem,calc(100vw-1.5rem))] rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-2xl p-3 space-y-2 z-50">
                   <div className="flex items-center justify-between gap-2 px-1 pb-1 border-b border-slate-100 dark:border-slate-800">
                     <span className="text-xs font-bold">
                       Notificaciones ({notifications.length})
@@ -774,7 +856,7 @@ export function PrivatePortal({
               type="button"
               onClick={onToggleDarkMode}
               aria-label="Cambiar modo visual"
-              className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              className="min-h-[44px] min-w-[44px] sm:min-h-[40px] sm:min-w-[40px] flex items-center justify-center rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
             >
               {darkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </button>
@@ -791,7 +873,7 @@ export function PrivatePortal({
               type="button"
               onClick={() => setProfileModalOpen(true)}
               aria-label="Abrir mi perfil"
-              className="min-h-[40px] flex items-center gap-2 rounded-xl border border-slate-200 dark:border-slate-800 px-2 py-1 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              className="min-h-[44px] sm:min-h-[40px] flex items-center gap-2 rounded-xl border border-slate-200 dark:border-slate-800 px-2 py-1 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
             >
               <AvatarBadge
                 name={fullName}
@@ -804,7 +886,13 @@ export function PrivatePortal({
               />
               <div className="hidden sm:block text-left">
                 <p className="text-xs font-bold leading-none truncate max-w-[140px]">{fullName}</p>
-                <p className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400 mt-0.5">
+                <p
+                  className={`text-[10px] font-semibold mt-0.5 ${
+                    roleLabel === 'Consejero Departamental'
+                      ? 'text-purple-700 dark:text-purple-400'
+                      : 'text-emerald-700 dark:text-emerald-400'
+                  }`}
+                >
                   {roleLabel}
                 </p>
               </div>
@@ -820,7 +908,7 @@ export function PrivatePortal({
           >
             <div
               onClick={(e) => e.stopPropagation()}
-              className="w-72 max-w-[85vw] bg-white dark:bg-slate-950 h-full p-4 flex flex-col shadow-2xl"
+              className="w-72 max-w-[85vw] bg-white dark:bg-slate-950 h-[100dvh] p-4 pb-safe-bottom flex flex-col shadow-2xl"
             >
               <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
                 <div className="flex items-center gap-2.5">
@@ -831,7 +919,7 @@ export function PrivatePortal({
                   type="button"
                   onClick={() => setMobileSidebarOpen(false)}
                   aria-label="Cerrar menú"
-                  className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800"
+                  className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800"
                 >
                   <X className="h-4 w-4" />
                 </button>
@@ -939,6 +1027,7 @@ export function PrivatePortal({
                       sessions={sessions}
                       commissions={commissions}
                       publicCouncilors={publicCouncilors}
+                      sessionAgendaProposals={sessionAgendaProposals}
                       onOpenActas={(sessionId) => {
                         setPreselectedSessionForActa(sessionId);
                         setActiveModule('actas');
@@ -1082,6 +1171,19 @@ export function PrivatePortal({
                     />
                   )}
 
+                  {activeModule === 'departamental' &&
+                    (can('departamental.ver') || can('departamental.publicacion_aprobar')) && (
+                      <DepartamentalModule
+                        uid={uid}
+                        actorName={fullName}
+                        actorRoleLabel={roleLabel}
+                        commissions={commissions}
+                        deptProposals={deptProposals}
+                        deptOversight={deptOversight}
+                        deptReports={deptReports}
+                      />
+                    )}
+
                   {activeModule === 'guia' && <RoleGuideModule roleLabel={roleLabel} />}
                 </Suspense>
               </motion.div>
@@ -1093,7 +1195,7 @@ export function PrivatePortal({
       {/* Barra Inferior Móvil (<= 15% altura, botones >= 44x44px) */}
       <nav
         aria-label="Navegación rápida móvil"
-        className="lg:hidden fixed bottom-0 inset-x-0 z-40 h-16 border-t border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md px-2 grid grid-cols-5 items-center no-print"
+        className="lg:hidden fixed bottom-0 inset-x-0 z-40 min-h-16 h-auto pt-1 pb-safe-bottom border-t border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-950/95 backdrop-blur-md px-2 grid grid-cols-5 items-center no-print"
       >
         {mobileQuickItems.map((item) => {
           const active = activeModule === item.id;

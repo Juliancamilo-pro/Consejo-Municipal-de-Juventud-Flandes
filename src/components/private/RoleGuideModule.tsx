@@ -67,6 +67,18 @@ const ROLE_CARDS: {
     ],
   },
   {
+    role: 'Consejero Departamental',
+    title: 'Consejero Departamental (Tolima)',
+    accentClass: 'text-purple-700 dark:text-purple-400',
+    description:
+      'Representante municipal ante el Consejo Departamental de Juventud del Tolima (Ley 1622 de 2013 y Ley 1885 de 2018). Formula propuestas, ejerce veeduría juvenil, rinde informes de interlocución y propone puntos al orden del día.',
+    permissions: [
+      'Crear propuestas ante la administración, registros de veeduría e informes departamentales',
+      'Proponer puntos al orden del día de sesiones para aprobación de Mesa Directiva',
+      'No puede auto-publicar documentos al portal ciudadano (requiere visto bueno de Presidencia)',
+    ],
+  },
+  {
     role: 'Consejero',
     title: 'Consejero',
     accentClass: 'text-amber-700 dark:text-amber-400',
@@ -257,6 +269,7 @@ export function RoleGuideModule({ roleLabel }: { roleLabel: RoleLabel }) {
                 <th className="py-2.5 px-2 font-semibold text-center">Pres.</th>
                 <th className="py-2.5 px-2 font-semibold text-center">Vice.</th>
                 <th className="py-2.5 px-2 font-semibold text-center">Sec.</th>
+                <th className="py-2.5 px-2 font-semibold text-center">Cons. Dept.</th>
                 <th className="py-2.5 px-2 font-semibold text-center">Cons.</th>
                 <th className="py-2.5 px-2 font-semibold text-center">Coord. Com.</th>
                 <th className="py-2.5 px-2 font-semibold text-center">Solicitable</th>
@@ -285,6 +298,9 @@ export function RoleGuideModule({ roleLabel }: { roleLabel: RoleLabel }) {
                   </td>
                   <td className="py-2.5 px-2 text-center font-medium text-slate-700 dark:text-slate-200">
                     {row.proposedSecretario}
+                  </td>
+                  <td className="py-2.5 px-2 text-center font-medium text-purple-700 dark:text-purple-300">
+                    {row.proposedConsejeroDepartamental}
                   </td>
                   <td className="py-2.5 px-2 text-center text-slate-600 dark:text-slate-300">
                     {row.proposedConsejero}

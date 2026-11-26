@@ -36,12 +36,24 @@ service cloud.firestore {
 
     function isCouncilor() {
       return hasActiveRole()
-        && roleDoc().accessTier in ['tier_1_pres', 'tier_2_vp', 'tier_3_sec', 'tier_4_member'];
+        && roleDoc().accessTier in ['tier_1_pres', 'tier_2_vp', 'tier_3_sec', 'tier_5_dept', 'tier_4_member'];
     }
 
     function isLeadership() {
       return hasActiveRole()
         && roleDoc().accessTier in ['tier_1_pres', 'tier_2_vp', 'tier_3_sec'];
+    }
+
+    function isPresidente() {
+      return hasActiveRole()
+        && roleDoc().accessTier == 'tier_1_pres'
+        && roleDoc().roleLabel == 'Presidente';
+    }
+
+    function isDeptDelegate() {
+      return hasActiveRole()
+        && roleDoc().accessTier == 'tier_5_dept'
+        && roleDoc().roleLabel == 'Consejero Departamental';
     }
 
     function isBootstrapSecretary() {
@@ -62,8 +74,8 @@ service cloud.firestore {
       return data.keys().hasAll(['active', 'accessTier', 'roleLabel', 'commissionId', 'accountProvisioned', 'mustChangePassword', 'updatedAt'])
         && data.keys().hasOnly(['active', 'accessTier', 'roleLabel', 'commissionId', 'accountProvisioned', 'mustChangePassword', 'updatedAt'])
         && data.active is bool
-        && data.accessTier in ['tier_1_pres', 'tier_2_vp', 'tier_3_sec', 'tier_4_member']
-        && data.roleLabel in ['Presidente', 'Vicepresidente', 'Secretario', 'Consejero']
+        && data.accessTier in ['tier_1_pres', 'tier_2_vp', 'tier_3_sec', 'tier_5_dept', 'tier_4_member']
+        && data.roleLabel in ['Presidente', 'Vicepresidente', 'Secretario', 'Consejero Departamental', 'Consejero']
         && isValidId(data.commissionId)
         && data.accountProvisioned is bool
         && data.mustChangePassword is bool
@@ -94,8 +106,8 @@ service cloud.firestore {
         && data.keys().hasOnly(['uid', 'accessTier', 'roleLabel', 'emailHash', 'active', 'updatedAt'])
         && data.uid == uid
         && isValidId(data.uid)
-        && data.accessTier in ['tier_1_pres', 'tier_2_vp', 'tier_3_sec', 'tier_4_member']
-        && data.roleLabel in ['Presidente', 'Vicepresidente', 'Secretario', 'Consejero']
+        && data.accessTier in ['tier_1_pres', 'tier_2_vp', 'tier_3_sec', 'tier_5_dept', 'tier_4_member']
+        && data.roleLabel in ['Presidente', 'Vicepresidente', 'Secretario', 'Consejero Departamental', 'Consejero']
         && data.emailHash is string && data.emailHash.size() >= 16 && data.emailHash.size() <= 128
         && data.active is bool
         && data.updatedAt is timestamp;
@@ -106,7 +118,7 @@ service cloud.firestore {
         && data.keys().hasOnly(['uid', 'fullName', 'roleLabel', 'commissionId', 'commissionName', 'bio', 'photoUrl', 'storagePath', 'instagram', 'facebook', 'active', 'displayOrder', 'updatedAt'])
         && data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128
         && data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 120
-        && data.roleLabel in ['Presidente', 'Vicepresidente', 'Secretario', 'Consejero']
+        && data.roleLabel in ['Presidente', 'Vicepresidente', 'Secretario', 'Consejero Departamental', 'Consejero']
         && isValidId(data.commissionId)
         && data.commissionName is string && data.commissionName.size() >= 2 && data.commissionName.size() <= 120
         && (!('bio' in data) || (data.bio is string && data.bio.size() <= 600))
@@ -127,8 +139,8 @@ service cloud.firestore {
         && data.email is string && data.email.size() >= 5 && data.email.size() <= 180
         && (!('phone' in data) || (data.phone is string && data.phone.size() <= 40))
         && (!('active' in data) || data.active is bool)
-        && data.accessTier in ['tier_1_pres', 'tier_2_vp', 'tier_3_sec', 'tier_4_member']
-        && data.roleLabel in ['Presidente', 'Vicepresidente', 'Secretario', 'Consejero']
+        && data.accessTier in ['tier_1_pres', 'tier_2_vp', 'tier_3_sec', 'tier_5_dept', 'tier_4_member']
+        && data.roleLabel in ['Presidente', 'Vicepresidente', 'Secretario', 'Consejero Departamental', 'Consejero']
         && isValidId(data.commissionId)
         && data.mustChangePassword is bool
         && data.createdAt is timestamp
@@ -364,7 +376,7 @@ service cloud.firestore {
         && data.keys().hasOnly(['actorUid', 'actorName', 'actorRoleLabel', 'action', 'module', 'targetTitle', 'createdAt'])
         && data.actorUid is string && data.actorUid == request.auth.uid
         && data.actorName is string && data.actorName.size() >= 2 && data.actorName.size() <= 120
-        && data.actorRoleLabel in ['Presidente', 'Vicepresidente', 'Secretario', 'Consejero']
+        && data.actorRoleLabel in ['Presidente', 'Vicepresidente', 'Secretario', 'Consejero Departamental', 'Consejero']
         && data.action is string && data.action.size() >= 2 && data.action.size() <= 180
         && data.module is string && data.module.size() >= 2 && data.module.size() <= 80
         && data.targetTitle is string && data.targetTitle.size() >= 1 && data.targetTitle.size() <= 180
@@ -384,6 +396,65 @@ service cloud.firestore {
         && (!('contactEmail' in data) || (data.contactEmail is string && data.contactEmail.size() <= 180))
         && (!('contactAddress' in data) || (data.contactAddress is string && data.contactAddress.size() <= 240))
         && data.activeTheme in ['default', 'san_pedro', 'independencia', 'semana_juventud', 'amor_amistad', 'navidad']
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidDeptProposal(data) {
+      return data.keys().hasAll(['title', 'targetEntity', 'summary', 'status', 'visibility', 'publicationStatus', 'publicApproved', 'authorUid', 'authorName', 'createdAt', 'updatedAt'])
+        && data.title is string && data.title.size() >= 4 && data.title.size() <= 180
+        && data.targetEntity is string && data.targetEntity.size() >= 3 && data.targetEntity.size() <= 180
+        && data.summary is string && data.summary.size() >= 10 && data.summary.size() <= 2500
+        && data.status in ['borrador', 'radicada', 'en_concertacion', 'aprobada', 'archivada']
+        && data.visibility in ['privado', 'publico']
+        && data.publicationStatus in ['privado', 'pendiente_presidencia', 'publicado', 'rechazado']
+        && data.publicApproved is bool
+        && data.authorUid is string && data.authorUid.size() >= 1 && data.authorUid.size() <= 128
+        && data.authorName is string && data.authorName.size() >= 2 && data.authorName.size() <= 120
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidDeptOversight(data) {
+      return data.keys().hasAll(['title', 'watchedEntity', 'policyOrPlan', 'findings', 'riskLevel', 'status', 'visibility', 'publicationStatus', 'publicApproved', 'authorUid', 'authorName', 'createdAt', 'updatedAt'])
+        && data.title is string && data.title.size() >= 4 && data.title.size() <= 180
+        && data.watchedEntity is string && data.watchedEntity.size() >= 3 && data.watchedEntity.size() <= 180
+        && data.policyOrPlan is string && data.policyOrPlan.size() >= 3 && data.policyOrPlan.size() <= 220
+        && data.findings is string && data.findings.size() >= 10 && data.findings.size() <= 3000
+        && data.riskLevel in ['bajo', 'medio', 'alto']
+        && data.status in ['en_seguimiento', 'alerta', 'subsanada', 'cerrada']
+        && data.visibility in ['privado', 'publico']
+        && data.publicationStatus in ['privado', 'pendiente_presidencia', 'publicado', 'rechazado']
+        && data.publicApproved is bool
+        && data.authorUid is string && data.authorUid.size() >= 1 && data.authorUid.size() <= 128
+        && data.authorName is string && data.authorName.size() >= 2 && data.authorName.size() <= 120
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidDeptReport(data) {
+      return data.keys().hasAll(['title', 'reportPeriod', 'departamentalSpace', 'summary', 'visibility', 'publicationStatus', 'publicApproved', 'authorUid', 'authorName', 'createdAt', 'updatedAt'])
+        && data.title is string && data.title.size() >= 4 && data.title.size() <= 180
+        && data.reportPeriod is string && data.reportPeriod.size() >= 2 && data.reportPeriod.size() <= 80
+        && data.departamentalSpace is string && data.departamentalSpace.size() >= 4 && data.departamentalSpace.size() <= 180
+        && data.summary is string && data.summary.size() >= 10 && data.summary.size() <= 3000
+        && data.visibility in ['privado', 'publico']
+        && data.publicationStatus in ['privado', 'pendiente_presidencia', 'publicado', 'rechazado']
+        && data.publicApproved is bool
+        && data.authorUid is string && data.authorUid.size() >= 1 && data.authorUid.size() <= 128
+        && data.authorName is string && data.authorName.size() >= 2 && data.authorName.size() <= 120
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidSessionAgendaProposal(data) {
+      return data.keys().hasAll(['sessionId', 'title', 'justification', 'proposerUid', 'proposerName', 'status', 'createdAt', 'updatedAt'])
+        && isValidId(data.sessionId)
+        && data.title is string && data.title.size() >= 4 && data.title.size() <= 180
+        && data.justification is string && data.justification.size() >= 10 && data.justification.size() <= 1500
+        && data.proposerUid is string && data.proposerUid.size() >= 1 && data.proposerUid.size() <= 128
+        && data.proposerName is string && data.proposerName.size() >= 2 && data.proposerName.size() <= 120
+        && data.status in ['pendiente', 'aprobada', 'rechazada']
+        && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
 
@@ -692,6 +763,99 @@ service cloud.firestore {
       allow get, list: if isCouncilor() && resource.data.recipientUid == request.auth.uid;
       allow update: if isCouncilor() && resource.data.recipientUid == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['read']);
       allow create, delete: if false;
+    }
+
+    match /dept_proposals/{itemId} {
+      allow get, list: if isCouncilor() || (resource.data.publicApproved == true && resource.data.visibility == 'publico');
+      allow create: if isValidId(itemId) && isValidDeptProposal(incoming())
+        && incoming().authorUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (
+          isPresidente()
+          || (isDeptDelegate() && incoming().publicApproved == false && incoming().visibility == 'privado')
+        );
+      allow update: if isValidId(itemId) && isValidDeptProposal(incoming())
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().authorUid == existing().authorUid
+        && (
+          isPresidente()
+          || (
+            isDeptDelegate()
+            && existing().authorUid == request.auth.uid
+            && incoming().publicApproved == false
+            && incoming().visibility == 'privado'
+          )
+        );
+      allow delete: if isValidId(itemId) && (isPresidente() || (isDeptDelegate() && existing().authorUid == request.auth.uid));
+    }
+
+    match /dept_oversight/{itemId} {
+      allow get, list: if isCouncilor() || (resource.data.publicApproved == true && resource.data.visibility == 'publico');
+      allow create: if isValidId(itemId) && isValidDeptOversight(incoming())
+        && incoming().authorUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (
+          isPresidente()
+          || (isDeptDelegate() && incoming().publicApproved == false && incoming().visibility == 'privado')
+        );
+      allow update: if isValidId(itemId) && isValidDeptOversight(incoming())
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().authorUid == existing().authorUid
+        && (
+          isPresidente()
+          || (
+            isDeptDelegate()
+            && existing().authorUid == request.auth.uid
+            && incoming().publicApproved == false
+            && incoming().visibility == 'privado'
+          )
+        );
+      allow delete: if isValidId(itemId) && (isPresidente() || (isDeptDelegate() && existing().authorUid == request.auth.uid));
+    }
+
+    match /dept_reports/{itemId} {
+      allow get, list: if isCouncilor() || (resource.data.publicApproved == true && resource.data.visibility == 'publico');
+      allow create: if isValidId(itemId) && isValidDeptReport(incoming())
+        && incoming().authorUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (
+          isPresidente()
+          || (isDeptDelegate() && incoming().publicApproved == false && incoming().visibility == 'privado')
+        );
+      allow update: if isValidId(itemId) && isValidDeptReport(incoming())
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().authorUid == existing().authorUid
+        && (
+          isPresidente()
+          || (
+            isDeptDelegate()
+            && existing().authorUid == request.auth.uid
+            && incoming().publicApproved == false
+            && incoming().visibility == 'privado'
+          )
+        );
+      allow delete: if isValidId(itemId) && (isPresidente() || (isDeptDelegate() && existing().authorUid == request.auth.uid));
+    }
+
+    match /session_agenda_proposals/{proposalId} {
+      allow get, list: if isCouncilor();
+      allow create: if isValidId(proposalId) && isValidSessionAgendaProposal(incoming())
+        && (isDeptDelegate() || isLeadership())
+        && incoming().proposerUid == request.auth.uid
+        && incoming().status == 'pendiente'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(proposalId) && isValidSessionAgendaProposal(incoming())
+        && isLeadership()
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time;
+      allow delete: if isValidId(proposalId) && isLeadership();
     }
   }
 }

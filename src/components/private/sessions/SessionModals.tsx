@@ -108,8 +108,8 @@ export function SessionPrintableModal({
   if (!open || !session) return null;
 
   return (
-    <div className="fixed inset-0 z-[85] bg-slate-950/80 p-3 sm:p-4 overflow-y-auto flex justify-center print:static print:bg-white print:p-0 print:block">
-      <div className="w-full max-w-3xl bg-white text-slate-900 rounded-2xl p-6 sm:p-8 space-y-5 shadow-2xl my-auto print:shadow-none print:max-w-none print:p-2">
+    <div className="fixed inset-0 z-[85] bg-slate-950/80 p-0 sm:p-4 overflow-y-auto flex items-stretch sm:items-center justify-center print:static print:bg-white print:p-0 print:block">
+      <div className="w-full max-w-3xl bg-white text-slate-900 rounded-none sm:rounded-2xl max-h-[100dvh] sm:max-h-[90dvh] overflow-y-auto p-4 sm:p-8 pb-safe-bottom space-y-5 shadow-2xl my-0 sm:my-auto print:shadow-none print:max-w-none print:max-h-none print:p-2">
         <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-300 pb-4">
           <div className="flex items-center gap-3">
             <img
@@ -132,14 +132,14 @@ export function SessionPrintableModal({
             <button
               type="button"
               onClick={() => window.print()}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-700 px-3.5 py-2 text-xs font-semibold text-white cursor-pointer whitespace-nowrap"
+              className="min-h-[44px] sm:min-h-[38px] inline-flex items-center gap-1.5 rounded-xl bg-emerald-700 px-3.5 py-2 text-xs font-semibold text-white cursor-pointer whitespace-nowrap"
             >
               Imprimir / PDF
             </button>
             <button
               type="button"
               onClick={onClose}
-              className="rounded-xl bg-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 cursor-pointer whitespace-nowrap"
+              className="min-h-[44px] sm:min-h-[38px] rounded-xl bg-slate-200 px-3.5 py-2 text-xs font-semibold text-slate-700 cursor-pointer whitespace-nowrap"
             >
               Cerrar
             </button>
@@ -157,35 +157,37 @@ export function SessionPrintableModal({
           <h3 className="text-sm font-bold uppercase mb-2">
             Registro Oficial de Asistencia y Quórum ({presentCount}/{requiredQuorum})
           </h3>
-          <table className="w-full text-xs border border-slate-300">
-            <thead>
-              <tr className="bg-slate-100">
-                <th className="border border-slate-300 p-2 text-left">Consejero(a)</th>
-                <th className="border border-slate-300 p-2 text-left">Cargo</th>
-                <th className="border border-slate-300 p-2 text-left">Estado</th>
-                <th className="border border-slate-300 p-2 text-left">Observación / Excusa</th>
-              </tr>
-            </thead>
-            <tbody>
-              {activeCouncilors.map((c) => {
-                const st = session.attendance?.[c.uid] || 'ausente';
-                const exc = session.excuses?.[c.uid];
-                return (
-                  <tr key={c.uid}>
-                    <td className="border border-slate-300 p-2 font-medium">{c.fullName}</td>
-                    <td className="border border-slate-300 p-2">{c.roleLabel}</td>
-                    <td className="border border-slate-300 p-2 font-semibold capitalize">{st}</td>
-                    <td className="border border-slate-300 p-2 text-slate-600">
-                      {exc?.reason || '—'}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <div className="overflow-x-auto -mx-2 px-2 sm:mx-0 sm:px-0">
+            <table className="w-full min-w-[480px] text-xs border border-slate-300">
+              <thead>
+                <tr className="bg-slate-100">
+                  <th className="border border-slate-300 p-2 text-left">Consejero(a)</th>
+                  <th className="border border-slate-300 p-2 text-left">Cargo</th>
+                  <th className="border border-slate-300 p-2 text-left">Estado</th>
+                  <th className="border border-slate-300 p-2 text-left">Observación / Excusa</th>
+                </tr>
+              </thead>
+              <tbody>
+                {activeCouncilors.map((c) => {
+                  const st = session.attendance?.[c.uid] || 'ausente';
+                  const exc = session.excuses?.[c.uid];
+                  return (
+                    <tr key={c.uid}>
+                      <td className="border border-slate-300 p-2 font-medium">{c.fullName}</td>
+                      <td className="border border-slate-300 p-2">{c.roleLabel}</td>
+                      <td className="border border-slate-300 p-2 font-semibold capitalize">{st}</td>
+                      <td className="border border-slate-300 p-2 text-slate-600">
+                        {exc?.reason || '—'}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
 
-        <div className="pt-8 grid grid-cols-2 gap-8 text-xs text-center">
+        <div className="pt-8 grid grid-cols-1 sm:grid-cols-2 gap-6 sm:gap-8 text-xs text-center">
           <div className="border-t border-slate-400 pt-2">
             <p className="font-bold">Presidencia CMJ Flandes</p>
             <p className="text-slate-500">Firma</p>

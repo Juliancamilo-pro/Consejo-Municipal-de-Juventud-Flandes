@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { ApiRequestError, apiRequest } from '../../lib/apiClient';
 import { exportStyledWorkbook } from '../../lib/excelExport';
+import { useUnsavedChangesGuard } from '../../lib/unsavedChanges';
 import type {
   AccessTier,
   ActaStatus,
@@ -161,6 +162,20 @@ export function ActasModule({
     setEditCommitmentsSummary(selectedActa.commitmentsSummary || '');
     setEditLinkedVoteIds(selectedActa.linkedVoteIds || []);
   }, [selectedActa?.id, selectedActa?.updatedAt]);
+
+  const isDirtyActa =
+    creatingOpen ||
+    Boolean(
+      selectedActa &&
+        (editTitle !== selectedActa.title ||
+          editConsecutive !== selectedActa.consecutive ||
+          editAgenda !== (selectedActa.agenda || '') ||
+          editDevelopment !== (selectedActa.development || '') ||
+          editPropositions !== (selectedActa.propositions || '') ||
+          editCommitmentsSummary !== (selectedActa.commitmentsSummary || '') ||
+          aiNotes.trim().length > 0)
+    );
+  useUnsavedChangesGuard('actas-editor', isDirtyActa);
 
   const yearsAvailable = useMemo(() => {
     const set = new Set<number>([new Date().getFullYear()]);

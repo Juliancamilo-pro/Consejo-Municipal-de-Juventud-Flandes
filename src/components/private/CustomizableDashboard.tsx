@@ -4,6 +4,7 @@ import {
   ArrowDown,
   ArrowUp,
   Bell,
+  Building2,
   CalendarClock,
   CheckCircle2,
   ClipboardCheck,
@@ -903,6 +904,63 @@ export function CustomizableDashboard({
                               Editor del Portal
                             </p>
                             <p className="text-xs text-slate-500 truncate">Noticias, galería y temas</p>
+                          </div>
+                        </button>
+                      </>
+                    )}
+
+                    {roleLabel === 'Consejero Departamental' && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => onNavigate('departamental')}
+                          className="flex items-center gap-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 hover:bg-purple-50 dark:hover:bg-purple-950/30 p-4 text-left transition-colors cursor-pointer"
+                        >
+                          <Building2 className="h-5 w-5 text-purple-600 shrink-0" />
+                          <div className="min-w-0">
+                            <p className="text-sm font-bold text-slate-900 dark:text-white">
+                              Gestión Departamental
+                            </p>
+                            <p className="text-xs text-slate-500 truncate">Propuestas, veeduría e informes</p>
+                          </div>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onNavigate('sesiones')}
+                          className="flex items-center gap-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 p-4 text-left transition-colors cursor-pointer"
+                        >
+                          <CalendarClock className="h-5 w-5 text-blue-600 shrink-0" />
+                          <div className="min-w-0">
+                            <p className="text-sm font-bold text-slate-900 dark:text-white">
+                              Proponer punto en sesión
+                            </p>
+                            <p className="text-xs text-slate-500 truncate">Orden del día y asistencia</p>
+                          </div>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onNavigate('votaciones')}
+                          className="flex items-center gap-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 p-4 text-left transition-colors cursor-pointer"
+                        >
+                          <Vote className="h-5 w-5 text-emerald-600 shrink-0" />
+                          <div className="min-w-0">
+                            <p className="text-sm font-bold text-slate-900 dark:text-white">
+                              Votaciones
+                            </p>
+                            <p className="text-xs text-slate-500 truncate">Participa en decisiones</p>
+                          </div>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onNavigate('buzon')}
+                          className="flex items-center gap-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 p-4 text-left transition-colors cursor-pointer"
+                        >
+                          <Lightbulb className="h-5 w-5 text-amber-600 shrink-0" />
+                          <div className="min-w-0">
+                            <p className="text-sm font-bold text-slate-900 dark:text-white">
+                              Banco de ideas
+                            </p>
+                            <p className="text-xs text-slate-500 truncate">Iniciativas y estrategias</p>
                           </div>
                         </button>
                       </>

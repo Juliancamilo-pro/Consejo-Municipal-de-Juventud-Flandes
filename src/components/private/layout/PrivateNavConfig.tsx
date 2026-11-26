@@ -2,6 +2,7 @@ import React from 'react';
 import {
   Award,
   BookOpen,
+  Building2,
   Calendar,
   CalendarClock,
   FileCheck2,
@@ -98,6 +99,12 @@ export const NAV_GROUPS: NavGroupDef[] = [
         label: 'Encuestas y Mensajes',
         shortLabel: 'Mensajes',
         icon: <MessageSquare className="h-4 w-4" />,
+      },
+      {
+        id: 'departamental',
+        label: 'Gestión Departamental',
+        shortLabel: 'Dept.',
+        icon: <Building2 className="h-4 w-4" />,
       },
       {
         id: 'plan_trabajo',

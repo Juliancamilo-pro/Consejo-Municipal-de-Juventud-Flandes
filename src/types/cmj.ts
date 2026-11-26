@@ -1,7 +1,17 @@
-export type RoleLabel = 'Presidente' | 'Vicepresidente' | 'Secretario' | 'Consejero';
+export type RoleLabel =
+  | 'Presidente'
+  | 'Vicepresidente'
+  | 'Secretario'
+  | 'Consejero Departamental'
+  | 'Consejero';
 
 // Nivel técnico interno de permisos — nunca visible en la interfaz
-export type AccessTier = 'tier_1_pres' | 'tier_2_vp' | 'tier_3_sec' | 'tier_4_member';
+export type AccessTier =
+  | 'tier_1_pres'
+  | 'tier_2_vp'
+  | 'tier_3_sec'
+  | 'tier_5_dept'
+  | 'tier_4_member';
 
 export type FestiveThemeId =
   | 'default'
@@ -438,7 +448,8 @@ export type PrivateModule =
   | 'plan_trabajo'
   | 'guia'
   | 'portal_editor'
-  | 'permisos';
+  | 'permisos'
+  | 'departamental';
 
 export type PermissionKey =
   // Usuarios y Mesa
@@ -466,6 +477,7 @@ export type PermissionKey =
   | 'sesiones.autoregistro'
   | 'sesiones.eliminar'
   | 'sesiones.exportar'
+  | 'sesiones.proponer_agenda'
   // Actas
   | 'actas.ver'
   | 'actas.crear'
@@ -533,7 +545,13 @@ export type PermissionKey =
   | 'permisos.aprobar_secretaria'
   | 'permisos.delegar'
   | 'permisos.revocar'
-  | 'permisos.exportar';
+  | 'permisos.exportar'
+  // Gestión Departamental (Ley 1622 / Ley 1885)
+  | 'departamental.ver'
+  | 'departamental.propuestas_crear'
+  | 'departamental.veeduria_gestionar'
+  | 'departamental.informes_gestionar'
+  | 'departamental.publicacion_aprobar';
 
 export type PermissionRiskLevel = 'bajo' | 'medio' | 'alto';
 
@@ -625,6 +643,8 @@ export interface PortalNotification {
     | 'permiso_revocado'
     | 'permiso_recordatorio_48h'
     | 'comision_coordinador'
+    | 'agenda_propuesta'
+    | 'departamental_publicacion'
     | 'general';
   title: string;
   message: string;
@@ -641,9 +661,114 @@ export interface AuditComparisonRow {
   proposedPresidente: string;
   proposedVicepresidente: string;
   proposedSecretario: string;
+  proposedConsejeroDepartamental: string;
   proposedConsejero: string;
   proposedCoordinador: string;
   specialRequestable: boolean;
   permissionKey: PermissionKey;
 }
+
+export type DeptPublicationStatus =
+  | 'privado'
+  | 'pendiente_presidencia'
+  | 'publicado'
+  | 'rechazado';
+
+export interface DeptProposal {
+  id: string;
+  title: string;
+  targetEntity: string;
+  thematicAxis: string;
+  commissionId?: string;
+  summary: string;
+  justification: string;
+  status: 'borrador' | 'radicada' | 'en_concertacion' | 'aprobada' | 'archivada';
+  visibility: 'privado' | 'publico';
+  publicationStatus: DeptPublicationStatus;
+  publicApproved: boolean;
+  rejectionReason?: string;
+  approvedByUid?: string;
+  approvedByName?: string;
+  approvedAt?: string;
+  attachmentUrl?: string;
+  attachmentName?: string;
+  authorUid: string;
+  authorName: string;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+}
+
+export interface DeptOversightRecord {
+  id: string;
+  title: string;
+  watchedEntity: string;
+  policyOrPlan: string;
+  commissionId?: string;
+  findings: string;
+  recommendations: string;
+  riskLevel: 'bajo' | 'medio' | 'alto';
+  status: 'en_seguimiento' | 'alerta' | 'subsanada' | 'cerrada';
+  visibility: 'privado' | 'publico';
+  publicationStatus: DeptPublicationStatus;
+  publicApproved: boolean;
+  rejectionReason?: string;
+  approvedByUid?: string;
+  approvedByName?: string;
+  approvedAt?: string;
+  evidenceUrl?: string;
+  evidenceName?: string;
+  authorUid: string;
+  authorName: string;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+}
+
+export interface DeptInterlocutionReport {
+  id: string;
+  title: string;
+  reportPeriod: string;
+  sessionDate: string;
+  departamentalSpace: string;
+  commissionId?: string;
+  summary: string;
+  agreements: string;
+  participationStrategies: string;
+  visibility: 'privado' | 'publico';
+  publicationStatus: DeptPublicationStatus;
+  publicApproved: boolean;
+  rejectionReason?: string;
+  approvedByUid?: string;
+  approvedByName?: string;
+  approvedAt?: string;
+  attachmentUrl?: string;
+  attachmentName?: string;
+  authorUid: string;
+  authorName: string;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+}
+
+export interface SessionAgendaProposal {
+  id: string;
+  sessionId: string;
+  title: string;
+  justification: string;
+  proposerUid: string;
+  proposerName: string;
+  proposerRoleLabel: RoleLabel;
+  status: 'pendiente' | 'aprobada' | 'rechazada';
+  decisionNotes?: string;
+  decidedByUid?: string;
+  decidedByName?: string;
+  decidedAt?: string;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+}
+
+export interface PublicDepartamentalBundle {
+  proposals: Omit<DeptProposal, 'authorUid'>[];
+  oversight: Omit<DeptOversightRecord, 'authorUid'>[];
+  reports: Omit<DeptInterlocutionReport, 'authorUid'>[];
+}
+
 

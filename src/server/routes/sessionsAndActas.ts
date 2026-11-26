@@ -7,12 +7,15 @@ import {
   actas,
   commitments,
   publicCouncilors,
+  sessionAgendaProposals,
   sessions,
+  users,
   votes,
 } from '../../db/schema.ts';
 import { isLeadershipTier } from '../security.ts';
 import {
   type AuthedRequest,
+  createPortalNotification,
   isSafeUrl,
   logServerAudit,
   newId,
@@ -749,4 +752,163 @@ export function registerSessionsAndActasRoutes(app: express.Express) {
       res.status(500).json({ error: 'No fue posible eliminar el acta.' });
     }
   });
+
+  // Proponer puntos al orden del día de una sesión (Consejero Departamental / autorizado)
+  app.post(
+    '/api/sessions/:id/agenda-proposals',
+    requireAuth,
+    requirePermission('sesiones.proponer_agenda'),
+    async (req: AuthedRequest, res) => {
+      try {
+        const me = req.authUser!;
+        const sessionId = String(req.params.id);
+        const title = String(req.body?.title || '').trim().slice(0, 180);
+        const justification = String(req.body?.justification || '').trim().slice(0, 1500);
+
+        if (title.length < 4 || justification.length < 10) {
+          res.status(400).json({
+            error: 'Escribe un título (mín. 4 caracteres) y justificación (mín. 10 caracteres) para el punto propuesto.',
+          });
+          return;
+        }
+
+        const [sess] = await db.select().from(sessions).where(eq(sessions.id, sessionId)).limit(1);
+        if (!sess) {
+          res.status(404).json({ error: 'Sesión no encontrada.' });
+          return;
+        }
+        if (sess.status === 'finalizada') {
+          res.status(400).json({ error: 'No es posible proponer puntos en una sesión finalizada.' });
+          return;
+        }
+
+        const id = newId('agprop');
+        await db.insert(sessionAgendaProposals).values({
+          id,
+          sessionId,
+          title,
+          justification,
+          proposerUid: me.uid,
+          proposerName: me.fullName,
+          proposerRoleLabel: me.roleLabel,
+          status: 'pendiente',
+        });
+
+        const leaders = await db
+          .select({ uid: users.uid })
+          .from(users)
+          .where(inArray(users.roleLabel, ['Presidente', 'Vicepresidente', 'Secretario']));
+
+        await Promise.all(
+          leaders
+            .filter((l) => l.uid !== me.uid)
+            .map((l) =>
+              createPortalNotification({
+                userUid: l.uid,
+                type: 'agenda_propuesta',
+                title: 'Nueva propuesta para orden del día',
+                message: `${me.fullName} (${me.roleLabel}) propuso "${title}" para la sesión "${sess.title}".`,
+                linkModule: 'sesiones',
+                relatedId: sessionId,
+              })
+            )
+        );
+
+        await logServerAudit(me, 'Propuso punto en orden del día', 'Sesiones', `${sess.title}: ${title}`);
+        res.json({ id, ok: true });
+      } catch (error) {
+        console.error('Create session agenda proposal failed:', error);
+        res.status(500).json({ error: 'No fue posible enviar la propuesta de orden del día.' });
+      }
+    }
+  );
+
+  // Mesa Directiva aprueba o rechaza puntos propuestos al orden del día
+  app.patch(
+    '/api/sessions/:id/agenda-proposals/:proposalId',
+    requireAuth,
+    requirePermission('sesiones.editar'),
+    async (req: AuthedRequest, res) => {
+      try {
+        const me = req.authUser!;
+        const sessionId = String(req.params.id);
+        const proposalId = String(req.params.proposalId);
+        const nextStatus = String(req.body?.status || '');
+        const decisionNotes = String(req.body?.decisionNotes || '').trim().slice(0, 500);
+
+        if (nextStatus !== 'aprobada' && nextStatus !== 'rechazada') {
+          res.status(400).json({ error: 'El estado debe ser aprobada o rechazada.' });
+          return;
+        }
+
+        const [existing] = await db
+          .select()
+          .from(sessionAgendaProposals)
+          .where(eq(sessionAgendaProposals.id, proposalId))
+          .limit(1);
+        if (!existing || existing.sessionId !== sessionId) {
+          res.status(404).json({ error: 'Propuesta de orden del día no encontrada.' });
+          return;
+        }
+
+        const [sess] = await db.select().from(sessions).where(eq(sessions.id, sessionId)).limit(1);
+        if (!sess) {
+          res.status(404).json({ error: 'Sesión no encontrada.' });
+          return;
+        }
+
+        const nowIso = new Date().toISOString();
+        await db
+          .update(sessionAgendaProposals)
+          .set({
+            status: nextStatus,
+            decisionNotes,
+            decidedByUid: me.uid,
+            decidedByName: me.fullName,
+            decidedAt: nowIso,
+            updatedAt: new Date(),
+          })
+          .where(eq(sessionAgendaProposals.id, proposalId));
+
+        if (nextStatus === 'aprobada') {
+          const line = `[Propuesta aprobada — ${existing.title} (${existing.proposerName})]`;
+          const currentAgenda = (sess.agenda || '').trim();
+          if (!currentAgenda.includes(line)) {
+            const updatedAgenda = currentAgenda ? `${currentAgenda}\n${line}` : line;
+            await db
+              .update(sessions)
+              .set({ agenda: updatedAgenda, updatedAt: new Date() })
+              .where(eq(sessions.id, sessionId));
+          }
+        }
+
+        await createPortalNotification({
+          userUid: existing.proposerUid,
+          type: 'agenda_propuesta',
+          title:
+            nextStatus === 'aprobada'
+              ? 'Punto incluido en orden del día'
+              : 'Propuesta de orden del día no aprobada',
+          message:
+            nextStatus === 'aprobada'
+              ? `${me.fullName} aprobó incluir "${existing.title}" en "${sess.title}".`
+              : `${me.fullName} no incorporó "${existing.title}" en "${sess.title}"${decisionNotes ? `: ${decisionNotes}` : '.'}`,
+          linkModule: 'sesiones',
+          relatedId: sessionId,
+        });
+
+        await logServerAudit(
+          me,
+          nextStatus === 'aprobada' ? 'Aprobó punto de agenda' : 'Rechazó punto de agenda',
+          'Sesiones',
+          `${sess.title}: ${existing.title}`
+        );
+
+        res.json({ ok: true });
+      } catch (error) {
+        console.error('Decide session agenda proposal failed:', error);
+        res.status(500).json({ error: 'No fue posible actualizar la propuesta de agenda.' });
+      }
+    }
+  );
 }
