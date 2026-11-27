@@ -8,6 +8,7 @@ import {
   callsSurveys,
   commissions,
   contactMessages,
+  councilorHearts,
   deptOversight,
   deptProposals,
   deptReports,
@@ -20,6 +21,7 @@ import {
   surveyResponses,
   users,
 } from '../../db/schema.ts';
+import { resolveHeartContext } from './councilorPublicProfiles.ts';
 import {
   hashEmail,
   hashPasswordScrypt,
@@ -46,6 +48,7 @@ import {
   roleDefaultDisplayOrder,
   setSessionCookie,
 } from '../helpers.ts';
+import { syncElectionsAndTransitionsIfNeeded } from '../services/roleTransitions.ts';
 import type { RoleLabel } from '../../types/cmj.ts';
 
 function sanitizePlainText(input: unknown, maxLen: number): string {
@@ -120,6 +123,7 @@ export function registerAuthAndPublicRoutes(app: express.Express) {
 
   app.get('/api/auth/me', async (req: AuthedRequest, res) => {
     try {
+      await syncElectionsAndTransitionsIfNeeded();
       const user = await resolveAuthUser(req);
       if (!user) {
         res.json({ user: null });
@@ -139,6 +143,7 @@ export function registerAuthAndPublicRoutes(app: express.Express) {
 
   app.post('/api/auth/refresh', async (req: AuthedRequest, res) => {
     try {
+      await syncElectionsAndTransitionsIfNeeded();
       const user = await resolveAuthUser(req);
       if (!user) {
         clearSessionCookie(req, res);
@@ -876,9 +881,11 @@ export function registerAuthAndPublicRoutes(app: express.Express) {
     res.json({ ok: true });
   });
 
-  app.get('/api/public/state', async (_req, res) => {
+  app.get('/api/public/state', async (req, res) => {
     try {
       await ensureMinimalStructure();
+      await syncElectionsAndTransitionsIfNeeded();
+      const { voterKey } = await resolveHeartContext(req);
       const [
         settingsRows,
         commRows,
@@ -892,6 +899,8 @@ export function registerAuthAndPublicRoutes(app: express.Express) {
         publicDeptProposals,
         publicDeptOversight,
         publicDeptReports,
+        heartCountRows,
+        myHeartRows,
       ] = await Promise.all([
         db.select().from(portalSettings).where(eq(portalSettings.id, 'site_content')).limit(1),
         db.select().from(commissions),
@@ -937,7 +946,24 @@ export function registerAuthAndPublicRoutes(app: express.Express) {
           .from(deptReports)
           .where(and(eq(deptReports.publicApproved, true), eq(deptReports.visibility, 'publico')))
           .orderBy(desc(deptReports.createdAt)),
+        db
+          .select({
+            councilorUid: councilorHearts.councilorUid,
+            count: sql<number>`count(*)::int`,
+          })
+          .from(councilorHearts)
+          .groupBy(councilorHearts.councilorUid),
+        db
+          .select({ councilorUid: councilorHearts.councilorUid })
+          .from(councilorHearts)
+          .where(eq(councilorHearts.voterKey, voterKey)),
       ]);
+
+      const heartCounts: Record<string, number> = {};
+      for (const row of heartCountRows) {
+        heartCounts[row.councilorUid] = Number(row.count || 0);
+      }
+      const myHeartedUids = myHeartRows.map((r) => r.councilorUid);
 
       const sortedGallery = [...galleryRows].sort((a, b) => {
         const orderDiff = (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
@@ -961,6 +987,8 @@ export function registerAuthAndPublicRoutes(app: express.Express) {
         documents: docRows,
         callsSurveys: surveyRows,
         actas: publicActas,
+        heartCounts,
+        myHeartedUids,
         publicDepartamental: {
           proposals: publicDeptProposals.map(({ authorUid: _uid, ...rest }) => rest),
           oversight: publicDeptOversight.map(({ authorUid: _uid, ...rest }) => rest),
@@ -973,15 +1001,23 @@ export function registerAuthAndPublicRoutes(app: express.Express) {
     }
   });
 
-  app.get('/api/private/state', requireAuth, async (req: AuthedRequest, res) => {
-    try {
-      const payload = await buildPrivatePayload(req.authUser!);
-      res.json(payload);
-    } catch (error) {
-      console.error('Private state fetch failed:', error);
-      res.status(500).json({ error: 'Error al cargar datos internos del portal.' });
+  app.get(
+    '/api/private/state',
+    async (_req, _res, next) => {
+      await syncElectionsAndTransitionsIfNeeded();
+      next();
+    },
+    requireAuth,
+    async (req: AuthedRequest, res) => {
+      try {
+        const payload = await buildPrivatePayload(req.authUser!);
+        res.json(payload);
+      } catch (error) {
+        console.error('Private state fetch failed:', error);
+        res.status(500).json({ error: 'Error al cargar datos internos del portal.' });
+      }
     }
-  });
+  );
 
   app.post('/api/public/survey-response', async (req, res) => {
     try {

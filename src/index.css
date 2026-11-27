@@ -16,6 +16,10 @@
     --cmj-text-muted: #475569;
     --cmj-accent: #047857;
     --cmj-accent-strong: #065f46;
+    --cmj-co-yellow: #fcd116;
+    --cmj-co-blue: #003893;
+    --cmj-co-red: #ce1126;
+    --cmj-tolima: #d97706;
     --cmj-radius-card: 1.25rem;
     --cmj-radius-control: 0.75rem;
     --cmj-shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04), 0 6px 20px -8px rgba(15, 23, 42, 0.08);
@@ -30,6 +34,10 @@
     --cmj-text-muted: #94a3b8;
     --cmj-accent: #10b981;
     --cmj-accent-strong: #059669;
+    --cmj-co-yellow: #facc15;
+    --cmj-co-blue: #2563eb;
+    --cmj-co-red: #ef4444;
+    --cmj-tolima: #f59e0b;
     --cmj-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.25), 0 8px 24px -10px rgba(0, 0, 0, 0.5);
   }
 
@@ -88,6 +96,28 @@
   border: 1px solid var(--cmj-border);
   border-radius: var(--cmj-radius-card);
   box-shadow: var(--cmj-shadow-card);
+}
+
+.cmj-tricolor-hairline {
+  background: linear-gradient(
+    90deg,
+    var(--cmj-co-yellow) 0%,
+    var(--cmj-co-yellow) 50%,
+    var(--cmj-co-blue) 50%,
+    var(--cmj-co-blue) 75%,
+    var(--cmj-co-red) 75%,
+    var(--cmj-co-red) 100%
+  );
+}
+
+.cmj-glass {
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.dark .cmj-glass {
+  background: rgba(9, 13, 22, 0.8);
 }
 
 /* Custom subtle scrollbars */

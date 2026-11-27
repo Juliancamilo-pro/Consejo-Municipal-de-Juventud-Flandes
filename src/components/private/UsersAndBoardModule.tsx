@@ -28,6 +28,7 @@ import type {
   GrantedPermission,
   PublicCouncilor,
   RoleLabel,
+  RoleTerm,
 } from '../../types/cmj';
 import { MediaUploader, type UploadedFileInfo } from '../MediaUploader';
 import { VerifiedBadge } from '../VerifiedBadge';
@@ -42,6 +43,7 @@ import {
 } from '../ui/DataTableUI';
 import { recordAudit } from './auditHelper';
 import { PermissionDeniedBanner, usePermissions } from './PermissionGate';
+import { RoleTermsPanel } from './RoleTermsPanel';
 
 type SortField = 'fullName' | 'roleLabel' | 'commissionName' | 'active';
 
@@ -66,6 +68,7 @@ export function UsersAndBoardModule({
   publicCouncilors,
   privateCouncilors,
   grantedPermissions = [],
+  roleTerms = [],
 }: {
   uid: string;
   actorName: string;
@@ -74,9 +77,11 @@ export function UsersAndBoardModule({
   publicCouncilors: PublicCouncilor[];
   privateCouncilors: CouncilorPrivate[];
   grantedPermissions?: GrantedPermission[];
+  roleTerms?: RoleTerm[];
 }) {
   const { showToast } = useToast();
   const { can } = usePermissions();
+  const [subTab, setSubTab] = useState<'directorio' | 'relevos'>('directorio');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [commissionFilter, setCommissionFilter] = useState('all');
@@ -582,8 +587,78 @@ export function UsersAndBoardModule({
     }
   };
 
+  const scheduledTermsCount = useMemo(
+    () => roleTerms.filter((t) => t.status === 'programado').length,
+    [roleTerms]
+  );
+  const unscheduledHandoversCount = useMemo(
+    () => roleTerms.filter((t) => t.status === 'programado' && !t.startDate).length,
+    [roleTerms]
+  );
+
   return (
     <div className="space-y-6">
+      {/* Navegación interna: Directorio vs Periodos y Relevos */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="inline-flex rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-1 shadow-xs">
+          <button
+            type="button"
+            onClick={() => setSubTab('directorio')}
+            className={`min-h-[38px] rounded-xl px-4 py-1.5 text-xs font-bold transition-colors cursor-pointer ${
+              subTab === 'directorio'
+                ? 'bg-emerald-700 text-white'
+                : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+            }`}
+          >
+            Directorio y Mesa ({publicCouncilors.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setSubTab('relevos')}
+            className={`min-h-[38px] inline-flex items-center gap-2 rounded-xl px-4 py-1.5 text-xs font-bold transition-colors cursor-pointer ${
+              subTab === 'relevos'
+                ? 'bg-emerald-700 text-white'
+                : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+            }`}
+          >
+            <span>Periodos y Relevos</span>
+            {scheduledTermsCount > 0 && (
+              <span
+                className={`rounded-md px-1.5 py-0.5 text-[10px] font-mono-num ${
+                  subTab === 'relevos'
+                    ? 'bg-white/20 text-white'
+                    : 'bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300'
+                }`}
+              >
+                {scheduledTermsCount}
+              </span>
+            )}
+          </button>
+        </div>
+
+        {subTab === 'directorio' && unscheduledHandoversCount > 0 && (
+          <button
+            type="button"
+            onClick={() => setSubTab('relevos')}
+            className="inline-flex items-center gap-2 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-3.5 py-2 text-xs font-semibold text-amber-800 dark:text-amber-300 hover:bg-amber-100 cursor-pointer"
+          >
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            <span>
+              {unscheduledHandoversCount} relevo(s) electo(s) esperando fecha de entrega · Gestionar
+            </span>
+          </button>
+        )}
+      </div>
+
+      {subTab === 'relevos' ? (
+        <RoleTermsPanel
+          uid={uid}
+          commissions={commissions}
+          publicCouncilors={publicCouncilors}
+          roleTerms={roleTerms}
+        />
+      ) : (
+        <>
       {/* Formulario de registro */}
       <div className="cmj-card p-6">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -1507,6 +1582,8 @@ export function UsersAndBoardModule({
         onConfirm={handlePurgeSamples}
         onCancel={() => setPurgeDialogOpen(false)}
       />
+        </>
+      )}
     </div>
   );
 }

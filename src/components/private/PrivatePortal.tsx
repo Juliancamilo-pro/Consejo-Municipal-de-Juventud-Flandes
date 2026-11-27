@@ -42,9 +42,11 @@ import type {
   PortalSettings,
   PrivateModule,
   PublicCouncilor,
+  RoleTerm,
   SessionAgendaProposal,
   WorkPlanItem,
 } from '../../types/cmj';
+import { formatBogotaDateTime, requiresCommissionForRole } from '../../lib/roleTerms';
 import { BrandLogo } from '../BrandLogo';
 import { VerifiedBadge } from '../VerifiedBadge';
 import { ModuleErrorBoundary } from '../ErrorBoundary';
@@ -161,6 +163,7 @@ export function PrivatePortal({
   deptProposals = [],
   deptOversight = [],
   deptReports = [],
+  roleTerms = [],
   sessionAgendaProposals = [],
   coordinatorCommissionIds = [],
   effectivePermissions = [],
@@ -200,6 +203,7 @@ export function PrivatePortal({
   deptProposals?: DeptProposal[];
   deptOversight?: DeptOversightRecord[];
   deptReports?: DeptInterlocutionReport[];
+  roleTerms?: RoleTerm[];
   sessionAgendaProposals?: SessionAgendaProposal[];
   coordinatorCommissionIds?: string[];
   effectivePermissions?: PermissionKey[];
@@ -430,6 +434,37 @@ export function PrivatePortal({
       }
     }
 
+    roleTerms
+      .filter((t) => t.status === 'programado')
+      .forEach((t) => {
+        const commKey = requiresCommissionForRole(t.roleLabel) ? t.commissionId || '' : '';
+        const outgoing = roleTerms.find(
+          (o) =>
+            o.status === 'vigente' &&
+            (o.id === t.previousTermId ||
+              (o.roleLabel === t.roleLabel && (o.commissionId || '') === commKey))
+        );
+        const isOutgoing = Boolean(outgoing && outgoing.councilorUid === uid);
+        const isIncoming = t.councilorUid === uid;
+        if (!t.startDate && (isOutgoing || can('usuarios.asignar_presidencia'))) {
+          list.push({
+            id: `relevo-sin-fecha-${t.id}`,
+            title: isOutgoing
+              ? `Relevo pendiente en tu cargo (${t.roleLabel})`
+              : `Relevo pendiente sin fecha (${t.roleLabel})`,
+            detail: `${t.councilorName} fue electo(a). Registra la fecha oficial de entrega del cargo.`,
+            module: 'usuarios',
+          });
+        } else if (t.startDate && (isOutgoing || isIncoming)) {
+          list.push({
+            id: `relevo-fecha-${t.id}`,
+            title: `Relevo programado: ${t.roleLabel}`,
+            detail: `${t.councilorName} asumirá el ${formatBogotaDateTime(t.startDate)}.`,
+            module: 'usuarios',
+          });
+        }
+      });
+
     return list;
   }, [
     portalNotifications,
@@ -446,6 +481,7 @@ export function PrivatePortal({
     deptProposals,
     deptOversight,
     deptReports,
+    roleTerms,
   ]);
 
   const searchHits = useMemo<GlobalSearchHit[]>(() => {
@@ -1004,6 +1040,7 @@ export function PrivatePortal({
                       publicCouncilors={publicCouncilors}
                       privateCouncilors={privateCouncilors}
                       grantedPermissions={grantedPermissions}
+                      roleTerms={roleTerms}
                     />
                   )}
 
@@ -1066,6 +1103,7 @@ export function PrivatePortal({
                       publicCouncilors={publicCouncilors}
                       votes={votes}
                       commitments={commitments}
+                      roleTerms={roleTerms}
                     />
                   )}
 

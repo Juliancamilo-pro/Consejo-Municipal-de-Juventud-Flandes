@@ -26,12 +26,14 @@ import {
   portalSecurity,
   portalSettings,
   publicCouncilors,
+  roleTerms,
   sessionAgendaProposals,
   sessions,
   users,
   votes,
   workPlans,
 } from '../db/schema.ts';
+import { syncElectionsAndTransitionsIfNeeded } from './services/roleTransitions.ts';
 import {
   getInitialSecurityHashesFromEnvOrDefaults,
   hasEnvSessionSecret,
@@ -694,7 +696,11 @@ export async function getSecurityRecord() {
 
 export async function buildPrivatePayload(user: AuthedUser) {
   await ensureMinimalStructure();
-  await Promise.all([syncPendingReminders48h(), expireOutdatedGrantedPermissions()]);
+  await Promise.all([
+    syncElectionsAndTransitionsIfNeeded(),
+    syncPendingReminders48h(),
+    expireOutdatedGrantedPermissions(),
+  ]);
 
   const canViewUsers = userHasPermission(user, 'usuarios.ver');
   const canViewBuzon = userHasPermission(user, 'buzon.ver');
@@ -737,6 +743,7 @@ export async function buildPrivatePayload(user: AuthedUser) {
     deptProposalRows,
     deptOversightRows,
     deptReportRows,
+    roleTermRows,
   ] = await Promise.all([
     db.select().from(portalSettings).where(eq(portalSettings.id, 'site_content')).limit(1),
     db.select().from(commissions),
@@ -786,6 +793,7 @@ export async function buildPrivatePayload(user: AuthedUser) {
     canViewDept
       ? db.select().from(deptReports).orderBy(desc(deptReports.createdAt))
       : Promise.resolve([]),
+    db.select().from(roleTerms).orderBy(desc(roleTerms.createdAt)),
   ]);
 
   const sortedGallery = [...galleryRows].sort((a, b) => {
@@ -850,6 +858,7 @@ export async function buildPrivatePayload(user: AuthedUser) {
     deptProposals: deptProposalRows,
     deptOversight: deptOversightRows,
     deptReports: deptReportRows,
+    roleTerms: roleTermRows,
     effectivePermissions: user.effectivePermissions,
     coordinatorCommissionIds: user.coordinatorCommissionIds,
   };

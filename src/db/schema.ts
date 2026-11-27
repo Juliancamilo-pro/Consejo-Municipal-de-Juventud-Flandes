@@ -6,6 +6,7 @@ import {
   serial,
   text,
   timestamp,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core';
 
 // Cuentas de acceso interno (contraseña hasheada con scrypt en servidor, cero MFA/2FA)
@@ -343,6 +344,18 @@ export const votes = pgTable('votes', {
   id: text('id').primaryKey(),
   title: text('title').notNull(),
   description: text('description').notNull(),
+  kind: text('kind').notNull().default('general'),
+  targetRole: text('target_role').notNull().default(''),
+  targetCommissionId: text('target_commission_id').notNull().default(''),
+  candidates: jsonb('candidates')
+    .$type<Array<{ uid: string; fullName: string }>>()
+    .notNull()
+    .default([]),
+  allowSelfVote: boolean('allow_self_vote').notNull().default(true),
+  winnerUid: text('winner_uid').notNull().default(''),
+  winnerName: text('winner_name').notNull().default(''),
+  tiedCandidateUids: jsonb('tied_candidate_uids').$type<string[]>().notNull().default([]),
+  parentVoteId: text('parent_vote_id').notNull().default(''),
   commissionId: text('commission_id').notNull().default(''),
   sessionId: text('session_id').notNull().default(''),
   voteMode: text('vote_mode').notNull().default('nominal'),
@@ -617,5 +630,67 @@ export const authRateLimits = pgTable('auth_rate_limits', {
   attempts: integer('attempts').notNull().default(0),
   firstAttemptAt: text('first_attempt_at').notNull().default(''),
   lockedUntil: text('locked_until').notNull().default(''),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+// Logros y reconocimientos de consejeros (visibles en el perfil público)
+export const councilorAchievements = pgTable('councilor_achievements', {
+  id: text('id').primaryKey(),
+  councilorUid: text('councilor_uid').notNull(),
+  title: text('title').notNull(),
+  description: text('description').notNull().default(''),
+  date: text('date').notNull().default(''),
+  category: text('category').notNull().default('iniciativa'),
+  evidenceUrl: text('evidence_url').notNull().default(''),
+  createdByUid: text('created_by_uid').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+// Metas individuales de período para cada consejero
+export const councilorGoals = pgTable('councilor_goals', {
+  id: text('id').primaryKey(),
+  councilorUid: text('councilor_uid').notNull(),
+  title: text('title').notNull(),
+  description: text('description').notNull().default(''),
+  status: text('status').notNull().default('pendiente'),
+  progress: integer('progress').notNull().default(0),
+  dueDate: text('due_date').notNull().default(''),
+  createdByUid: text('created_by_uid').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+// Corazones de apoyo ciudadano (1 por persona/navegador o cuenta autenticada por consejero)
+export const councilorHearts = pgTable(
+  'councilor_hearts',
+  {
+    id: text('id').primaryKey(),
+    councilorUid: text('councilor_uid').notNull(),
+    voterKey: text('voter_key').notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('councilor_hearts_councilor_voter_idx').on(table.councilorUid, table.voterKey),
+  ]
+);
+
+// Periodos de mandato y relevos programados de cargos directivos/electivos
+export const roleTerms = pgTable('role_terms', {
+  id: text('id').primaryKey(),
+  councilorUid: text('councilor_uid').notNull(),
+  councilorName: text('councilor_name').notNull().default(''),
+  roleLabel: text('role_label').notNull(),
+  commissionId: text('commission_id').notNull().default(''),
+  status: text('status').notNull().default('vigente'),
+  startDate: text('start_date').notNull().default(''),
+  endDate: text('end_date').notNull().default(''),
+  electedByVoteId: text('elected_by_vote_id').notNull().default(''),
+  previousTermId: text('previous_term_id').notNull().default(''),
+  handoverNotes: text('handover_notes').notNull().default(''),
+  reprogramReason: text('reprogram_reason').notNull().default(''),
+  cancelReason: text('cancel_reason').notNull().default(''),
+  overdueNotifiedAt: text('overdue_notified_at').notNull().default(''),
+  createdByUid: text('created_by_uid').notNull().default('system'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });

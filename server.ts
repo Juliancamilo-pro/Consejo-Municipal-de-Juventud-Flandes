@@ -3,6 +3,7 @@ import http from 'node:http';
 import path from 'node:path';
 import express from 'express';
 import { getApiApp } from './src/server/app.ts';
+import { runRoleTransitionJobOnce } from './src/server/services/roleTransitions.ts';
 
 const portArgIdx = process.argv.indexOf('--port');
 const cliPort = portArgIdx !== -1 ? Number(process.argv[portArgIdx + 1]) : NaN;
@@ -36,6 +37,15 @@ async function startServer() {
 
   httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`CMJ Flandes server listening on port ${PORT}`);
+    runRoleTransitionJobOnce().catch((err) => {
+      console.error('Initial role transition sync failed:', err);
+    });
+    const transitionTimer = setInterval(() => {
+      runRoleTransitionJobOnce().catch((err) => {
+        console.error('Periodic role transition sync failed:', err);
+      });
+    }, 60_000);
+    transitionTimer.unref?.();
   });
 }
 

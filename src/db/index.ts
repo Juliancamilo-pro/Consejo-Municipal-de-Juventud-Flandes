@@ -423,6 +423,15 @@ export async function ensureDatabaseTables(): Promise<void> {
           id TEXT PRIMARY KEY,
           title TEXT NOT NULL,
           description TEXT NOT NULL,
+          kind TEXT NOT NULL DEFAULT 'general',
+          target_role TEXT NOT NULL DEFAULT '',
+          target_commission_id TEXT NOT NULL DEFAULT '',
+          candidates JSONB NOT NULL DEFAULT '[]'::jsonb,
+          allow_self_vote BOOLEAN NOT NULL DEFAULT true,
+          winner_uid TEXT NOT NULL DEFAULT '',
+          winner_name TEXT NOT NULL DEFAULT '',
+          tied_candidate_uids JSONB NOT NULL DEFAULT '[]'::jsonb,
+          parent_vote_id TEXT NOT NULL DEFAULT '',
           commission_id TEXT NOT NULL DEFAULT '',
           session_id TEXT NOT NULL DEFAULT '',
           vote_mode TEXT NOT NULL DEFAULT 'nominal',
@@ -720,6 +729,67 @@ export async function ensureDatabaseTables(): Promise<void> {
           updated_at TIMESTAMP NOT NULL DEFAULT NOW()
         )`,
       ],
+      [
+        'councilor_achievements',
+        `CREATE TABLE IF NOT EXISTS councilor_achievements (
+          id TEXT PRIMARY KEY,
+          councilor_uid TEXT NOT NULL,
+          title TEXT NOT NULL,
+          description TEXT NOT NULL DEFAULT '',
+          date TEXT NOT NULL DEFAULT '',
+          category TEXT NOT NULL DEFAULT 'iniciativa',
+          evidence_url TEXT NOT NULL DEFAULT '',
+          created_by_uid TEXT NOT NULL,
+          created_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )`,
+      ],
+      [
+        'councilor_goals',
+        `CREATE TABLE IF NOT EXISTS councilor_goals (
+          id TEXT PRIMARY KEY,
+          councilor_uid TEXT NOT NULL,
+          title TEXT NOT NULL,
+          description TEXT NOT NULL DEFAULT '',
+          status TEXT NOT NULL DEFAULT 'pendiente',
+          progress INTEGER NOT NULL DEFAULT 0,
+          due_date TEXT NOT NULL DEFAULT '',
+          created_by_uid TEXT NOT NULL,
+          created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )`,
+      ],
+      [
+        'councilor_hearts',
+        `CREATE TABLE IF NOT EXISTS councilor_hearts (
+          id TEXT PRIMARY KEY,
+          councilor_uid TEXT NOT NULL,
+          voter_key TEXT NOT NULL,
+          created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+          CONSTRAINT councilor_hearts_councilor_voter_idx UNIQUE (councilor_uid, voter_key)
+        )`,
+      ],
+      [
+        'role_terms',
+        `CREATE TABLE IF NOT EXISTS role_terms (
+          id TEXT PRIMARY KEY,
+          councilor_uid TEXT NOT NULL,
+          councilor_name TEXT NOT NULL DEFAULT '',
+          role_label TEXT NOT NULL,
+          commission_id TEXT NOT NULL DEFAULT '',
+          status TEXT NOT NULL DEFAULT 'vigente',
+          start_date TEXT NOT NULL DEFAULT '',
+          end_date TEXT NOT NULL DEFAULT '',
+          elected_by_vote_id TEXT NOT NULL DEFAULT '',
+          previous_term_id TEXT NOT NULL DEFAULT '',
+          handover_notes TEXT NOT NULL DEFAULT '',
+          reprogram_reason TEXT NOT NULL DEFAULT '',
+          cancel_reason TEXT NOT NULL DEFAULT '',
+          overdue_notified_at TEXT NOT NULL DEFAULT '',
+          created_by_uid TEXT NOT NULL DEFAULT 'system',
+          created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )`,
+      ],
     ];
 
     try {
@@ -771,6 +841,15 @@ export async function ensureDatabaseTables(): Promise<void> {
         ['public_councilors.cargo_declarado', `ALTER TABLE public_councilors ADD COLUMN IF NOT EXISTS cargo_declarado TEXT NOT NULL DEFAULT ''`],
         ['public_councilors.coord_declarada_pendiente', `ALTER TABLE public_councilors ADD COLUMN IF NOT EXISTS coord_declarada_pendiente BOOLEAN NOT NULL DEFAULT false`],
         ['public_councilors.coord_declarada_comision_id', `ALTER TABLE public_councilors ADD COLUMN IF NOT EXISTS coord_declarada_comision_id TEXT NOT NULL DEFAULT ''`],
+        ['votes.kind', `ALTER TABLE votes ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'general'`],
+        ['votes.target_role', `ALTER TABLE votes ADD COLUMN IF NOT EXISTS target_role TEXT NOT NULL DEFAULT ''`],
+        ['votes.target_commission_id', `ALTER TABLE votes ADD COLUMN IF NOT EXISTS target_commission_id TEXT NOT NULL DEFAULT ''`],
+        ['votes.candidates', `ALTER TABLE votes ADD COLUMN IF NOT EXISTS candidates JSONB NOT NULL DEFAULT '[]'::jsonb`],
+        ['votes.allow_self_vote', `ALTER TABLE votes ADD COLUMN IF NOT EXISTS allow_self_vote BOOLEAN NOT NULL DEFAULT true`],
+        ['votes.winner_uid', `ALTER TABLE votes ADD COLUMN IF NOT EXISTS winner_uid TEXT NOT NULL DEFAULT ''`],
+        ['votes.winner_name', `ALTER TABLE votes ADD COLUMN IF NOT EXISTS winner_name TEXT NOT NULL DEFAULT ''`],
+        ['votes.tied_candidate_uids', `ALTER TABLE votes ADD COLUMN IF NOT EXISTS tied_candidate_uids JSONB NOT NULL DEFAULT '[]'::jsonb`],
+        ['votes.parent_vote_id', `ALTER TABLE votes ADD COLUMN IF NOT EXISTS parent_vote_id TEXT NOT NULL DEFAULT ''`],
       ];
 
       for (const [key, alterSql] of columnPatches) {

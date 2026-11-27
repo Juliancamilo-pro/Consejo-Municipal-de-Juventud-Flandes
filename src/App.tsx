@@ -31,6 +31,7 @@ import type {
   GalleryAlbum,
   GalleryItem,
   GrantedPermission,
+  HeartToggleResponse,
   IdeaItem,
   LetterTemplate,
   NewsEvent,
@@ -43,6 +44,7 @@ import type {
   PortalSettings,
   PublicCouncilor,
   PublicDepartamentalBundle,
+  RoleTerm,
   SessionAgendaProposal,
   WorkPlanItem,
 } from './types/cmj';
@@ -62,6 +64,8 @@ interface PublicStateResponse {
   galleryAlbums?: GalleryAlbum[];
   documents: PortalDocument[];
   actas?: PortalActa[];
+  heartCounts?: Record<string, number>;
+  myHeartedUids?: string[];
   publicDepartamental?: PublicDepartamentalBundle;
   callsSurveys: CallOrSurvey[];
 }
@@ -84,6 +88,7 @@ interface PrivateStateResponse extends PublicStateResponse {
   deptProposals?: DeptProposal[];
   deptOversight?: DeptOversightRecord[];
   deptReports?: DeptInterlocutionReport[];
+  roleTerms?: RoleTerm[];
   sessionAgendaProposals?: SessionAgendaProposal[];
   effectivePermissions?: PermissionKey[];
   coordinatorCommissionIds?: string[];
@@ -156,9 +161,12 @@ function PortalOrchestrator() {
   const [deptProposals, setDeptProposals] = useState<DeptProposal[]>([]);
   const [deptOversight, setDeptOversight] = useState<DeptOversightRecord[]>([]);
   const [deptReports, setDeptReports] = useState<DeptInterlocutionReport[]>([]);
+  const [roleTerms, setRoleTerms] = useState<RoleTerm[]>([]);
   const [sessionAgendaProposals, setSessionAgendaProposals] = useState<SessionAgendaProposal[]>([]);
   const [effectivePermissions, setEffectivePermissions] = useState<PermissionKey[]>([]);
   const [coordinatorCommissionIds, setCoordinatorCommissionIds] = useState<string[]>([]);
+  const [heartCounts, setHeartCounts] = useState<Record<string, number>>({});
+  const [myHeartedUids, setMyHeartedUids] = useState<string[]>([]);
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', darkMode);
@@ -190,9 +198,24 @@ function PortalOrchestrator() {
         data.publicDepartamental || { proposals: [], oversight: [], reports: [] }
       );
       setCallsSurveys(data.callsSurveys || []);
+      if (data.heartCounts) setHeartCounts(data.heartCounts);
+      if (Array.isArray(data.myHeartedUids)) setMyHeartedUids(data.myHeartedUids);
     } catch {
       // Silencioso en carga inicial pública
     }
+  }, []);
+
+  const handleHeartChange = useCallback((res: HeartToggleResponse) => {
+    setHeartCounts((prev) => ({
+      ...prev,
+      [res.councilorUid]: res.count,
+    }));
+    setMyHeartedUids((prev) => {
+      const has = prev.includes(res.councilorUid);
+      if (res.hearted && !has) return [...prev, res.councilorUid];
+      if (!res.hearted && has) return prev.filter((id) => id !== res.councilorUid);
+      return prev;
+    });
   }, []);
 
   const refreshAuthSession = useCallback(async (retryOnTransient = false): Promise<SessionUser | null> => {
@@ -282,6 +305,7 @@ function PortalOrchestrator() {
       setDeptProposals(data.deptProposals || []);
       setDeptOversight(data.deptOversight || []);
       setDeptReports(data.deptReports || []);
+      setRoleTerms(data.roleTerms || []);
       setSessionAgendaProposals(data.sessionAgendaProposals || []);
       if (data.publicDepartamental) setPublicDepartamental(data.publicDepartamental);
       if (Array.isArray(data.effectivePermissions)) {
@@ -289,6 +313,22 @@ function PortalOrchestrator() {
       }
       if (Array.isArray(data.coordinatorCommissionIds)) {
         setCoordinatorCommissionIds(data.coordinatorCommissionIds);
+      }
+
+      const currentAuth = authUserRef.current;
+      if (currentAuth) {
+        const mePriv = (data.privateCouncilors || []).find((p) => p.uid === currentAuth.uid);
+        const nextCoordStr = (data.coordinatorCommissionIds || []).join(',');
+        const prevCoordStr = (currentAuth.coordinatorCommissionIds || []).join(',');
+        const nextPermStr = (data.effectivePermissions || []).join(',');
+        const prevPermStr = (currentAuth.effectivePermissions || []).join(',');
+        if (
+          (mePriv && mePriv.roleLabel !== currentAuth.roleLabel) ||
+          nextCoordStr !== prevCoordStr ||
+          nextPermStr !== prevPermStr
+        ) {
+          refreshAuthSession(false);
+        }
       }
     } catch (err) {
       if (err instanceof ApiRequestError && err.status === 401) {
@@ -311,7 +351,7 @@ function PortalOrchestrator() {
         }
       }
     }
-  }, [showToast]);
+  }, [refreshAuthSession, showToast]);
 
   useEffect(() => {
     let active = true;
@@ -464,6 +504,7 @@ function PortalOrchestrator() {
     setDeptProposals([]);
     setDeptOversight([]);
     setDeptReports([]);
+    setRoleTerms([]);
     setSessionAgendaProposals([]);
     setEffectivePermissions([]);
     setCoordinatorCommissionIds([]);
@@ -505,6 +546,7 @@ function PortalOrchestrator() {
           deptProposals={deptProposals}
           deptOversight={deptOversight}
           deptReports={deptReports}
+          roleTerms={roleTerms}
           sessionAgendaProposals={sessionAgendaProposals}
           coordinatorCommissionIds={
             coordinatorCommissionIds.length > 0
@@ -538,6 +580,10 @@ function PortalOrchestrator() {
           actas={actas}
           publicDepartamental={publicDepartamental}
           callsSurveys={callsSurveys}
+          heartCounts={heartCounts}
+          myHeartedUids={myHeartedUids}
+          viewerUid={authUser?.uid || null}
+          onHeartChange={handleHeartChange}
           isAuthenticated={Boolean(authUser)}
           darkMode={darkMode}
           onToggleDarkMode={() => setDarkMode((d) => !d)}

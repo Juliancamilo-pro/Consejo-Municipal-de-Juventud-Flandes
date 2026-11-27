@@ -14,6 +14,8 @@ import { registerVotesAndWorkRoutes } from './routes/votesAndWork.ts';
 import { registerPermissionsAndNotificationsRoutes } from './routes/permissionsAndNotifications.ts';
 import { registerDocumentsAndPortalRoutes } from './routes/documentsAndPortal.ts';
 import { registerDepartamentalRoutes } from './routes/departamental.ts';
+import { registerCouncilorPublicProfileRoutes } from './routes/councilorPublicProfiles.ts';
+import { registerRoleTermRoutes } from './routes/roleTerms.ts';
 
 export { ensureMinimalStructure, ensureServerlessPath, STRUCTURAL_COMMISSIONS_BASE };
 
@@ -93,6 +95,8 @@ export function getApiApp(): express.Express {
   registerVotesAndWorkRoutes(app);
   registerPermissionsAndNotificationsRoutes(app);
   registerDepartamentalRoutes(app);
+  registerCouncilorPublicProfileRoutes(app);
+  registerRoleTermRoutes(app);
 
   cachedApp = app;
   return app;

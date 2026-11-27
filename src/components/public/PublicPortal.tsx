@@ -15,6 +15,7 @@ import type {
   Commission,
   GalleryAlbum,
   GalleryItem,
+  HeartToggleResponse,
   NewsEvent,
   PortalActa,
   PortalDocument,
@@ -59,6 +60,10 @@ export function PublicPortal({
   actas = [],
   publicDepartamental = { proposals: [], oversight: [], reports: [] },
   callsSurveys,
+  heartCounts = {},
+  myHeartedUids = [],
+  viewerUid = null,
+  onHeartChange,
   isAuthenticated,
   darkMode,
   onToggleDarkMode,
@@ -75,6 +80,10 @@ export function PublicPortal({
   actas?: PortalActa[];
   publicDepartamental?: PublicDepartamentalBundle;
   callsSurveys: CallOrSurvey[];
+  heartCounts?: Record<string, number>;
+  myHeartedUids?: string[];
+  viewerUid?: string | null;
+  onHeartChange?: (res: HeartToggleResponse) => void;
   isAuthenticated: boolean;
   darkMode: boolean;
   onToggleDarkMode: () => void;
@@ -117,8 +126,9 @@ export function PublicPortal({
         </div>
       )}
 
-      {/* Barra de navegación de 3 zonas */}
-      <header className="sticky top-0 z-40 border-b border-slate-200/80 dark:border-slate-800/80 bg-white/95 dark:bg-[#090D16]/95 backdrop-blur-md">
+      {/* Barra de navegación de 3 zonas con línea tricolor sutil y glassmorphism */}
+      <header className="sticky top-0 z-40 border-b border-slate-200/80 dark:border-slate-800/80 cmj-glass">
+        <div className="h-0.5 w-full cmj-tricolor-hairline opacity-90" aria-hidden="true" />
         <div className="mx-auto max-w-7xl px-3 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-2 sm:gap-4">
           <button
             type="button"
@@ -224,6 +234,10 @@ export function PublicPortal({
           settings={settings}
           councilors={councilors}
           commissions={commissions}
+          heartCounts={heartCounts}
+          myHeartedUids={myHeartedUids}
+          viewerUid={viewerUid}
+          onHeartChange={onHeartChange}
           isAuthenticated={isAuthenticated}
           onEnterPrivatePortal={onEnterPrivatePortal}
         />
@@ -244,50 +258,61 @@ export function PublicPortal({
       </main>
       <OfflineIndicator />
 
-      <footer className="border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 py-12">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 grid grid-cols-1 md:grid-cols-12 gap-8 items-start">
-          <div className="md:col-span-5 flex items-start gap-4">
-            <BrandLogo size="lg" />
-            <div className="space-y-1.5">
-              <p className="text-sm font-extrabold text-slate-900 dark:text-white">
-                Consejo Municipal de Juventudes de Flandes
+      <footer className="relative border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 overflow-hidden">
+        <div className="h-0.5 w-full cmj-tricolor-hairline opacity-80" aria-hidden="true" />
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-12 space-y-8">
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-8 items-start">
+            <div className="md:col-span-5 flex items-start gap-4">
+              <BrandLogo size="lg" />
+              <div className="space-y-1.5">
+                <p className="text-sm font-extrabold text-slate-900 dark:text-white">
+                  Consejo Municipal de Juventudes de Flandes
+                </p>
+                <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                  Mecanismo autónomo de participación, concertación y control social juvenil en el municipio de Flandes, Tolima.
+                </p>
+                <p className="inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-400">
+                  <MapPin className="h-3.5 w-3.5" /> Flandes, Tolima · Ley 1622 de 2013 y Ley 1885 de 2018
+                </p>
+              </div>
+            </div>
+
+            <div className="md:col-span-4 grid grid-cols-2 gap-2 text-xs">
+              {ALL_SECTION_ITEMS.slice(1).map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => scrollToSection(item.id)}
+                  className="text-left text-slate-600 dark:text-slate-400 hover:text-emerald-700 dark:hover:text-emerald-400 py-1 transition-colors cursor-pointer"
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="md:col-span-3 md:text-right space-y-2">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                Acceso Institucional
               </p>
-              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                Mecanismo autónomo de participación, concertación y control social juvenil en el municipio de Flandes, Tolima.
-              </p>
-              <p className="inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-400">
-                <MapPin className="h-3.5 w-3.5" /> Flandes, Tolima · Ley 1622 de 2013 y Ley 1885 de 2018
-              </p>
+              <div>
+                <button
+                  type="button"
+                  onClick={isAuthenticated ? onEnterPrivatePortal : onOpenAuth}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 dark:border-slate-800 px-3.5 py-2 text-xs font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                >
+                  <Lock className="h-3.5 w-3.5" />
+                  {isAuthenticated ? 'Ir al Portal Privado' : 'Ingreso de Consejeros'}
+                </button>
+              </div>
             </div>
           </div>
 
-          <div className="md:col-span-4 grid grid-cols-2 gap-2 text-xs">
-            {ALL_SECTION_ITEMS.slice(1).map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => scrollToSection(item.id)}
-                className="text-left text-slate-600 dark:text-slate-400 hover:text-emerald-700 dark:hover:text-emerald-400 py-1 transition-colors cursor-pointer"
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-
-          <div className="md:col-span-3 md:text-right space-y-2">
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-              Acceso Institucional
+          <div className="pt-6 border-t border-slate-100 dark:border-slate-800/80 flex flex-col sm:flex-row items-center justify-between gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+            <p className="inline-flex items-center gap-2 font-semibold text-slate-700 dark:text-slate-300">
+              <span className="inline-flex h-2 w-6 rounded-full cmj-tricolor-hairline" aria-hidden="true" />
+              Orgullo de Flandes · Tolima · Colombia
             </p>
-            <div>
-              <button
-                type="button"
-                onClick={isAuthenticated ? onEnterPrivatePortal : onOpenAuth}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 dark:border-slate-800 px-3.5 py-2 text-xs font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-              >
-                <Lock className="h-3.5 w-3.5" />
-                {isAuthenticated ? 'Ir al Portal Privado' : 'Ingreso de Consejeros'}
-              </button>
-            </div>
+            <p>Puerta de Oro del Tolima · A orillas de los ríos Magdalena y Coello</p>
           </div>
         </div>
       </footer>

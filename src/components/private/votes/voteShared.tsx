@@ -1,7 +1,29 @@
 import React from 'react';
-import type { MajorityType, VoteMode } from '../../../types/cmj';
+import type { MajorityType, VoteMode, VoteStatus } from '../../../types/cmj';
 
 export const VOTE_COLORS = ['#047857', '#2563EB', '#F59E0B', '#E11D48', '#7C3AED', '#0D9488'];
+
+export const VOTE_STATUS_META: Record<
+  VoteStatus,
+  { label: string; badgeClass: string }
+> = {
+  abierta: {
+    label: 'Abierta',
+    badgeClass: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300',
+  },
+  cerrada: {
+    label: 'Cerrada',
+    badgeClass: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200',
+  },
+  empate: {
+    label: 'Empate',
+    badgeClass: 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300',
+  },
+  sin_resultado: {
+    label: 'Sin resultado',
+    badgeClass: 'bg-rose-50 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300',
+  },
+};
 
 export const MAJORITY_LABELS: Record<MajorityType, string> = {
   simple: 'Mayoría simple',

@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { motion } from 'motion/react';
 import {
+  Award,
   BellRing,
+  CalendarClock,
   Check,
   CheckCircle2,
   Clock,
@@ -11,13 +13,22 @@ import {
   Lock,
   Plus,
   Printer,
+  RotateCcw,
   ShieldAlert,
   Trash2,
   Unlock,
+  UserX,
   Vote,
 } from 'lucide-react';
-import { ApiRequestError, apiRequest } from '../../lib/apiClient';
+import { ApiRequestError, apiRequest, triggerPortalRefresh } from '../../lib/apiClient';
 import { exportStyledWorkbook } from '../../lib/excelExport';
+import {
+  BLANK_VOTE_OPTION,
+  ELECTIVE_ROLE_OPTIONS,
+  bogotaLocalInputToUtcIso,
+  formatBogotaDateTime,
+  requiresCommissionForRole,
+} from '../../lib/roleTerms';
 import { useUnsavedChangesGuard } from '../../lib/unsavedChanges';
 import type {
   AccessTier,
@@ -25,9 +36,12 @@ import type {
   Commitment,
   CouncilSession,
   CouncilVote,
+  ElectiveRoleLabel,
   MajorityType,
   PublicCouncilor,
   RoleLabel,
+  RoleTerm,
+  VoteKind,
   VoteMode,
 } from '../../types/cmj';
 import { AvatarBadge } from '../public/AvatarBadge';
@@ -41,6 +55,7 @@ import {
   MAJORITY_LABELS,
   MODE_LABELS,
   VOTE_COLORS,
+  VOTE_STATUS_META,
   VoteDonutChart,
 } from './votes/voteShared';
 import { PermissionDeniedBanner, usePermissions } from './PermissionGate';
@@ -55,6 +70,7 @@ export function VotesAndCommitmentsModule({
   sessions = [],
   votes,
   commitments,
+  roleTerms = [],
 }: {
   uid: string;
   actorName: string;
@@ -65,6 +81,7 @@ export function VotesAndCommitmentsModule({
   sessions?: CouncilSession[];
   votes: CouncilVote[];
   commitments: Commitment[];
+  roleTerms?: RoleTerm[];
 }) {
   const { showToast } = useToast();
   const { can } = usePermissions();
@@ -79,6 +96,11 @@ export function VotesAndCommitmentsModule({
 
   // Nueva votación
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [voteKind, setVoteKind] = useState<VoteKind>('general');
+  const [targetRole, setTargetRole] = useState<ElectiveRoleLabel>('Presidente');
+  const [targetCommissionId, setTargetCommissionId] = useState('');
+  const [selectedCandidateUids, setSelectedCandidateUids] = useState<string[]>([]);
+  const [allowSelfVote, setAllowSelfVote] = useState(false);
   const [voteTitle, setVoteTitle] = useState('');
   const [voteDesc, setVoteDesc] = useState('');
   const [voteMode, setVoteMode] = useState<VoteMode>('nominal');
@@ -92,6 +114,7 @@ export function VotesAndCommitmentsModule({
   const [closesAt, setClosesAt] = useState('');
   const [printableVote, setPrintableVote] = useState<CouncilVote | null>(null);
   const [confettiActive, setConfettiActive] = useState(false);
+  const [creatingRunoffId, setCreatingRunoffId] = useState<string | null>(null);
   const [nowTick, setNowTick] = useState(() => Date.now());
 
   // Buscador y paginación de votaciones
@@ -146,12 +169,15 @@ export function VotesAndCommitmentsModule({
   const filteredVotes = useMemo(() => {
     const q = voteSearch.trim().toLowerCase();
     return votes.filter((v) => {
-      if (voteStatusFilter !== 'todas' && v.status !== voteStatusFilter) return false;
+      if (voteStatusFilter === 'abierta' && v.status !== 'abierta') return false;
+      if (voteStatusFilter === 'cerrada' && v.status === 'abierta') return false;
       if (!q) return true;
       return (
         v.title.toLowerCase().includes(q) ||
         (v.description || '').toLowerCase().includes(q) ||
-        (v.resultSummary || '').toLowerCase().includes(q)
+        (v.resultSummary || '').toLowerCase().includes(q) ||
+        (v.targetRole || '').toLowerCase().includes(q) ||
+        (v.winnerName || '').toLowerCase().includes(q)
       );
     });
   }, [votes, voteSearch, voteStatusFilter]);
@@ -163,12 +189,30 @@ export function VotesAndCommitmentsModule({
 
   const handleCreateVote = async (e: React.FormEvent) => {
     e.preventDefault();
-    const opts = optionsText
-      .split('\n')
-      .map((s) => s.trim())
-      .filter(Boolean);
-    if (!voteTitle.trim() || opts.length < 2) {
-      showToast('Ingresa título y al menos 2 opciones', 'error');
+    const isElection = voteKind === 'eleccion_cargo';
+    const opts = isElection
+      ? []
+      : optionsText
+          .split('\n')
+          .map((s) => s.trim())
+          .filter(Boolean);
+
+    if (!voteTitle.trim()) {
+      showToast('Ingresa el título de la votación', 'error');
+      return;
+    }
+
+    if (isElection) {
+      if (requiresCommissionForRole(targetRole) && !targetCommissionId) {
+        showToast('Selecciona la comisión para la elección de Coordinador', 'error');
+        return;
+      }
+      if (selectedCandidateUids.length < 1) {
+        showToast('Selecciona al menos 1 candidato activo para la elección', 'error');
+        return;
+      }
+    } else if (opts.length < 2) {
+      showToast('Ingresa al menos 2 opciones', 'error');
       return;
     }
 
@@ -181,33 +225,52 @@ export function VotesAndCommitmentsModule({
       return;
     }
 
+    const opensAtIso = opensAt ? bogotaLocalInputToUtcIso(opensAt) : '';
+    const closesAtIso = closesAt ? bogotaLocalInputToUtcIso(closesAt) : '';
+
     try {
       await apiRequest('/api/votes', {
         method: 'POST',
         body: {
           title: voteTitle.trim(),
-          description: voteDesc.trim() || 'Votación oficial de plenaria CMJ Flandes',
+          description:
+            voteDesc.trim() ||
+            (isElection
+              ? `Elección democrática para el cargo de ${targetRole}`
+              : 'Votación oficial de plenaria CMJ Flandes'),
+          kind: voteKind,
+          targetRole: isElection ? targetRole : '',
+          targetCommissionId:
+            isElection && requiresCommissionForRole(targetRole) ? targetCommissionId : '',
+          candidateUids: isElection ? selectedCandidateUids : undefined,
+          allowSelfVote: isElection ? allowSelfVote : true,
           sessionId,
           voteMode,
           majorityType,
           options: opts,
           quorumRequired: Math.max(1, Number(quorumReq) || 1),
-          opensAt,
-          closesAt,
-          deadline: closesAt,
+          opensAt: opensAtIso,
+          closesAt: closesAtIso,
+          deadline: closesAtIso,
         },
       });
       await recordAudit({
         uid,
         actorName,
         actorRoleLabel,
-        action: `Abrió votación (${MODE_LABELS[voteMode]})`,
+        action: isElection
+          ? `Abrió elección de cargo (${targetRole} · ${MODE_LABELS[voteMode]})`
+          : `Abrió votación (${MODE_LABELS[voteMode]})`,
         module: 'Votaciones',
         targetTitle: voteTitle.trim(),
       });
       setVoteTitle('');
       setVoteDesc('');
+      setSelectedCandidateUids([]);
+      setVoteKind('general');
+      setAllowSelfVote(false);
       setShowCreateForm(false);
+      triggerPortalRefresh();
       showToast('Votación abierta y notificada a los consejeros', 'success');
     } catch (err) {
       const msg =
@@ -227,6 +290,7 @@ export function VotesAndCommitmentsModule({
         method: 'POST',
         body: { option },
       });
+      triggerPortalRefresh();
       showToast(
         vote.voteMode === 'secreto'
           ? 'Tu voto secreto quedó registrado de forma anónima'
@@ -247,6 +311,7 @@ export function VotesAndCommitmentsModule({
         method: 'PATCH',
         body: { status: next },
       });
+      triggerPortalRefresh();
       if (next === 'cerrada') {
         const total = vote.voterUids.length;
         const quorumMet = total >= (vote.quorumRequired || 1);
@@ -262,8 +327,30 @@ export function VotesAndCommitmentsModule({
         next === 'cerrada' ? 'Votación cerrada y escrutada' : 'Votación reabierta',
         'info'
       );
-    } catch {
-      showToast('Error al actualizar votación', 'error');
+    } catch (err) {
+      showToast(
+        err instanceof ApiRequestError ? err.message : 'Error al actualizar votación',
+        'error'
+      );
+    }
+  };
+
+  const handleCreateRunoff = async (vote: CouncilVote) => {
+    setCreatingRunoffId(vote.id);
+    try {
+      await apiRequest(`/api/votes/${encodeURIComponent(vote.id)}/runoff`, {
+        method: 'POST',
+        body: {},
+      });
+      triggerPortalRefresh();
+      showToast('Segunda vuelta (desempate) abierta y notificada', 'success');
+    } catch (err) {
+      showToast(
+        err instanceof ApiRequestError ? err.message : 'No se pudo crear el desempate',
+        'error'
+      );
+    } finally {
+      setCreatingRunoffId(null);
     }
   };
 
@@ -346,10 +433,10 @@ export function VotesAndCommitmentsModule({
       {
         name: 'Escrutinio',
         title: `Escrutinio: ${v.title}`,
-        kpis: [
+          kpis: [
           { label: 'Total sufragantes', value: total },
           { label: 'Quórum requerido', value: v.quorumRequired || 1 },
-          { label: 'Estado', value: v.status === 'abierta' ? 'Abierta' : 'Cerrada' },
+          { label: 'Estado', value: (VOTE_STATUS_META[v.status] || VOTE_STATUS_META.cerrada).label },
         ],
         columns: [
           { key: 'mocion', header: 'Moción / Acuerdo', type: 'text' as const, minWidth: 28, wrap: true },
@@ -413,7 +500,7 @@ export function VotesAndCommitmentsModule({
             { key: 'titulo', header: 'Moción / Proposición', type: 'text', minWidth: 30, wrap: true },
             { key: 'modalidad', header: 'Modalidad', type: 'text', minWidth: 18 },
             { key: 'mayoria', header: 'Mayoría', type: 'text', minWidth: 20 },
-            { key: 'estado', header: 'Estado', type: 'text', minWidth: 12 },
+            { key: 'estado', header: 'Estado', type: 'text', minWidth: 14 },
             { key: 'votos', header: 'Participantes', type: 'integer', minWidth: 13 },
             { key: 'quorum', header: 'Quórum req.', type: 'integer', minWidth: 12 },
             { key: 'resultado', header: 'Dictamen', type: 'text', minWidth: 26, wrap: true },
@@ -422,7 +509,7 @@ export function VotesAndCommitmentsModule({
             titulo: v.title,
             modalidad: MODE_LABELS[v.voteMode || 'nominal'],
             mayoria: MAJORITY_LABELS[v.majorityType || 'simple'],
-            estado: v.status === 'abierta' ? 'ABIERTA' : 'CERRADA',
+            estado: (VOTE_STATUS_META[v.status] || VOTE_STATUS_META.cerrada).label.toUpperCase(),
             votos: v.voterUids.length,
             quorum: v.quorumRequired || 1,
             resultado: v.resultSummary || 'En curso',
@@ -526,13 +613,112 @@ export function VotesAndCommitmentsModule({
               onSubmit={handleCreateVote}
               className="rounded-2xl border border-emerald-200 dark:border-emerald-900/50 bg-emerald-50/40 dark:bg-slate-950 p-4 space-y-3"
             >
+              {/* Tipo de votación: General vs Elección de Cargo */}
+              <div className="flex flex-wrap items-center justify-between gap-3 pb-2 border-b border-emerald-200/70 dark:border-emerald-900/40">
+                <div className="inline-flex rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-1">
+                  <button
+                    type="button"
+                    onClick={() => setVoteKind('general')}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-bold transition-colors cursor-pointer ${
+                      voteKind === 'general'
+                        ? 'bg-emerald-700 text-white'
+                        : 'text-slate-600 dark:text-slate-300'
+                    }`}
+                  >
+                    Votación general
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setVoteKind('eleccion_cargo');
+                      if (!voteTitle.trim()) {
+                        setVoteTitle(`Elección de ${targetRole}`);
+                      }
+                    }}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-bold transition-colors cursor-pointer inline-flex items-center gap-1.5 ${
+                      voteKind === 'eleccion_cargo'
+                        ? 'bg-emerald-700 text-white'
+                        : 'text-slate-600 dark:text-slate-300'
+                    }`}
+                  >
+                    <Award className="h-3.5 w-3.5" />
+                    Elección de cargo
+                  </button>
+                </div>
+
+                {voteKind === 'eleccion_cargo' && (
+                  <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-200 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={!allowSelfVote}
+                      onChange={(e) => setAllowSelfVote(!e.target.checked)}
+                      className="h-4 w-4 accent-emerald-600"
+                    />
+                    <span>Impedir autovoto (candidatos no votan por sí mismos)</span>
+                  </label>
+                )}
+              </div>
+
+              {voteKind === 'eleccion_cargo' && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-xl border border-emerald-200/70 dark:border-emerald-900/50 bg-white/80 dark:bg-slate-900/70 p-3">
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
+                      Cargo a elegir *
+                    </label>
+                    <select
+                      aria-label="Cargo a elegir"
+                      value={targetRole}
+                      onChange={(e) => {
+                        const nextRole = e.target.value as ElectiveRoleLabel;
+                        setTargetRole(nextRole);
+                        if (!voteTitle.trim() || voteTitle.startsWith('Elección de ')) {
+                          setVoteTitle(`Elección de ${nextRole}`);
+                        }
+                      }}
+                      className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs font-semibold"
+                    >
+                      {ELECTIVE_ROLE_OPTIONS.map((opt) => (
+                        <option key={opt.roleLabel} value={opt.roleLabel}>
+                          {opt.roleLabel}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {requiresCommissionForRole(targetRole) && (
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">
+                        Comisión a coordinar *
+                      </label>
+                      <select
+                        aria-label="Comisión a coordinar"
+                        value={targetCommissionId}
+                        onChange={(e) => setTargetCommissionId(e.target.value)}
+                        className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs font-semibold"
+                      >
+                        <option value="">Selecciona una comisión...</option>
+                        {commissions.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            Comisión {c.number}: {c.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                 <input
                   type="text"
                   required
                   value={voteTitle}
                   onChange={(e) => setVoteTitle(e.target.value)}
-                  placeholder="Proposición o acuerdo a votar"
+                  placeholder={
+                    voteKind === 'eleccion_cargo'
+                      ? `Ej. Elección de ${targetRole} 2026`
+                      : 'Proposición o acuerdo a votar'
+                  }
                   className="lg:col-span-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3.5 py-2.5 text-sm"
                 />
                 <select
@@ -559,26 +745,88 @@ export function VotesAndCommitmentsModule({
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
-                <div className="sm:col-span-5 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-semibold text-slate-500">
-                      Opciones (1 por línea)
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setOptionsText('Sí\nNo\nAbstención\nEn blanco')}
-                      className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 hover:underline cursor-pointer"
-                    >
-                      Plantilla estándar
-                    </button>
+                {voteKind === 'eleccion_cargo' ? (
+                  <div className="sm:col-span-5 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">
+                        Candidatos postulados ({selectedCandidateUids.length}) + {BLANK_VOTE_OPTION}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedCandidateUids(activeCouncilors.map((c) => c.uid))}
+                          className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 hover:underline cursor-pointer"
+                        >
+                          Todos
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedCandidateUids([])}
+                          className="text-[11px] font-semibold text-slate-500 hover:underline cursor-pointer"
+                        >
+                          Limpiar
+                        </button>
+                      </div>
+                    </div>
+                    <div className="max-h-36 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-2 space-y-1">
+                      {activeCouncilors.map((c) => {
+                        const checked = selectedCandidateUids.includes(c.uid);
+                        return (
+                          <label
+                            key={c.uid}
+                            className={`flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs cursor-pointer transition-colors ${
+                              checked
+                                ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-200 font-semibold'
+                                : 'hover:bg-slate-50 dark:hover:bg-slate-800/60 text-slate-700 dark:text-slate-300'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(e) =>
+                                setSelectedCandidateUids((prev) =>
+                                  e.target.checked
+                                    ? [...prev, c.uid]
+                                    : prev.filter((id) => id !== c.uid)
+                                )
+                              }
+                              className="h-3.5 w-3.5 accent-emerald-600 shrink-0"
+                            />
+                            <AvatarBadge
+                              name={c.fullName}
+                              photoUrl={c.photoUrl}
+                              thumbUrl={c.photoThumbUrl}
+                              size="xs"
+                            />
+                            <span className="truncate flex-1">{c.fullName}</span>
+                            <span className="text-[10px] text-slate-400 shrink-0">{c.roleLabel}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
                   </div>
-                  <textarea
-                    rows={3}
-                    value={optionsText}
-                    onChange={(e) => setOptionsText(e.target.value)}
-                    className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3.5 py-2 text-xs"
-                  />
-                </div>
+                ) : (
+                  <div className="sm:col-span-5 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-semibold text-slate-500">
+                        Opciones (1 por línea)
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setOptionsText('Sí\nNo\nAbstención\nEn blanco')}
+                        className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 hover:underline cursor-pointer"
+                      >
+                        Plantilla estándar
+                      </button>
+                    </div>
+                    <textarea
+                      rows={3}
+                      value={optionsText}
+                      onChange={(e) => setOptionsText(e.target.value)}
+                      className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3.5 py-2 text-xs"
+                    />
+                  </div>
+                )}
 
                 <div className="sm:col-span-5 space-y-2">
                   <input
@@ -617,14 +865,14 @@ export function VotesAndCommitmentsModule({
                   <div className="grid grid-cols-2 gap-2">
                     <input
                       type="datetime-local"
-                      title="Apertura programada (opcional)"
+                      title="Apertura programada en hora Colombia (opcional)"
                       value={opensAt}
                       onChange={(e) => setOpensAt(e.target.value)}
                       className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-[11px]"
                     />
                     <input
                       type="datetime-local"
-                      title="Cierre programado (opcional)"
+                      title="Cierre programado en hora Colombia (opcional)"
                       value={closesAt}
                       onChange={(e) => setClosesAt(e.target.value)}
                       className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-[11px]"
@@ -695,21 +943,42 @@ export function VotesAndCommitmentsModule({
                   ? sessions.find((s) => s.id === v.sessionId)
                   : null;
                 const mode = v.voteMode || 'nominal';
+                const statusMeta = VOTE_STATUS_META[v.status] || VOTE_STATUS_META.cerrada;
+                const isElection = v.kind === 'eleccion_cargo';
+                const linkedTerm = isElection
+                  ? roleTerms.find((t) => t.electedByVoteId === v.id)
+                  : undefined;
+                const targetCommName = v.targetCommissionId
+                  ? commissions.find((c) => c.id === v.targetCommissionId)?.name
+                  : undefined;
+                const canReopenThis =
+                  v.status === 'cerrada' && !isElection;
 
                 return (
                   <div key={v.id} className="cmj-card p-6 space-y-4">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-semibold">
-                          <span
-                            className={`rounded-md px-2 py-0.5 ${
-                              v.status === 'abierta'
-                                ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300'
-                                : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
-                            }`}
-                          >
-                            {v.status === 'abierta' ? 'Abierta' : 'Cerrada'}
+                          <span className={`rounded-md px-2 py-0.5 ${statusMeta.badgeClass}`}>
+                            {statusMeta.label}
                           </span>
+                          {isElection && v.targetRole && (
+                            <span className="inline-flex items-center gap-1 rounded-md bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-cyan-300 px-2 py-0.5">
+                              <Award className="h-3 w-3" />
+                              Elección: {v.targetRole}
+                              {targetCommName ? ` (${targetCommName})` : ''}
+                            </span>
+                          )}
+                          {v.parentVoteId && (
+                            <span className="rounded-md bg-purple-50 dark:bg-purple-950/50 text-purple-700 dark:text-purple-300 px-2 py-0.5">
+                              2.ª vuelta (desempate)
+                            </span>
+                          )}
+                          {isElection && v.allowSelfVote === false && (
+                            <span className="inline-flex items-center gap-1 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 px-2 py-0.5">
+                              <UserX className="h-3 w-3" /> Sin autovoto
+                            </span>
+                          )}
                           <span className="inline-flex items-center gap-1 text-slate-600 dark:text-slate-300">
                             {mode === 'mano_alzada' && <Hand className="h-3 w-3" />}
                             {MODE_LABELS[mode]}
@@ -775,7 +1044,7 @@ export function VotesAndCommitmentsModule({
                             <Edit3 className="h-4 w-4" />
                           </button>
                         )}
-                        {canCloseVote && (
+                        {canCloseVote && (v.status === 'abierta' || canReopenThis) && (
                           <button
                             type="button"
                             onClick={() => handleToggleVoteStatus(v)}
@@ -809,12 +1078,50 @@ export function VotesAndCommitmentsModule({
                     {v.resultSummary && (
                       <div
                         className={`rounded-xl px-3 py-2 text-xs font-bold ${
-                          v.resultSummary.startsWith('Aprobada')
-                            ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 border border-emerald-200/70 dark:border-emerald-900'
-                            : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200'
+                          v.status === 'empate'
+                            ? 'bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 border border-amber-200 dark:border-amber-900'
+                            : v.status === 'sin_resultado'
+                              ? 'bg-rose-50 text-rose-800 dark:bg-rose-950/40 dark:text-rose-300 border border-rose-200 dark:border-rose-900'
+                              : v.resultSummary.startsWith('Aprobada') || Boolean(v.winnerUid)
+                                ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 border border-emerald-200/70 dark:border-emerald-900'
+                                : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200'
                         }`}
                       >
                         Resultado: {v.resultSummary}
+                      </div>
+                    )}
+
+                    {v.status === 'empate' && isElection && canCreateVote && (
+                      <div className="rounded-xl border border-amber-200 dark:border-amber-900/60 bg-amber-50/70 dark:bg-amber-950/20 p-3 flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-xs font-semibold text-amber-900 dark:text-amber-200">
+                          Empate registrado entre candidatos punteros. Convoca la segunda vuelta oficial.
+                        </p>
+                        <button
+                          type="button"
+                          disabled={creatingRunoffId === v.id}
+                          onClick={() => handleCreateRunoff(v)}
+                          className="min-h-[34px] inline-flex items-center gap-1.5 rounded-xl bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 cursor-pointer disabled:opacity-60"
+                        >
+                          <RotateCcw className="h-3.5 w-3.5" />
+                          {creatingRunoffId === v.id ? 'Creando...' : 'Crear desempate'}
+                        </button>
+                      </div>
+                    )}
+
+                    {linkedTerm && (
+                      <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 px-3 py-2 text-[11px] flex flex-wrap items-center justify-between gap-2">
+                        <span className="inline-flex items-center gap-1.5 font-semibold text-slate-700 dark:text-slate-200">
+                          <CalendarClock className="h-3.5 w-3.5 text-emerald-700 dark:text-emerald-400" />
+                          {linkedTerm.status === 'vigente'
+                            ? `Relevo aplicado desde ${formatBogotaDateTime(linkedTerm.startDate)}`
+                            : linkedTerm.status === 'programado' && linkedTerm.startDate
+                              ? `Entrega programada para el ${formatBogotaDateTime(linkedTerm.startDate)}`
+                              : linkedTerm.status === 'programado'
+                                ? 'Relevo pendiente por definir fecha de entrega en Usuarios y Mesa'
+                                : linkedTerm.status === 'cancelado'
+                                  ? 'Relevo cancelado'
+                                  : 'Periodo finalizado'}
+                        </span>
                       </div>
                     )}
 
@@ -918,20 +1225,42 @@ export function VotesAndCommitmentsModule({
                           const count = v.tallies?.[opt] || 0;
                           const pct = totalVotes > 0 ? Math.round((count / totalVotes) * 100) : 0;
                           const barColor = VOTE_COLORS[idx % VOTE_COLORS.length];
+                          const myCandidateEntry =
+                            isElection && v.allowSelfVote === false
+                              ? v.candidates?.find((c) => c.uid === uid)
+                              : undefined;
+                          const isBlockedSelfOption = Boolean(
+                            myCandidateEntry &&
+                              myCandidateEntry.fullName.trim().toLowerCase() ===
+                                opt.trim().toLowerCase()
+                          );
+                          const optionDisabled =
+                            v.status !== 'abierta' || alreadyVoted || isBlockedSelfOption;
+
                           return (
                             <div key={opt} className="space-y-1">
                               <div className="flex items-center justify-between gap-2 text-xs">
                                 <button
                                   type="button"
-                                  disabled={v.status !== 'abierta' || alreadyVoted}
+                                  disabled={optionDisabled}
+                                  title={
+                                    isBlockedSelfOption
+                                      ? 'El autovoto está deshabilitado en esta elección'
+                                      : undefined
+                                  }
                                   onClick={() => handleCastVote(v, opt)}
-                                  className="font-semibold text-left text-slate-800 dark:text-slate-100 hover:text-emerald-700 disabled:cursor-default cursor-pointer inline-flex items-center gap-1.5"
+                                  className="font-semibold text-left text-slate-800 dark:text-slate-100 hover:text-emerald-700 disabled:cursor-default disabled:opacity-70 cursor-pointer inline-flex items-center gap-1.5"
                                 >
                                   <span
                                     className="h-2.5 w-2.5 rounded-full inline-block shrink-0"
                                     style={{ backgroundColor: barColor }}
                                   />
-                                  {opt}
+                                  <span>{opt}</span>
+                                  {isBlockedSelfOption && (
+                                    <span className="rounded bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 text-[10px] font-normal text-slate-600 dark:text-slate-300">
+                                      Tu candidatura
+                                    </span>
+                                  )}
                                 </button>
                                 <span className="font-mono-num text-slate-500">
                                   {count} ({pct}%)
@@ -939,7 +1268,12 @@ export function VotesAndCommitmentsModule({
                               </div>
                               <button
                                 type="button"
-                                disabled={v.status !== 'abierta' || alreadyVoted}
+                                disabled={optionDisabled}
+                                title={
+                                  isBlockedSelfOption
+                                    ? 'El autovoto está deshabilitado en esta elección'
+                                    : undefined
+                                }
                                 onClick={() => handleCastVote(v, opt)}
                                 className="w-full h-3 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden cursor-pointer disabled:cursor-default text-left"
                               >

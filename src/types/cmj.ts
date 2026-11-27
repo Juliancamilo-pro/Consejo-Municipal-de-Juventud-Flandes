@@ -5,6 +5,8 @@ export type RoleLabel =
   | 'Consejero Departamental'
   | 'Consejero';
 
+export type ElectiveRoleLabel = RoleLabel | 'Coordinador de Comisión';
+
 // Nivel técnico interno de permisos — nunca visible en la interfaz
 export type AccessTier =
   | 'tier_1_pres'
@@ -264,10 +266,27 @@ export interface CouncilSession {
   updatedAt?: unknown;
 }
 
+export type VoteKind = 'general' | 'eleccion_cargo';
+export type VoteStatus = 'abierta' | 'cerrada' | 'empate' | 'sin_resultado';
+
+export interface VoteCandidate {
+  uid: string;
+  fullName: string;
+}
+
 export interface CouncilVote {
   id: string;
   title: string;
   description: string;
+  kind?: VoteKind;
+  targetRole?: ElectiveRoleLabel | '';
+  targetCommissionId?: string;
+  candidates?: VoteCandidate[];
+  allowSelfVote?: boolean;
+  winnerUid?: string;
+  winnerName?: string;
+  tiedCandidateUids?: string[];
+  parentVoteId?: string;
   commissionId?: string;
   sessionId?: string;
   voteMode?: VoteMode;
@@ -279,12 +298,46 @@ export interface CouncilVote {
   quorumRequired?: number;
   opensAt?: string;
   closesAt?: string;
-  status: 'abierta' | 'cerrada';
+  status: VoteStatus;
   resultSummary?: string;
   deadline?: string;
   createdByUid: string;
   createdAt?: unknown;
   updatedAt?: unknown;
+}
+
+export type RoleTermStatus = 'vigente' | 'programado' | 'finalizado' | 'cancelado';
+
+export interface RoleTerm {
+  id: string;
+  councilorUid: string;
+  councilorName: string;
+  roleLabel: ElectiveRoleLabel;
+  commissionId?: string;
+  status: RoleTermStatus;
+  startDate: string;
+  endDate: string;
+  electedByVoteId?: string;
+  previousTermId?: string;
+  handoverNotes?: string;
+  reprogramReason?: string;
+  cancelReason?: string;
+  overdueNotifiedAt?: string;
+  createdByUid: string;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+}
+
+export interface RoleTermHistoryItem {
+  id: string;
+  roleLabel: ElectiveRoleLabel;
+  commissionId?: string;
+  commissionName?: string;
+  status: RoleTermStatus;
+  startDate: string;
+  endDate: string;
+  periodLabel: string;
+  electedByVoteId?: string;
 }
 
 export interface ActaSignature {
@@ -655,6 +708,12 @@ export interface PortalNotification {
     | 'comision_coordinador'
     | 'agenda_propuesta'
     | 'departamental_publicacion'
+    | 'eleccion_resultado'
+    | 'relevo_pendiente'
+    | 'relevo_programado'
+    | 'relevo_activado'
+    | 'relevo_vencido'
+    | 'relevo_cancelado'
     | 'general';
   title: string;
   message: string;
@@ -779,6 +838,93 @@ export interface PublicDepartamentalBundle {
   proposals: Omit<DeptProposal, 'authorUid'>[];
   oversight: Omit<DeptOversightRecord, 'authorUid'>[];
   reports: Omit<DeptInterlocutionReport, 'authorUid'>[];
+}
+
+export type AchievementCategory =
+  | 'iniciativa'
+  | 'proyecto'
+  | 'reconocimiento'
+  | 'evento'
+  | 'general';
+
+export interface CouncilorAchievementItem {
+  id: string;
+  title: string;
+  description: string;
+  date: string;
+  category: AchievementCategory;
+  evidenceUrl?: string;
+  source: 'registro' | 'compromiso';
+}
+
+export interface CouncilorGoalItem {
+  id: string;
+  title: string;
+  description: string;
+  status: 'pendiente' | 'en_curso' | 'hecha';
+  progress: number;
+  dueDate: string;
+  source: 'meta' | 'compromiso' | 'plan_trabajo';
+  axis?: string;
+}
+
+export interface AttendanceSessionRecord {
+  sessionId: string;
+  title: string;
+  sessionType: string;
+  dateIso: string;
+  status: AttendanceStatus;
+}
+
+export interface AttendanceStatsSummary {
+  totalSessions: number;
+  totalRecorded: number;
+  presente: number;
+  tarde: number;
+  excusa: number;
+  ausente: number;
+  percentage: number;
+  recent: AttendanceSessionRecord[];
+}
+
+export interface PublicVoteHistoryItem {
+  voteId: string;
+  title: string;
+  date: string;
+  commissionName: string;
+  voteMode: VoteMode;
+  status: VoteStatus;
+  participated: boolean;
+  choice: string | null;
+}
+
+export interface PublicVotesSummary {
+  totalVotes: number;
+  participatedCount: number;
+  participationRate: number;
+  items: PublicVoteHistoryItem[];
+}
+
+export interface CouncilorPublicProfileResponse {
+  councilor: PublicCouncilor;
+  roleHistory?: RoleTermHistoryItem[];
+  achievements: CouncilorAchievementItem[];
+  goals: CouncilorGoalItem[];
+  attendance: AttendanceStatsSummary;
+  votes: PublicVotesSummary;
+  hearts: {
+    count: number;
+    viewerHasHearted: boolean;
+    canHeart: boolean;
+  };
+  canManageOwnContent?: boolean;
+}
+
+export interface HeartToggleResponse {
+  ok: boolean;
+  councilorUid: string;
+  hearted: boolean;
+  count: number;
 }
 
 

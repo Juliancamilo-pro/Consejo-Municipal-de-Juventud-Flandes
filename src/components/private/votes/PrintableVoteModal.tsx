@@ -2,7 +2,7 @@ import React from 'react';
 import { Printer, X } from 'lucide-react';
 import type { CouncilVote, PublicCouncilor } from '../../../types/cmj';
 import { BrandLogo } from '../../BrandLogo';
-import { MAJORITY_LABELS, MODE_LABELS } from './voteShared';
+import { MAJORITY_LABELS, MODE_LABELS, VOTE_STATUS_META } from './voteShared';
 
 export function PrintableVoteModal({
   vote,
@@ -14,6 +14,7 @@ export function PrintableVoteModal({
   onClose: () => void;
 }) {
   if (!vote) return null;
+  const statusMeta = VOTE_STATUS_META[vote.status] || VOTE_STATUS_META.cerrada;
 
   return (
     <div className="fixed inset-0 z-[85] bg-slate-950/80 p-0 sm:p-4 overflow-y-auto flex items-stretch sm:items-center justify-center print:static print:bg-white print:p-0 print:block">
@@ -27,10 +28,16 @@ export function PrintableVoteModal({
               </p>
               <h2 className="mt-1 text-xl font-extrabold">{vote.title}</h2>
               <p className="text-xs text-slate-600">
-                Modalidad: {MODE_LABELS[vote.voteMode || 'nominal']} · Regla:{' '}
+                Estado: {statusMeta.label} · Modalidad: {MODE_LABELS[vote.voteMode || 'nominal']} · Regla:{' '}
                 {MAJORITY_LABELS[vote.majorityType || 'simple']} · Participantes:{' '}
                 {vote.voterUids.length}
               </p>
+              {vote.kind === 'eleccion_cargo' && vote.targetRole && (
+                <p className="text-xs font-semibold text-emerald-800 mt-0.5">
+                  Elección de cargo: {vote.targetRole}
+                  {vote.winnerName ? ` · Electo(a): ${vote.winnerName}` : ''}
+                </p>
+              )}
             </div>
           </div>
           <div className="flex gap-2 no-print">
